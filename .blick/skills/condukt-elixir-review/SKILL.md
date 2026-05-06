@@ -102,18 +102,28 @@ encourage additional typespec-style annotations beyond that.
 
 ### Flag
 
-- **Any new `@spec`, `@type`, `@typep`, or `@opaque` in `lib/`.**
-  **Severity: medium.**
+- **Any *net-new* `@spec`, `@type`, `@typep`, or `@opaque` being added to
+  `lib/` for the first time.** Do not flag existing typespecs that appear
+  in a diff due to code movement, refactoring, or line shifts. Only flag
+  genuinely new type annotations. **Severity: medium.**
+- **Typed signatures in `@callback` declarations** (e.g.,
+  `@callback foo() :: return_type()`). Plain `@callback foo()` without
+  the type signature is preferred; document return shapes in `@doc` as
+  prose. **Severity: medium.**
 - **Review feedback that asks for missing typespecs, type aliases, or
   stronger type annotations in Elixir production code.**
   **Severity: medium.**
 
 ### Do not flag
 
-- Existing or new `@callback` / `@macrocallback` declarations needed to
-  define a behaviour.
+- Plain `@callback` / `@macrocallback` declarations without typed
+  signatures, when a behaviour contract is necessary.
+- `@callback` declarations that already exist and are only appearing in
+  diffs due to code movement.
 - Plain runtime validation, guards, or pattern matching that make code
   safer without adding typespec annotations.
+- Existing typespecs that are being modified but were already present in
+  the codebase before the PR.
 
 ## 6. Elixir production code should avoid `rescue`
 
@@ -124,8 +134,9 @@ observe non-local failures, keep it narrow and explicit.
 
 ### Flag
 
-- **Any new `rescue` block in `lib/`.** Prefer a tuple-returning API and
-  pattern matching instead. **Severity: medium.**
+- **New `rescue` blocks in `lib/` that are not at a clear system
+  boundary.** Use tagged tuples and pattern matching instead.
+  **Severity: medium.**
 - **Code review feedback that asks for `rescue` around ordinary control
   flow that could be handled with tagged tuples and matching.**
   **Severity: medium.**
@@ -134,9 +145,12 @@ observe non-local failures, keep it narrow and explicit.
 
 - Explicit pattern matching with `case`, `with`, function heads, or
   guards.
-- Narrow boundary code that still needs a `try/catch` because it is
-  instrumenting or normalizing failures from a callback or external
-  library and cannot rely on return values alone.
+- Narrow boundary code in `lib/condukt/sandbox/virtual.ex` or
+  `lib/condukt/sandbox/local.ex` that handles NIF initialization
+  failures, MuonTrap execution monitoring, or external library
+  instrumentation where return values alone cannot capture all failure
+  modes. Keep such exception handling as narrow as possible.
+- `try/catch` or `try/rescue` in test files (outside `lib/`).
 
 ## 7. Mimic copies belong in `test/test_helper.exs`
 
