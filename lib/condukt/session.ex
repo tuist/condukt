@@ -25,6 +25,7 @@ defmodule Condukt.Session do
 
   alias Condukt.{Compactor, Context, Message, Redactor, Sandbox, Secrets, SessionStore, Telemetry, Tool}
   alias Condukt.SessionStore.Snapshot
+  alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolCall
 
   require Logger
@@ -582,25 +583,30 @@ defmodule Condukt.Session do
     |> Enum.reject(&is_nil/1)
   end
 
-  defp message_to_req_llm(%Message{role: :user, content: content, images: []}) do
+  @doc false
+  # Public for tests. Translates a Condukt.Message into the shape ReqLLM
+  # expects (a Message with optional list of ContentPart structs).
+  def message_to_req_llm(%Message{role: :user, content: content, images: []}) do
     ReqLLM.Context.user(content)
   end
 
-  defp message_to_req_llm(%Message{role: :user, content: content, images: images}) when images != [] do
-    # Include images as content parts
+  def message_to_req_llm(%Message{role: :user, content: content, images: images}) when images != [] do
+    # ReqLLM 1.x represents multi-part user content as a list of
+    # `%ContentPart{}` structs. Build the text part plus one image-url part
+    # per attached image, encoded as a base64 data URL.
     image_parts =
       Enum.map(images, fn img ->
-        {:image, "data:#{img.media_type};base64,#{img.data}"}
+        ContentPart.image_url("data:#{img.media_type};base64,#{img.data}")
       end)
 
-    ReqLLM.Context.user([{:text, content} | image_parts])
+    ReqLLM.Context.user([ContentPart.text(content) | image_parts])
   end
 
-  defp message_to_req_llm(%Message{role: :assistant, content: content}) when is_binary(content) do
+  def message_to_req_llm(%Message{role: :assistant, content: content}) when is_binary(content) do
     ReqLLM.Context.assistant(content)
   end
 
-  defp message_to_req_llm(%Message{role: :assistant, content: blocks}) when is_list(blocks) do
+  def message_to_req_llm(%Message{role: :assistant, content: blocks}) when is_list(blocks) do
     text =
       blocks
       |> Enum.filter(&match?({:text, _}, &1))
@@ -620,7 +626,7 @@ defmodule Condukt.Session do
     end
   end
 
-  defp message_to_req_llm(%Message{role: :tool_result, tool_call_id: id, content: content}) do
+  def message_to_req_llm(%Message{role: :tool_result, tool_call_id: id, content: content}) do
     result = if is_binary(content), do: content, else: JSON.encode!(content)
     ReqLLM.Context.tool_result(id, result)
   end
