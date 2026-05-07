@@ -233,6 +233,37 @@ defmodule Condukt.AnonymousRunTest do
 
       assert_receive {:telemetry, [:condukt, :run, :stop], %{duration: _}, %{structured?: false, input?: true}}
     end
+
+    test "the :run session_id is propagated to inner :agent events" do
+      handler_id = "anonymous-run-session-id-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:condukt, :run, :start],
+          [:condukt, :run, :stop],
+          [:condukt, :agent, :start],
+          [:condukt, :agent, :stop]
+        ],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {model, _model_id} = LLMProvider.model([LLMProvider.text_response("done")])
+
+      assert {:ok, "done"} = Condukt.AnonymousRun.run("hello", model: model)
+
+      assert_receive {:telemetry, [:condukt, :run, :start], %{session_id: run_id}}
+      assert is_binary(run_id)
+      assert_receive {:telemetry, [:condukt, :agent, :start], %{session_id: ^run_id}}
+      assert_receive {:telemetry, [:condukt, :agent, :stop], %{session_id: ^run_id}}
+      assert_receive {:telemetry, [:condukt, :run, :stop], %{session_id: ^run_id}}
+    end
   end
 
   defp message_text?(%Message{content: content}, text) when is_list(content) do

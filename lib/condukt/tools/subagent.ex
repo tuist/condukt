@@ -138,23 +138,26 @@ defmodule Condukt.Tools.Subagent do
   end
 
   defp call_registered(args, context, role, task, registration) do
-    metadata = subagent_metadata(context, role, registration)
+    base_metadata = subagent_metadata(context, role, registration)
     start_time = System.monotonic_time()
 
-    Telemetry.emit([:subagent, :start], %{system_time: System.system_time()}, metadata)
+    Telemetry.emit([:subagent, :start], %{system_time: System.system_time()}, base_metadata)
 
-    result =
+    {result, child_session_id} =
       with {:ok, input} <- validate_input(args, registration.input_schema),
            {:ok, supervisor} <- fetch_supervisor(context),
            prepared = prepare_child(registration, context),
            {:ok, child} <- start_child(supervisor, registration.agent_module, prepared.session_opts) do
-        run_and_stop(supervisor, child, task, input, prepared)
+        child_id = safe_session_id(child)
+        {run_and_stop(supervisor, child, task, input, prepared), child_id}
+      else
+        error -> {error, nil}
       end
 
     Telemetry.emit(
       [:subagent, :stop],
       %{duration: System.monotonic_time() - start_time},
-      subagent_stop_metadata(result, metadata)
+      subagent_stop_metadata(result, maybe_put(base_metadata, :session_id, child_session_id))
     )
 
     result
@@ -163,12 +166,20 @@ defmodule Condukt.Tools.Subagent do
   defp subagent_metadata(context, role, registration) do
     %{
       agent: Map.get(context, :agent_module, Map.get(context, :agent)),
+      parent_session_id: Map.get(context, :session_id),
       role: role,
       child_agent: registration.agent_module,
       input?: not is_nil(registration.input_schema),
       output?: not is_nil(registration.output_schema)
     }
   end
+
+  defp safe_session_id(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: Condukt.Session.id(pid)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp subagent_stop_metadata({:ok, _result}, metadata), do: Map.put(metadata, :status, :ok)
 

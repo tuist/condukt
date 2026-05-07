@@ -104,7 +104,10 @@ defmodule Condukt.Operation do
   - any error returned by the underlying `Condukt.Session.run/3`
   """
   def run(agent_module, name, args, opts \\ []) do
-    Telemetry.span(:operation, %{agent: agent_module, operation: name}, fn ->
+    opts = Keyword.put_new_lazy(opts, :id, &Condukt.SessionID.generate/0)
+    metadata = %{agent: agent_module, operation: name, session_id: Keyword.fetch!(opts, :id)}
+
+    Telemetry.span(:operation, metadata, fn ->
       with {:ok, operation} <- fetch_operation(agent_module, name),
            {:ok, normalized} <- normalize(args) do
         execute(agent_module, operation, normalized, opts)
@@ -167,6 +170,7 @@ defmodule Condukt.Operation do
     |> maybe_put(:api_key, opts[:api_key])
     |> maybe_put(:base_url, opts[:base_url])
     |> maybe_put(:model, opts[:model])
+    |> maybe_put(:id, opts[:id])
     |> Keyword.merge(Keyword.take(opts, [:timeout, :max_turns]))
   end
 

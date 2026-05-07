@@ -7,33 +7,39 @@ defmodule Condukt.Telemetry do
 
   ## Events
 
+  Every event emitted from a `Condukt.Session` (and the runtime entry points
+  that spin one up) carries a `:session_id` field in metadata. Sessions
+  generate a UUIDv7 on start unless the caller supplies an `:id` option;
+  downstream consumers can use it to correlate every event for a single run
+  in their observability stack. See `guides/telemetry.md` for details.
+
   ### Agent Events
 
   - `[:condukt, :agent, :start]` - Agent started processing a prompt
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{agent: module}`
+    - Metadata: `%{agent: module, session_id: String.t()}`
 
   - `[:condukt, :agent, :stop]` - Agent finished processing
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{agent: module}`
+    - Metadata: `%{agent: module, session_id: String.t()}`
 
   - `[:condukt, :agent, :exception]` - Agent raised an exception
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{agent: module, kind: atom, reason: term, stacktrace: list}`
+    - Metadata: `%{agent: module, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
 
   ### Tool Events
 
   - `[:condukt, :tool_call, :start]` - Tool call started
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{tool: string}`
+    - Metadata: `%{tool: string, agent: module, session_id: String.t()}`
 
   - `[:condukt, :tool_call, :stop]` - Tool call completed
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{tool: string}`
+    - Metadata: `%{tool: string, agent: module, session_id: String.t()}`
 
   - `[:condukt, :tool_call, :exception]` - Tool call raised an exception
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{tool: string, kind: atom, reason: term, stacktrace: list}`
+    - Metadata: `%{tool: string, agent: module, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
 
   ### Sub-agent Events
 
@@ -42,12 +48,16 @@ defmodule Condukt.Telemetry do
 
   - `[:condukt, :subagent, :start]` - Sub-agent delegation started
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{agent: module | pid, role: atom, child_agent: module, input?: boolean, output?: boolean}`
+    - Metadata: `%{agent: module | pid, role: atom, child_agent: module, input?: boolean, output?: boolean, parent_session_id: String.t() | nil}`
 
   - `[:condukt, :subagent, :stop]` - Sub-agent delegation finished
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{agent: module | pid, role: atom, child_agent: module, input?: boolean, output?: boolean, status: :ok | :error}`
+    - Metadata: `%{agent: module | pid, role: atom, child_agent: module, input?: boolean, output?: boolean, status: :ok | :error, parent_session_id: String.t() | nil, session_id: String.t() | nil}`
     - Error metadata: `%{error: atom}`
+
+  `:parent_session_id` is the calling session's id; `:session_id` (only on
+  `:stop`) is the child session's id, present when the child started
+  successfully.
 
   ### Secret Events
 
@@ -55,11 +65,11 @@ defmodule Condukt.Telemetry do
 
   - `[:condukt, :secrets, :resolve]` - Session secrets resolved
     - Measurements: `%{count: non_neg_integer}`
-    - Metadata: `%{agent: module, names: [String.t()]}`
+    - Metadata: `%{agent: module, names: [String.t()], session_id: String.t()}`
 
   - `[:condukt, :secrets, :access]` - A tool received resolved session secrets
     - Measurements: `%{count: non_neg_integer}`
-    - Metadata: `%{agent: module, tool: String.t(), names: [String.t()]}`
+    - Metadata: `%{agent: module, tool: String.t(), names: [String.t()], session_id: String.t()}`
     - Optional metadata: `%{tool_call_id: String.t()}`
 
   ### Operation Events
@@ -70,15 +80,15 @@ defmodule Condukt.Telemetry do
 
   - `[:condukt, :operation, :start]` - Operation invocation started
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{agent: module, operation: atom}`
+    - Metadata: `%{agent: module, operation: atom, session_id: String.t()}`
 
   - `[:condukt, :operation, :stop]` - Operation invocation finished
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{agent: module, operation: atom}`
+    - Metadata: `%{agent: module, operation: atom, session_id: String.t()}`
 
   - `[:condukt, :operation, :exception]` - Operation raised an exception
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{agent: module, operation: atom, kind: atom, reason: term, stacktrace: list}`
+    - Metadata: `%{agent: module, operation: atom, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
 
   ### Anonymous Run Events
 
@@ -87,15 +97,15 @@ defmodule Condukt.Telemetry do
 
   - `[:condukt, :run, :start]` - Anonymous run started
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{structured?: boolean, input?: boolean}`
+    - Metadata: `%{structured?: boolean, input?: boolean, session_id: String.t()}`
 
   - `[:condukt, :run, :stop]` - Anonymous run finished
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{structured?: boolean, input?: boolean}`
+    - Metadata: `%{structured?: boolean, input?: boolean, session_id: String.t()}`
 
   - `[:condukt, :run, :exception]` - Anonymous run raised an exception
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{structured?: boolean, input?: boolean, kind: atom, reason: term, stacktrace: list}`
+    - Metadata: `%{structured?: boolean, input?: boolean, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
 
   ## Example: Attaching Handlers
 
