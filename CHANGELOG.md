@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.18.0] - 2026-05-07
+
+### Features
+
+- identify sessions with UUIDv7 and propagate through events
+
+
 ## [0.17.0] - 2026-05-07
 
 ### Bug Fixes
