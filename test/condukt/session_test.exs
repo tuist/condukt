@@ -42,6 +42,16 @@ defmodule Condukt.SessionTest do
     end
   end
 
+  test "transient sessions are not linked to the caller" do
+    assert {:ok, {pid, links}} =
+             Condukt.Session.with_transient(ConfigAgent, [load_project_instructions: false], fn pid ->
+               {:ok, {pid, elem(Process.info(self(), :links), 1)}}
+             end)
+
+    refute pid in links
+    refute Process.alive?(pid)
+  end
+
   test "stores the configured :redactor on the session state" do
     {:ok, pid} =
       ConfigAgent.start_link(

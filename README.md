@@ -31,7 +31,8 @@ Rather than wrapping JavaScript agent frameworks, we built Condukt from scratch 
 
 ## Features
 
-- **OTP-native**: Agents are GenServers that integrate naturally with supervision trees
+- **OTP-native**: Agents run on GenServers and integrate naturally with supervision trees
+- **Module One-shots**: `Condukt.run(MyApp.Agent, prompt)` hides transient session lifecycle for synchronous calls
 - **Streaming**: Real-time event streaming for responsive UIs
 - **Project Instructions**: Auto-discovers `AGENTS.md`, `CLAUDE.md`, and local skills from the project directory
 - **Scoped Commands**: Expose trusted executables like `git`, `gh`, or `mix` without shell parsing
@@ -99,23 +100,38 @@ defmodule MyApp.CodingAgent do
 end
 ```
 
-### 2. Start and Use the Agent
+### 2. Run the Agent
 
 ```elixir
-# Start the agent with an explicit system prompt override
-{:ok, agent} = MyApp.CodingAgent.start_link(
-  api_key: System.get_env("ANTHROPIC_API_KEY"),
-  system_prompt: """
-  You are an expert software engineer.
-  Write clean, well-documented code.
-  Always run tests after making changes.
-  """
-)
+# Run a prompt with the module's defaults
+{:ok, response} =
+  Condukt.run(MyApp.CodingAgent, "Create a GenServer that manages a counter",
+    api_key: System.get_env("ANTHROPIC_API_KEY"),
+    system_prompt: """
+    You are an expert software engineer.
+    Write clean, well-documented code.
+    Always run tests after making changes.
+    """
+  )
+```
 
-# Run a prompt
-{:ok, response} = Condukt.run(agent, "Create a GenServer that manages a counter")
+`Condukt.run/3` starts a transient session, runs the agent loop synchronously,
+returns the final response, and stops the session. The caller does not need to
+manage a `GenServer` for one-shot work.
 
-# Stream responses for real-time output
+When you need conversation history or streaming, start a persistent agent:
+
+```elixir
+{:ok, agent} =
+  MyApp.CodingAgent.start_link(
+    api_key: System.get_env("ANTHROPIC_API_KEY"),
+    system_prompt: """
+    You are an expert software engineer.
+    Write clean, well-documented code.
+    Always run tests after making changes.
+    """
+  )
+
 Condukt.stream(agent, "Add documentation to the counter module")
 |> Stream.each(fn
   {:text, chunk} -> IO.write(chunk)
@@ -127,7 +143,7 @@ end)
 |> Stream.run()
 ```
 
-### 3. Add to Supervision Tree
+### 3. Add a Persistent Agent to a Supervision Tree
 
 ```elixir
 defmodule MyApp.Application do
@@ -144,6 +160,62 @@ defmodule MyApp.Application do
   end
 end
 ```
+
+Supervise an agent when the process should outlive a single call. For simple
+jobs, scripts, request handlers, and CI tasks, prefer `Condukt.run/3` with the
+agent module.
+
+## Running Agents
+
+Condukt supports three run shapes:
+
+```elixir
+Condukt.run("Summarize README.md", tools: [Condukt.Tools.Read])
+# Anonymous one-shot. The prompt and options define the whole run.
+
+Condukt.run(MyApp.CodingAgent, "Refactor this module")
+# Module-defined one-shot. The agent module supplies callbacks and defaults.
+
+Condukt.run(agent_pid_or_name, "Continue from the previous answer")
+# Persistent session. Conversation history lives in the running process.
+```
+
+Module-defined one-shot runs are the default fit when you want an agent's
+`system_prompt/0`, `tools/0`, `model/0`, sandbox, secrets, and sub-agent
+configuration, but do not need to hold state after the response returns.
+
+```elixir
+{:ok, response} =
+  Condukt.run(MyApp.CodingAgent, "Summarize the project architecture.",
+    model: "anthropic:claude-haiku-4-5",
+    timeout: 120_000,
+    max_turns: 8
+  )
+```
+
+They also support structured output:
+
+```elixir
+{:ok, %{summary: summary}} =
+  Condukt.run(MyApp.CodingAgent, "Read the supplied file and summarize it.",
+    input: %{path: "README.md"},
+    input_schema: %{
+      type: "object",
+      properties: %{path: %{type: "string"}},
+      required: ["path"]
+    },
+    output: %{
+      type: "object",
+      properties: %{summary: %{type: "string"}},
+      required: ["summary"]
+    }
+  )
+```
+
+Since Elixir modules and registered process names are both atoms,
+`Condukt.run/3` treats atoms that look like Condukt agent modules as
+module-defined one-shot runs. Use a pid or a non-module atom to target a
+persistent registered session.
 
 ## Operations
 
@@ -193,8 +265,9 @@ end
   MyApp.ReviewAgent.review_pr(%{repo: "tuist/condukt", pr_number: 1})
 ```
 
-Each call spins up a transient `Condukt.Session` with the agent's tools plus
-a synthetic `submit_result` tool whose schema *is* the declared output
+Each call uses the same transient, module-defined one-shot path as
+`Condukt.run(MyApp.Agent, prompt, output: schema)`, with the agent's tools
+plus a synthetic `submit_result` tool whose schema *is* the declared output
 schema. The agent loop runs until the model calls `submit_result`; the
 captured arguments are validated against the output schema and returned. No
 process needs to be supervised, and no conversation history is kept across
@@ -206,8 +279,8 @@ Reach for an operation when you want to:
 - Compose one agent's typed entrypoint into another agent's tool list
 - Get input/output validation identical to what the LLM provider sees
 
-Reach for `start_link` + `Condukt.run/2` when continuity across turns
-matters: when the next message depends on the last one.
+Reach for a persistent agent process when continuity across turns matters:
+when the next message depends on the last one.
 
 Schemas are JSON Schema maps, validated with [JSV](https://hex.pm/packages/jsv).
 Input validation runs before any LLM call; output validation runs after the
@@ -252,9 +325,11 @@ Anonymous workflows can also take typed input and return structured output:
   )
 ```
 
-Use anonymous workflows when the whole task is contained in one call. Use a
-supervised agent when you need conversation history, long-lived state, or
-OTP supervision.
+Use anonymous workflows when the whole task is contained in one call and no
+module-level agent identity is useful. Use `Condukt.run(MyApp.Agent, prompt)`
+when you want a named agent's callbacks without a persistent process. Use a
+supervised agent when you need conversation history, long-lived state, or OTP
+supervision.
 
 ## Sub-agents
 

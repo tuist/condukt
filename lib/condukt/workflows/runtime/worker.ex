@@ -5,7 +5,7 @@ defmodule Condukt.Workflows.Runtime.Worker do
 
   use GenServer
 
-  alias Condukt.Workflows.{AgentShim, Workflow}
+  alias Condukt.Workflows.Workflow
 
   @default_timeout 300_000
 
@@ -40,16 +40,9 @@ defmodule Condukt.Workflows.Runtime.Worker do
 
   defp start_and_run(workflow, input) do
     with :ok <- validate_input(input, workflow.inputs_schema),
-         {:ok, session_opts} <- Workflow.to_session_opts(workflow),
-         {:ok, pid} <- Condukt.Session.start_link(AgentShim, session_opts) do
-      run_session(pid, prompt(workflow, input))
+         {:ok, session_opts} <- Workflow.to_session_opts(workflow) do
+      Condukt.run(prompt(workflow, input), session_opts)
     end
-  end
-
-  defp run_session(pid, prompt) do
-    Condukt.Session.run(pid, prompt)
-  after
-    if Process.alive?(pid), do: GenServer.stop(pid)
   end
 
   defp validate_input(_input, nil), do: :ok

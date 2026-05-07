@@ -39,17 +39,43 @@ defmodule MyApp.ResearchAgent do
 end
 ```
 
-## Starting an agent
+## Running an agent once
+
+For one-shot work, pass the agent module directly to `Condukt.run/3`:
+
+```elixir
+{:ok, answer} =
+  Condukt.run(MyApp.ResearchAgent, "Summarize this project.",
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY"),
+    cwd: "/path/to/project"
+  )
+```
+
+Condukt starts an unlinked transient session, runs the prompt synchronously,
+returns the final response, and stops the session. The agent module still
+supplies its callbacks and defaults:
+
+1. Options passed to `Condukt.run/3`
+2. `config :condukt, ...`
+3. Module callback defaults
+
+Module-defined one-shot runs are the default fit for scripts, jobs, request
+handlers, and CI tasks where the process should not outlive the call.
+
+## Starting a persistent agent
+
+Start an agent process when you need conversation history, streaming,
+persistence, compaction, or supervision across multiple prompts:
 
 ```elixir
 {:ok, agent} =
   MyApp.ResearchAgent.start_link(
     api_key: System.fetch_env!("ANTHROPIC_API_KEY"),
     cwd: "/path/to/project"
-  )
+)
 ```
 
-Resolution order for configuration is:
+Resolution order for persistent session configuration is:
 
 1. Options passed to `start_link/1`
 2. `config :condukt, ...`
@@ -75,7 +101,18 @@ MyApp.ResearchAgent.start_link(
 
 ## Public API
 
-For a running agent process, the `Condukt` module forwards these calls to
+`Condukt.run/2` and `Condukt.run/3` support three call shapes:
+
+* `Condukt.run("prompt", opts)` runs an anonymous one-shot workflow
+* `Condukt.run(MyApp.Agent, "prompt", opts)` runs a module-defined one-shot agent
+* `Condukt.run(agent_pid_or_name, "prompt", opts)` runs against a persistent session
+
+Since Elixir modules and registered process names are both atoms,
+`Condukt.run/3` treats atoms that look like Condukt agent modules as
+module-defined one-shot runs. Use a pid or a non-module atom when targeting a
+persistent registered session.
+
+For a running agent process, the `Condukt` module also forwards these calls to
 `Condukt.Session`:
 
 * `Condukt.run/3` runs a prompt to completion
@@ -87,9 +124,8 @@ For a running agent process, the `Condukt` module forwards these calls to
 * `Condukt.steer/2` injects a message mid run, skipping remaining tool calls
 * `Condukt.follow_up/2` queues a message to be delivered after the current run
 
-`Condukt.run/2` also accepts a prompt as the first argument for anonymous
-workflows that do not need an agent module. See the
-[Anonymous Workflows guide](anonymous_workflows.md).
+See the [Anonymous Workflows guide](anonymous_workflows.md) for prompt-first
+one-shot runs without an agent module.
 
 ## Handling events in the agent module
 
