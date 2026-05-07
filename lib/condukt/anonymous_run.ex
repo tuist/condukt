@@ -133,17 +133,7 @@ defmodule Condukt.AnonymousRun do
   end
 
   defp with_session(session_opts, fun) do
-    case Session.start_link(AnonymousAgent, session_opts) do
-      {:ok, pid} ->
-        try do
-          fun.(pid)
-        after
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    Session.with_transient(AnonymousAgent, session_opts, fun)
   end
 
   defp encode_args(args) do

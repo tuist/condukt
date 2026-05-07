@@ -67,6 +67,30 @@ defmodule Condukt.Session do
 
   @doc false
   def start_link(agent_module, opts) do
+    start_session(:link, agent_module, opts)
+  end
+
+  @doc false
+  def start(agent_module, opts) do
+    start_session(:nolink, agent_module, opts)
+  end
+
+  @doc false
+  def with_transient(agent_module, opts, fun) when is_function(fun, 1) do
+    case start(agent_module, opts) do
+      {:ok, pid} ->
+        try do
+          fun.(pid)
+        after
+          if Process.alive?(pid), do: GenServer.stop(pid)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp start_session(link_mode, agent_module, opts) do
     config = Keyword.get(opts, :config, [])
     explicit_keys = opts |> Keyword.keys() |> MapSet.new()
     opts = Keyword.delete(opts, :config)
@@ -91,7 +115,10 @@ defmodule Condukt.Session do
       |> put_configured_opt(config, :compactor)
       |> put_configured_opt(config, :redactor)
 
-    GenServer.start_link(__MODULE__, agent_opts, gen_opts)
+    case link_mode do
+      :link -> GenServer.start_link(__MODULE__, agent_opts, gen_opts)
+      :nolink -> GenServer.start(__MODULE__, agent_opts, gen_opts)
+    end
   end
 
   defp put_configured_opt(opts, config, key, default_fun \\ fn -> nil end) do

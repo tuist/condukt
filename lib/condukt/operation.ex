@@ -187,17 +187,9 @@ defmodule Condukt.Operation do
       |> maybe_put(:base_url, opts[:base_url])
       |> maybe_put(:model, opts[:model])
 
-    case Condukt.Session.start_link(agent_module, session_opts) do
-      {:ok, pid} ->
-        try do
-          run_session(pid, operation, args, opts, ref)
-        after
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    Condukt.Session.with_transient(agent_module, session_opts, fn pid ->
+      run_session(pid, operation, args, opts, ref)
+    end)
   end
 
   defp run_session(pid, operation, args, opts, ref) do
