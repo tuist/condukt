@@ -103,9 +103,9 @@ encourage additional typespec-style annotations beyond that.
 ### Flag
 
 - **Any *net-new* `@spec`, `@type`, `@typep`, or `@opaque` being added to
-  `lib/` for the first time.** Do not flag existing typespecs that appear
-  in a diff due to code movement, refactoring, or line shifts. Only flag
-  genuinely new type annotations. **Severity: medium.**
+  `lib/` for the first time**, except in behavior definition modules
+  (modules that contain `@callback` declarations where type aliases
+  define the behavior interface). **Severity: medium.**
 - **Typed signatures in `@callback` declarations** (e.g.,
   `@callback foo() :: return_type()`). Plain `@callback foo()` without
   the type signature is preferred; document return shapes in `@doc` as
@@ -116,6 +116,9 @@ encourage additional typespec-style annotations beyond that.
 
 ### Do not flag
 
+- Type aliases (`@type`, `@typep`, `@opaque`) and `@spec` on callbacks
+  in modules that define behavior contracts via `@callback` declarations,
+  as these define the interface for implementations.
 - Plain `@callback` / `@macrocallback` declarations without typed
   signatures, when a behaviour contract is necessary.
 - `@callback` declarations that already exist and are only appearing in
@@ -141,16 +144,16 @@ observe non-local failures, keep it narrow and explicit.
   flow that could be handled with tagged tuples and matching.**
   **Severity: medium.**
 
-### Do not flag
+### Do not flag (these exceptions take precedence over flagging rules)
 
-- Explicit pattern matching with `case`, `with`, function heads, or
-  guards.
-- Narrow boundary code in `lib/condukt/sandbox/virtual.ex` or
-  `lib/condukt/sandbox/local.ex` that handles NIF initialization
-  failures, MuonTrap execution monitoring, or external library
-  instrumentation where return values alone cannot capture all failure
-  modes. Keep such exception handling as narrow as possible.
-- `try/catch` or `try/rescue` in test files (outside `lib/`).
+- **Explicit pattern matching with `case`, `with`, function heads, or
+  guards.**
+- **ALL exception handling in `lib/condukt/sandbox/virtual.ex` and
+  `lib/condukt/sandbox/local.ex`**, including `try/catch`, `try/rescue`,
+  and `catch` clauses. These modules handle NIF initialization failures,
+  MuonTrap execution monitoring, and external library instrumentation
+  where return values alone cannot capture all failure modes.
+- **`try/catch` or `try/rescue` in test files** (outside `lib/`).
 
 ## 7. Mimic copies belong in `test/test_helper.exs`
 
