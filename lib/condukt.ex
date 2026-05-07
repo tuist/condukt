@@ -235,7 +235,24 @@ defmodule Condukt do
   @doc """
   Runs a prompt and returns the final response.
 
-  Two call shapes are supported:
+  Three call shapes are supported:
+
+  ## Module-defined one-shot run
+
+  Pass an agent module and a prompt when you want to use the module's
+  callbacks without managing a long-lived process yourself. Condukt starts an
+  unlinked transient session, runs the prompt synchronously, stops the session,
+  and returns the final response.
+
+      {:ok, response} = Condukt.run(MyApp.CodingAgent, "Hello!")
+      {:ok, response} = Condukt.run(MyApp.CodingAgent, "Hello!", timeout: 60_000)
+
+  This form honors the agent module's defaults (`system_prompt/0`, `tools/0`,
+  `model/0`, `thinking_level/0`, `sandbox/0`, `secrets/0`, and `subagents/0`).
+  Options passed to `run/3` override those defaults for that call. Since both
+  agent modules and registered process names are atoms, atoms that look like
+  Condukt agent modules are treated as one-shot module runs. Use a pid or a
+  non-module atom when targeting a persistent registered session.
 
   ## Against a running agent
 
@@ -320,12 +337,13 @@ defmodule Condukt do
   - `{:invalid_output, %JSV.ValidationError{}}` - submitted value failed validation
   - `:no_result_submitted` - structured mode finished without a `submit_result` call
 
-  Anonymous runs accept all the per-run options above (`:timeout`,
+  Anonymous and module-defined one-shot runs accept all the per-run options above (`:timeout`,
   `:max_turns`, `:images`) plus the session options accepted by an agent's
   `start_link/1` (`:model`, `:system_prompt`, `:api_key`, `:base_url`,
   `:thinking_level`, `:tools`, `:sandbox`, `:cwd`, `:session_store`,
   `:subagents`, `:compactor`, `:redactor`, `:load_project_instructions`).
-  `:load_project_instructions` defaults to `false` for anonymous runs.
+  `:load_project_instructions` defaults to `false` for anonymous runs and to
+  `true` for module-defined one-shot runs.
   """
   def run(prompt) when is_binary(prompt) do
     Condukt.AnonymousRun.run(prompt, [])
@@ -335,12 +353,44 @@ defmodule Condukt do
     Condukt.AnonymousRun.run(prompt, opts)
   end
 
-  def run(agent, prompt) when (is_pid(agent) or is_atom(agent)) and is_binary(prompt) do
+  def run(agent, prompt) when is_pid(agent) and is_binary(prompt) do
     Condukt.Session.run(agent, prompt, [])
   end
 
-  def run(agent, prompt, opts) when (is_pid(agent) or is_atom(agent)) and is_binary(prompt) and is_list(opts) do
+  def run(agent_or_module, prompt) when is_atom(agent_or_module) and is_binary(prompt) do
+    run_agent_or_module(agent_or_module, prompt, [])
+  end
+
+  def run(agent, prompt, opts) when is_pid(agent) and is_binary(prompt) and is_list(opts) do
     Condukt.Session.run(agent, prompt, opts)
+  end
+
+  def run(agent_or_module, prompt, opts) when is_atom(agent_or_module) and is_binary(prompt) and is_list(opts) do
+    run_agent_or_module(agent_or_module, prompt, opts)
+  end
+
+  defp run_agent_or_module(agent_or_module, prompt, opts) do
+    if agent_module?(agent_or_module) do
+      run_module_once(agent_or_module, prompt, opts)
+    else
+      Condukt.Session.run(agent_or_module, prompt, opts)
+    end
+  end
+
+  defp run_module_once(agent_module, prompt, opts) do
+    Condukt.AnonymousRun.run(agent_module, prompt, opts)
+  end
+
+  defp agent_module?(module) when is_atom(module) do
+    case Code.ensure_loaded(module) do
+      {:module, ^module} ->
+        function_exported?(module, :__operations__, 0) and
+          function_exported?(module, :tools, 0) and
+          function_exported?(module, :init, 1)
+
+      {:error, _reason} ->
+        false
+    end
   end
 
   @doc """

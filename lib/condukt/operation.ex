@@ -140,8 +140,11 @@ defmodule Condukt.Operation do
   defp execute(agent_module, operation, args, opts) do
     base_prompt = base_system_prompt(agent_module)
 
-    operation.instructions
-    |> Condukt.run(anonymous_run_opts(agent_module, operation, args, base_prompt, opts))
+    Condukt.AnonymousRun.run(
+      agent_module,
+      operation.instructions,
+      anonymous_run_opts(agent_module, operation, args, base_prompt, opts)
+    )
   end
 
   defp base_system_prompt(agent_module) do
@@ -154,7 +157,6 @@ defmodule Condukt.Operation do
 
   defp anonymous_run_opts(agent_module, operation, args, base_prompt, opts) do
     [
-      agent_module: agent_module,
       input: args,
       input_schema: operation.input_schema,
       output: operation.output_schema,

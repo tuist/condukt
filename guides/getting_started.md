@@ -53,7 +53,35 @@ end
 and provides defaults for `system_prompt/0`, `model/0`, `thinking_level/0`,
 `init/1`, and `handle_event/2`. Override what you need.
 
-## Start the agent
+## Run the agent
+
+For one prompt, pass the agent module directly to `Condukt.run/3`:
+
+```elixir
+{:ok, response} =
+  Condukt.run(MyApp.CodingAgent, "Create a GenServer that manages a counter.",
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY"),
+    system_prompt: "You are an expert software engineer."
+  )
+```
+
+Condukt starts a transient session, runs the agent loop synchronously, returns
+the final assistant message, and stops the session. The `GenServer` remains an
+implementation detail for this one-shot form.
+
+Common options to module-defined one-shot runs:
+
+* `:api_key` overrides `config :condukt, :api_key`
+* `:model` accepts the ReqLLM `provider:model` format
+* `:cwd` sets the working directory used by file and shell tools
+* `:timeout` caps the synchronous call timeout in milliseconds
+* `:max_turns` caps tool-use loops
+* `:output` enables structured output with a JSON Schema
+
+## Start a persistent agent
+
+Use `start_link/1` when you want conversation history, streaming, persistence,
+compaction, or supervision across multiple prompts:
 
 ```elixir
 {:ok, agent} =
@@ -72,7 +100,7 @@ Common options to `start_link/1`:
 * `:compactor` keeps context bounded over long runs (see [Compaction](compaction.md))
 * `:redactor` strips secrets from outbound messages (see [Redaction](redaction.md))
 
-## Run a prompt
+## Run against a persistent agent
 
 ```elixir
 {:ok, response} = Condukt.run(agent, "Create a GenServer that manages a counter.")
