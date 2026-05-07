@@ -18,9 +18,9 @@ defmodule Condukt.SessionIDTest do
     assert length(Enum.uniq(ids)) == length(ids)
   end
 
-  test "ids generated later sort lexicographically after earlier ones" do
+  test "ids generated in different milliseconds sort lexicographically" do
     earlier = SessionID.generate()
-    Process.sleep(2)
+    Process.sleep(5)
     later = SessionID.generate()
 
     assert earlier < later

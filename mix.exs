@@ -57,6 +57,9 @@ defmodule Condukt.MixProject do
       # Telemetry
       {:telemetry, "~> 1.0"},
 
+      # UUIDv7 generation for session identifiers in telemetry metadata
+      {:uniq, "~> 0.6"},
+
       # Native interop with the bashkit virtual sandbox.
       # Dev builds compile NIFs from source by default. Tests can opt into
       # source builds with the *_BUILD flags, while non-dev consumers download
