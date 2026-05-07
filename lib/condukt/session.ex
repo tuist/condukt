@@ -23,7 +23,7 @@ defmodule Condukt.Session do
 
   use GenServer
 
-  alias Condukt.{Compactor, Context, Message, Redactor, Sandbox, Secrets, SessionStore, Telemetry, Tool}
+  alias Condukt.{Compactor, Context, Message, Redactor, Sandbox, Secrets, SessionID, SessionStore, Telemetry, Tool}
   alias Condukt.SessionStore.Snapshot
   alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolCall
@@ -34,6 +34,7 @@ defmodule Condukt.Session do
   @default_max_turns 50
 
   defstruct [
+    :id,
     :pid,
     :agent_module,
     :model,
@@ -194,6 +195,18 @@ defmodule Condukt.Session do
   end
 
   @doc """
+  Returns the unique identifier for this session.
+
+  Sessions are identified by a UUIDv7 generated when the session starts, or by
+  the value passed via the `:id` option to `start_link/2` / `start/2`. The id
+  is included in telemetry metadata so subscribers can group all events
+  emitted by a single agentic run.
+  """
+  def id(agent) do
+    GenServer.call(agent, :id)
+  end
+
+  @doc """
   Clears the conversation history.
   """
   def clear(agent) do
@@ -246,15 +259,17 @@ defmodule Condukt.Session do
         configured_system_prompt = restore_value(opts, :system_prompt, snapshot && snapshot.system_prompt)
         project_context = load_project_context(opts)
         cwd = Keyword.fetch!(opts, :cwd)
+        id = Keyword.get(opts, :id) || SessionID.generate()
 
         with {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd)},
              {:secrets, {:ok, secrets}} <- {:secrets, Secrets.resolve(opts[:secrets])} do
-          emit_secret_resolve(agent_module, secrets)
+          emit_secret_resolve(id, agent_module, secrets)
           subagents = normalize_subagents(Keyword.get(opts, :subagents, []))
           {:ok, subagent_supervisor} = maybe_start_subagent_supervisor(subagents)
 
           state =
             %__MODULE__{
+              id: id,
               pid: self(),
               agent_module: agent_module,
               model: restore_value(opts, :model, snapshot && snapshot.model),
@@ -352,6 +367,10 @@ defmodule Condukt.Session do
     {:reply, state.messages, state}
   end
 
+  def handle_call(:id, _from, state) do
+    {:reply, state.id, state}
+  end
+
   def handle_call(:clear, _from, state) do
     state = %{state | messages: []}
     persist_or_clear_snapshot(state, :clear)
@@ -442,7 +461,7 @@ defmodule Condukt.Session do
     user_message = Message.user(prompt, images)
     messages = state.messages ++ [user_message]
 
-    Telemetry.span(:agent, %{agent: state.agent_module}, fn ->
+    Telemetry.span(:agent, %{agent: state.agent_module, session_id: state.id}, fn ->
       case agent_loop(state, messages, max_turns, 0) do
         {:ok, final_messages, response} ->
           {{:ok, response}, final_messages}
@@ -462,7 +481,7 @@ defmodule Condukt.Session do
 
     emit.(:agent_start)
 
-    Telemetry.span(:agent, %{agent: state.agent_module}, fn ->
+    Telemetry.span(:agent, %{agent: state.agent_module, session_id: state.id}, fn ->
       result = streaming_loop(state, messages, max_turns, 0, emit, abort_ref)
       emit.(:agent_end)
       result
@@ -786,7 +805,7 @@ defmodule Condukt.Session do
   end
 
   defp execute_tool_call(tool_map, {id, name, args}, state) do
-    Telemetry.span(:tool_call, %{tool: name}, fn ->
+    Telemetry.span(:tool_call, %{tool: name, session_id: state.id, agent: state.agent_module}, fn ->
       execute_tool(tool_map, name, args, state, id)
     end)
   end
@@ -808,13 +827,17 @@ defmodule Condukt.Session do
     end
   end
 
-  defp emit_secret_resolve(agent_module, secrets) do
+  defp emit_secret_resolve(session_id, agent_module, secrets) do
     case Secrets.names(secrets) do
       [] ->
         :ok
 
       names ->
-        Telemetry.emit([:secrets, :resolve], %{count: length(names)}, %{agent: agent_module, names: names})
+        Telemetry.emit(
+          [:secrets, :resolve],
+          %{count: length(names)},
+          %{session_id: session_id, agent: agent_module, names: names}
+        )
     end
   end
 
@@ -825,7 +848,7 @@ defmodule Condukt.Session do
 
       names ->
         metadata =
-          %{agent: state.agent_module, tool: tool, names: names}
+          %{session_id: state.id, agent: state.agent_module, tool: tool, names: names}
           |> maybe_put(:tool_call_id, tool_call_id)
 
         Telemetry.emit([:secrets, :access], %{count: length(names)}, metadata)
@@ -845,6 +868,7 @@ defmodule Condukt.Session do
 
   defp tool_context(state, opts) do
     %{
+      session_id: state.id,
       agent: state.pid,
       agent_module: state.agent_module,
       sandbox: state.sandbox,
@@ -996,7 +1020,7 @@ defmodule Condukt.Session do
             before: before_count,
             after: length(messages)
           },
-          %{agent: state.agent_module}
+          %{agent: state.agent_module, session_id: state.id}
         )
 
         %{state | messages: messages}

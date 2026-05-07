@@ -42,6 +42,167 @@ defmodule Condukt.SessionTest do
     end
   end
 
+  describe "session id" do
+    test "generates a UUIDv7 by default" do
+      {:ok, pid} = ConfigAgent.start_link(load_project_instructions: false)
+      id = Condukt.Session.id(pid)
+
+      assert is_binary(id)
+      # 8-4-4-4-12 lowercase hex with version 7 in the third group.
+      assert id =~ ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+
+      GenServer.stop(pid)
+    end
+
+    test "honors an :id option passed by the caller" do
+      explicit = "11111111-2222-7333-8444-555555555555"
+      {:ok, pid} = ConfigAgent.start_link(id: explicit, load_project_instructions: false)
+
+      assert Condukt.Session.id(pid) == explicit
+
+      GenServer.stop(pid)
+    end
+
+    test "tags agent telemetry with the session id" do
+      handler_id = "agent-session-id-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:condukt, :agent, :start], [:condukt, :agent, :stop]],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:agent_telemetry, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {model, _} = LLMProvider.model([LLMProvider.text_response("hi")])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, load_project_instructions: false)
+      id = Condukt.Session.id(pid)
+
+      assert {:ok, "hi"} = Condukt.run(pid, "ping")
+
+      assert_receive {:agent_telemetry, [:condukt, :agent, :start], %{session_id: ^id, agent: ConfigAgent}}
+      assert_receive {:agent_telemetry, [:condukt, :agent, :stop], %{session_id: ^id, agent: ConfigAgent}}
+
+      GenServer.stop(pid)
+    end
+
+    test "tags tool_call telemetry with the session id" do
+      handler_id = "tool-call-session-id-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:condukt, :tool_call, :start], [:condukt, :tool_call, :stop]],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:tool_telemetry, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      tool =
+        Condukt.tool(
+          name: "noop",
+          description: "noop",
+          parameters: %{type: "object", properties: %{}},
+          call: fn _args, _context -> {:ok, "ok"} end
+        )
+
+      tool_call = ToolCall.new("call_x", "noop", JSON.encode!(%{}))
+
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [tool_call]},
+            :tool_calls
+          ),
+          LLMProvider.text_response("done")
+        ])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, tools: [tool], load_project_instructions: false)
+      id = Condukt.Session.id(pid)
+
+      assert {:ok, "done"} = Condukt.run(pid, "go")
+
+      assert_receive {:tool_telemetry, [:condukt, :tool_call, :start],
+                      %{session_id: ^id, tool: "noop", agent: ConfigAgent}}
+
+      assert_receive {:tool_telemetry, [:condukt, :tool_call, :stop],
+                      %{session_id: ^id, tool: "noop", agent: ConfigAgent}}
+
+      GenServer.stop(pid)
+    end
+
+    test "secrets telemetry includes the session id" do
+      handler_id = "secrets-session-id-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:condukt, :secrets, :resolve],
+        fn _event, _measurements, metadata, _ ->
+          send(test_pid, {:secret_telemetry, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {:ok, pid} =
+        ConfigAgent.start_link(
+          secrets: [GH_TOKEN: {:static, "secret-token"}],
+          load_project_instructions: false
+        )
+
+      id = Condukt.Session.id(pid)
+
+      assert_receive {:secret_telemetry, %{session_id: ^id, agent: ConfigAgent}}
+
+      GenServer.stop(pid)
+    end
+
+    test "tools receive the session id in their context" do
+      test_pid = self()
+
+      tool =
+        Condukt.tool(
+          name: "echo_session",
+          description: "echoes the session id",
+          parameters: %{type: "object", properties: %{}},
+          call: fn _args, context ->
+            send(test_pid, {:tool_context, context})
+            {:ok, "ok"}
+          end
+        )
+
+      tool_call = ToolCall.new("call_y", "echo_session", JSON.encode!(%{}))
+
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [tool_call]},
+            :tool_calls
+          ),
+          LLMProvider.text_response("done")
+        ])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, tools: [tool], load_project_instructions: false)
+      id = Condukt.Session.id(pid)
+
+      assert {:ok, "done"} = Condukt.run(pid, "go")
+
+      assert_receive {:tool_context, %{session_id: ^id}}
+
+      GenServer.stop(pid)
+    end
+  end
+
   test "transient sessions are not linked to the caller" do
     assert {:ok, {pid, links}} =
              Condukt.Session.with_transient(ConfigAgent, [load_project_instructions: false], fn pid ->

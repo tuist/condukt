@@ -19,19 +19,25 @@ defmodule Condukt.AnonymousRun do
   alias Condukt.AnonymousAgent
   alias Condukt.Operation.SubmitTool
   alias Condukt.Session
+  alias Condukt.SessionID
   alias Condukt.Telemetry
 
   @run_opt_keys [:timeout, :max_turns, :images]
   @runtime_keys [:input, :output, :input_schema]
 
   def run(prompt, opts) when is_binary(prompt) and is_list(opts) do
+    opts = Keyword.put_new_lazy(opts, :id, &SessionID.generate/0)
+
     Telemetry.span(:run, run_metadata(opts), fn ->
       do_run(prompt, opts, AnonymousAgent, false)
     end)
   end
 
   def run(agent_module, prompt, opts) when is_atom(agent_module) and is_binary(prompt) and is_list(opts) do
-    opts = Keyword.put_new(opts, :tools, agent_module.tools())
+    opts =
+      opts
+      |> Keyword.put_new(:tools, agent_module.tools())
+      |> Keyword.put_new_lazy(:id, &SessionID.generate/0)
 
     Telemetry.span(:run, run_metadata(opts), fn ->
       do_run(prompt, opts, agent_module, true)
@@ -41,7 +47,8 @@ defmodule Condukt.AnonymousRun do
   defp run_metadata(opts) do
     %{
       structured?: not is_nil(Keyword.get(opts, :output)),
-      input?: not is_nil(Keyword.get(opts, :input))
+      input?: not is_nil(Keyword.get(opts, :input)),
+      session_id: Keyword.get(opts, :id)
     }
   end
 
