@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.17.0] - 2026-05-07
+
+### Bug Fixes
+
+- encode image messages as ReqLLM ContentPart structs
+
+
+
+### Features
+
+- One-shot agent execution
+
+
 ## [0.16.5] - 2026-05-04
 
 ### Bug Fixes
