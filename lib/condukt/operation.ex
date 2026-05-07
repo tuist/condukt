@@ -4,8 +4,8 @@ defmodule Condukt.Operation do
 
   An operation declares an input schema, an output schema, and a block of
   instructions. The macro generates a function on the agent module that
-  validates the input, runs a transient agent session forced to produce a
-  structured result, validates the output, and returns it.
+  validates the input, runs the operation through Condukt's structured
+  anonymous run path, validates the output, and returns it.
 
   ## Declaring
 
@@ -42,16 +42,12 @@ defmodule Condukt.Operation do
       {:ok, %{verdict: "approve", summary: _}} =
         MyApp.ReviewAgent.review_pr(%{repo: "tuist/condukt", pr_number: 1})
 
-  Each call spins up a transient `Condukt.Session`, runs the agent loop with
-  the agent's tools plus a synthetic `submit_result` tool, captures the
-  structured result, and tears the session down. No history is kept across
-  calls.
+  Each call runs without keeping history across calls.
 
   Schemas must be JSON Schema maps. Atom keys are accepted in both schemas
   and call-site arguments — they are normalized internally.
   """
 
-  alias Condukt.Operation.SubmitTool
   alias Condukt.Telemetry
 
   defstruct [:name, :input_schema, :output_schema, :instructions]
@@ -110,8 +106,7 @@ defmodule Condukt.Operation do
   def run(agent_module, name, args, opts \\ []) do
     Telemetry.span(:operation, %{agent: agent_module, operation: name}, fn ->
       with {:ok, operation} <- fetch_operation(agent_module, name),
-           {:ok, normalized} <- normalize(args),
-           :ok <- validate_input(operation, normalized) do
+           {:ok, normalized} <- normalize(args) do
         execute(agent_module, operation, normalized, opts)
       end
     end)
@@ -142,78 +137,11 @@ defmodule Condukt.Operation do
   defp to_string_key(k) when is_atom(k), do: Atom.to_string(k)
   defp to_string_key(k) when is_binary(k), do: k
 
-  defp validate_input(%__MODULE__{input_schema: schema}, args) do
-    case build_root(schema) do
-      {:ok, root} ->
-        case JSV.validate(args, root) do
-          {:ok, _validated} -> :ok
-          {:error, error} -> {:error, {:invalid_input, error}}
-        end
-
-      {:error, error} ->
-        {:error, {:invalid_input_schema, error}}
-    end
-  end
-
-  defp validate_output(%__MODULE__{output_schema: schema}, data) do
-    case build_root(schema) do
-      {:ok, root} ->
-        case JSV.validate(data, root) do
-          {:ok, validated} -> {:ok, validated}
-          {:error, error} -> {:error, {:invalid_output, error}}
-        end
-
-      {:error, error} ->
-        {:error, {:invalid_output_schema, error}}
-    end
-  end
-
-  defp build_root(schema), do: JSV.build(schema)
-
   defp execute(agent_module, operation, args, opts) do
-    ref = make_ref()
-    parent = self()
-
-    submit_tool = {SubmitTool, schema: operation.output_schema, reply_to: parent, ref: ref}
     base_prompt = base_system_prompt(agent_module)
 
-    session_opts =
-      [
-        tools: agent_module.tools() ++ [submit_tool],
-        system_prompt: compose_system_prompt(base_prompt, operation),
-        load_project_instructions: false
-      ]
-      |> maybe_put(:api_key, opts[:api_key])
-      |> maybe_put(:base_url, opts[:base_url])
-      |> maybe_put(:model, opts[:model])
-
-    Condukt.Session.with_transient(agent_module, session_opts, fn pid ->
-      run_session(pid, operation, args, opts, ref)
-    end)
-  end
-
-  defp run_session(pid, operation, args, opts, ref) do
-    prompt = encode_prompt(args)
-    run_opts = Keyword.take(opts, [:timeout, :max_turns])
-
-    case Condukt.Session.run(pid, prompt, run_opts) do
-      {:ok, _text} ->
-        await_submission(operation, ref)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp await_submission(operation, ref) do
-    receive do
-      {^ref, :operation_submit, submitted} ->
-        with {:ok, validated} <- validate_output(operation, submitted) do
-          {:ok, atomize_top_level(validated, operation.output_schema)}
-        end
-    after
-      0 -> {:error, :no_result_submitted}
-    end
+    operation.instructions
+    |> Condukt.run(anonymous_run_opts(agent_module, operation, args, base_prompt, opts))
   end
 
   defp base_system_prompt(agent_module) do
@@ -224,45 +152,22 @@ defmodule Condukt.Operation do
     end
   end
 
-  defp compose_system_prompt(base, operation) do
-    pieces =
-      [
-        base,
-        operation.instructions,
-        "When you have your final answer, call the `submit_result` tool. Call it exactly once, then stop."
-      ]
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    Enum.join(pieces, "\n\n")
-  end
-
-  defp encode_prompt(args) do
-    "Run the operation with these arguments:\n\n```json\n#{JSON.encode!(args)}\n```"
+  defp anonymous_run_opts(agent_module, operation, args, base_prompt, opts) do
+    [
+      agent_module: agent_module,
+      input: args,
+      input_schema: operation.input_schema,
+      output: operation.output_schema,
+      tools: agent_module.tools(),
+      system_prompt: base_prompt,
+      load_project_instructions: false
+    ]
+    |> maybe_put(:api_key, opts[:api_key])
+    |> maybe_put(:base_url, opts[:base_url])
+    |> maybe_put(:model, opts[:model])
+    |> Keyword.merge(Keyword.take(opts, [:timeout, :max_turns]))
   end
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
-
-  defp atomize_top_level(map, output_schema) when is_map(map) do
-    properties = Map.get(output_schema, :properties) || Map.get(output_schema, "properties") || %{}
-
-    if properties != %{} and Enum.all?(properties, fn {k, _} -> is_atom(k) end) do
-      name_map = Map.new(properties, fn {atom_key, _} -> {Atom.to_string(atom_key), atom_key} end)
-      Map.new(map, &remap_key(&1, name_map))
-    else
-      map
-    end
-  end
-
-  defp atomize_top_level(other, _output_schema), do: other
-
-  defp remap_key({k, v}, name_map) when is_binary(k) do
-    case Map.fetch(name_map, k) do
-      {:ok, atom_key} -> {atom_key, v}
-      :error -> {k, v}
-    end
-  end
-
-  defp remap_key(kv, _name_map), do: kv
 end

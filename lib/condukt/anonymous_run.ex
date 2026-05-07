@@ -133,7 +133,8 @@ defmodule Condukt.AnonymousRun do
   end
 
   defp with_session(session_opts, fun) do
-    Session.with_transient(AnonymousAgent, session_opts, fun)
+    {agent_module, session_opts} = Keyword.pop(session_opts, :agent_module, AnonymousAgent)
+    Session.with_transient(agent_module, session_opts, fun)
   end
 
   defp encode_args(args) do

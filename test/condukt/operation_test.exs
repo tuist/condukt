@@ -36,6 +36,43 @@ defmodule Condukt.OperationTest do
     )
   end
 
+  defmodule AgentModuleTool do
+    use Condukt.Tool
+
+    @impl true
+    def name, do: "agent_module"
+
+    @impl true
+    def description, do: "Returns the session agent module."
+
+    @impl true
+    def parameters, do: %{type: "object", properties: %{}}
+
+    @impl true
+    def call(_args, context), do: {:ok, inspect(context.agent_module)}
+  end
+
+  defmodule ContextAgent do
+    use Condukt
+
+    @impl true
+    def tools, do: [AgentModuleTool]
+
+    operation(:inspect_context,
+      input: %{
+        type: "object",
+        properties: %{subject: %{type: "string"}},
+        required: ["subject"]
+      },
+      output: %{
+        type: "object",
+        properties: %{module_seen: %{type: "string"}},
+        required: ["module_seen"]
+      },
+      instructions: "Inspect the operation context."
+    )
+  end
+
   describe "compile-time declaration" do
     test "generates a function on the agent module for each operation" do
       assert function_exported?(ReviewAgent, :review_pr, 1)
@@ -137,5 +174,37 @@ defmodule Condukt.OperationTest do
 
       assert_receive {LLMProvider, :request, ^model_id, _context, _opts}
     end
+
+    test "keeps the declaring agent module in tool context" do
+      submitted_args = %{"module_seen" => inspect(ContextAgent)}
+
+      inspect_call = ToolCall.new("call_1", "agent_module", JSON.encode!(%{}))
+      submit_call = ToolCall.new("call_2", "submit_result", JSON.encode!(submitted_args))
+
+      {model, model_id} =
+        LLMProvider.model([
+          LLMProvider.response(%Message{role: :assistant, content: [], tool_calls: [inspect_call]}, :tool_calls),
+          LLMProvider.response(%Message{role: :assistant, content: [], tool_calls: [submit_call]}, :tool_calls),
+          LLMProvider.text_response("Done.")
+        ])
+
+      assert {:ok, %{module_seen: module_seen}} =
+               ContextAgent.inspect_context(%{subject: "context"}, model: model)
+
+      assert module_seen == inspect(ContextAgent)
+
+      assert_receive {LLMProvider, :request, ^model_id, _context, first_opts}
+      assert Enum.find(first_opts[:tools], &(&1.name == "agent_module"))
+      assert Enum.find(first_opts[:tools], &(&1.name == "submit_result"))
+
+      assert_receive {LLMProvider, :request, ^model_id, second_context, _second_opts}
+      assert context_contains?(second_context, inspect(ContextAgent))
+    end
+  end
+
+  defp context_contains?(context, text) do
+    context
+    |> inspect()
+    |> String.contains?(text)
   end
 end
