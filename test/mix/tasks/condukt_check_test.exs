@@ -6,14 +6,8 @@ defmodule Mix.Tasks.Condukt.CheckTest do
   @moduletag :tmp_dir
 
   test "prints ok for a valid workflow", %{tmp_dir: dir} do
-    path = Path.join(dir, "ok.star")
-
-    File.write!(path, """
-    def run(inputs):
-        return inputs
-
-    workflow(inputs = {})
-    """)
+    path = Path.join(dir, "ok.json")
+    File.write!(path, ~s({"steps": {"a": {"kind": "cmd", "argv": ["true"]}}}))
 
     output =
       capture_io(fn ->
@@ -23,9 +17,9 @@ defmodule Mix.Tasks.Condukt.CheckTest do
     assert String.trim(output) == "ok: #{path}"
   end
 
-  test "exits with status 1 on a parse error", %{tmp_dir: dir} do
-    path = Path.join(dir, "bad.star")
-    File.write!(path, "def run(:")
+  test "exits with status 1 when the document fails validation", %{tmp_dir: dir} do
+    path = Path.join(dir, "bad.json")
+    File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))
 
     assert catch_exit(
              capture_io(:stderr, fn ->

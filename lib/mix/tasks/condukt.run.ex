@@ -2,10 +2,11 @@ defmodule Mix.Tasks.Condukt.Run do
   @moduledoc """
   Runs a Condukt workflow file.
 
-      mix condukt.run path/to/workflow.star [--input JSON]
+      mix condukt.run path/to/workflow.json [--input JSON]
 
-  The file must define a top-level `run(inputs)` function and call
-  `workflow(inputs = ...)` at module top level.
+  The file must be a JSON document conforming to
+  `condukt.workflow.schema.json`. YAML and Starlark inputs are
+  supported in later slices.
   """
 
   use Mix.Task

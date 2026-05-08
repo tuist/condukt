@@ -2,10 +2,10 @@ defmodule Mix.Tasks.Condukt.Check do
   @moduledoc """
   Validates a Condukt workflow file without executing it.
 
-      mix condukt.check path/to/workflow.star
+      mix condukt.check path/to/workflow.json
 
-  Reports parse errors, missing `run/1` definitions, and other static
-  problems. Exits with status 1 when validation fails.
+  Validates the document against `condukt.workflow.schema.json` and
+  reports any problems. Exits with status 1 when validation fails.
   """
 
   use Mix.Task
@@ -29,8 +29,8 @@ defmodule Mix.Tasks.Condukt.Check do
       :ok ->
         Mix.shell().info("ok: #{path}")
 
-      {:error, diagnostics} when is_list(diagnostics) ->
-        Enum.each(diagnostics, fn diag -> Mix.shell().error(format_diagnostic(diag)) end)
+      {:error, {:invalid_workflow, %JSV.ValidationError{} = err}} ->
+        Mix.shell().error("invalid workflow: " <> Exception.message(err))
         exit({:shutdown, 1})
 
       {:error, reason} ->
@@ -38,11 +38,4 @@ defmodule Mix.Tasks.Condukt.Check do
         exit({:shutdown, 1})
     end
   end
-
-  defp format_diagnostic(%{"line" => line, "col" => col, "message" => message}) do
-    "#{line}:#{col}: #{message}"
-  end
-
-  defp format_diagnostic(%{"message" => message}), do: message
-  defp format_diagnostic(other), do: inspect(other)
 end

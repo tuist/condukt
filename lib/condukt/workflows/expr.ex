@@ -406,7 +406,7 @@ defmodule Condukt.Workflows.Expr do
           end
 
         nil ->
-          {:error, {:nil_member_access, name}}
+          {:ok, nil}
 
         _ ->
           {:error, {:not_an_object, name}}
@@ -418,6 +418,9 @@ defmodule Condukt.Workflows.Expr do
     with {:ok, target} <- do_eval(target_ast, ctx),
          {:ok, index} <- do_eval(index_ast, ctx) do
       case {target, index} do
+        {nil, _} ->
+          {:ok, nil}
+
         {list, i} when is_list(list) and is_integer(i) ->
           case fetch_at(list, i) do
             {:ok, v} -> {:ok, v}

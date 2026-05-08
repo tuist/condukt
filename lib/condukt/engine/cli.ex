@@ -103,8 +103,11 @@ defmodule Condukt.Engine.CLI do
 
     Usage:
       condukt version
-      condukt run PATH [--input JSON]
-      condukt check PATH
+      condukt run PATH [--input JSON]    Run a workflow JSON file
+      condukt check PATH                 Validate a workflow against the schema
+
+    Workflow JSON Schema:
+      https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
     """
     |> String.trim()
   end

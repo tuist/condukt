@@ -5,15 +5,16 @@ defmodule Mix.Tasks.Condukt.RunTest do
 
   @moduletag :tmp_dir
 
-  test "runs a workflow file and prints its return value", %{tmp_dir: dir} do
-    path = Path.join(dir, "echo.star")
+  test "runs a workflow file and prints the resolved output", %{tmp_dir: dir} do
+    path = Path.join(dir, "echo.json")
 
-    File.write!(path, """
-    def run(inputs):
-        return run_cmd(["echo", inputs["msg"]])["stdout"]
-
-    workflow(inputs = {"msg": {"type": "string"}})
-    """)
+    File.write!(path, ~s({
+      "inputs": {"msg": {"type": "string"}},
+      "steps": {
+        "say": {"kind": "cmd", "argv": ["echo", "${inputs.msg}"]}
+      },
+      "output": "${steps.say.stdout}"
+    }))
 
     output =
       capture_io(fn ->
@@ -25,8 +26,8 @@ defmodule Mix.Tasks.Condukt.RunTest do
 
   test "exits with an error when the file is missing" do
     assert catch_exit(
-             capture_io(fn ->
-               Mix.Tasks.Condukt.Run.run(["/nope/missing.star"])
+             capture_io(:stderr, fn ->
+               Mix.Tasks.Condukt.Run.run(["/nope/missing.json"])
              end)
            ) == {:shutdown, 1}
   end
