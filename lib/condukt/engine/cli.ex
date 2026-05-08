@@ -25,7 +25,6 @@ defmodule Condukt.Engine.CLI do
   defp dispatch(["--version"]), do: {:ok, version()}
   defp dispatch(["run" | args]), do: run_workflow(args)
   defp dispatch(["check" | args]), do: check_workflow(args)
-  defp dispatch(["compile" | args]), do: compile_workflow(args)
   defp dispatch([unknown | _args]), do: {:error, "Unknown command: #{unknown}\n\n#{usage()}"}
 
   defp run_workflow(args) do
@@ -46,25 +45,6 @@ defmodule Condukt.Engine.CLI do
         case Workflows.check(path) do
           :ok -> {:ok, "ok: #{path}"}
           {:error, reason} -> {:error, "check failed: #{inspect(reason)}"}
-        end
-
-      {:ok, _opts, []} ->
-        {:error, "Expected a workflow path"}
-
-      {:ok, _opts, rest} ->
-        {:error, "Expected exactly one path, got: #{Enum.join(rest, " ")}"}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp compile_workflow(args) do
-    case parse_options(args, []) do
-      {:ok, _opts, [path]} ->
-        case Workflows.compile(path) do
-          {:ok, json} -> {:ok, json}
-          {:error, reason} -> {:error, "compile failed: #{inspect(reason)}"}
         end
 
       {:ok, _opts, []} ->
@@ -125,7 +105,6 @@ defmodule Condukt.Engine.CLI do
       condukt version
       condukt run PATH [--input JSON]    Run a workflow file (.hcl/.json/.yaml/.yml/.exs)
       condukt check PATH                 Validate a workflow against the schema
-      condukt compile PATH               Compile an .hcl or .exs file to JSON on stdout
 
     Workflow JSON Schema:
       https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json

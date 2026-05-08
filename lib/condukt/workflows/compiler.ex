@@ -1,6 +1,6 @@
 defmodule Condukt.Workflows.Compiler do
   @moduledoc """
-  Compiles `.exs` workflow files to JSON workflow documents.
+  Normalizes `.exs` workflow files to workflow documents.
 
   An `.exs` workflow is an Elixir script whose final expression
   evaluates to a map describing the workflow. This is a low-level
@@ -14,7 +14,7 @@ defmodule Condukt.Workflows.Compiler do
 
   Standard Elixir features (`def` inside a `defmodule`, anonymous
   functions, `for`, `if`, comprehensions, `Enum`, etc.) are available
-  for compile-time meta-programming. References between steps are
+  for document generation. References between steps are
   written as plain `${...}` expression strings.
 
       # hello.exs
@@ -60,12 +60,10 @@ defmodule Condukt.Workflows.Compiler do
   end
 
   defp eval(source, path) do
-    try do
-      {value, _bindings} = Code.eval_string(source, [], file: path)
-      {:ok, value}
-    rescue
-      error -> {:error, {:eval_failed, path, Exception.message(error)}}
-    end
+    {value, _bindings} = Code.eval_string(source, [], file: path)
+    {:ok, value}
+  rescue
+    error -> {:error, {:eval_failed, path, Exception.message(error)}}
   end
 
   defp normalize_keyword(list, path) do
@@ -88,8 +86,7 @@ defmodule Condukt.Workflows.Compiler do
     end
   end
 
-  defp normalize(atom) when is_atom(atom) and atom not in [nil, true, false],
-    do: Atom.to_string(atom)
+  defp normalize(atom) when is_atom(atom) and atom not in [nil, true, false], do: Atom.to_string(atom)
 
   defp normalize(other), do: other
 

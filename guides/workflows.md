@@ -1,12 +1,12 @@
 # Workflows
 
 A workflow is a typed DAG of steps. Authors write the graph in HCL,
-and Condukt compiles it to the canonical JSON document that the engine
-executes, `condukt check` validates, and visual tools can read.
+and Condukt normalizes it to the canonical workflow document that the
+engine executes, `condukt check` validates, and visual tools can read.
 
 There is no project layout, manifest, or lockfile. To run a workflow
 you point the engine at a `.hcl`, `.json`, `.yaml`, `.yml`, or `.exs`
-path. The basename of the file is the run name unless the compiled
+path. The basename of the file is the run name unless the normalized
 document carries an explicit `name`.
 
 ## A first workflow
@@ -67,7 +67,8 @@ workflow "checks" {
 ```
 
 This graph has two independent roots, `lint` and `test`, followed by
-`package`. A visualizer can draw it directly from the compiled JSON:
+`package`. A visualizer can draw it directly from the normalized
+document:
 
 ```mermaid
 flowchart LR
@@ -110,7 +111,7 @@ at:
 https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 ```
 
-The compiled JSON shape is:
+The normalized document shape is:
 
 ```jsonc
 {
@@ -281,8 +282,8 @@ to `null`.
 
 ## JSON, YAML, and EXS
 
-HCL is the authored workflow format. It compiles to this canonical JSON
-document:
+HCL is the authored workflow format. It loads to this canonical
+document shape internally:
 
 ```json
 {
@@ -320,13 +321,7 @@ directly. Atom keys and atom values, other than `nil`, `true`, and
 `false`, are normalized to strings before validation. Use this only
 when you need Elixir to generate the document programmatically.
 
-Compile an authored workflow when you need the canonical JSON output:
-
-```sh
-condukt compile hello.hcl > hello.json
-```
-
-`condukt run hello.hcl` compiles transparently before validation and
+`condukt run hello.hcl` loads and validates the workflow before
 execution.
 
 ## Evaluating as a library
@@ -374,5 +369,4 @@ These are planned but not yet implemented:
   verifies on later runs.
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and
   `condukt serve PATH` to host webhook and cron-driven runs.
-- A visual editor that reads and writes the same compiled JSON
-  document.
+- A visual editor that reads and writes the same normalized document.

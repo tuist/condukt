@@ -37,7 +37,6 @@ Use engine mode when you want to run a workflow file directly:
 ```sh
 condukt check hello.hcl
 condukt run hello.hcl --input '{"name":"world"}'
-condukt compile hello.hcl > hello.json
 ```
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64

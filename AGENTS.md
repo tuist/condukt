@@ -55,12 +55,12 @@
 
 ## Workflows
 
-- A workflow is a typed DAG of steps authored in HCL and compiled to the
-  canonical JSON document. The JSON document is what the engine executes,
-  what `condukt check` validates, and what editors and agents can read and
-  write. YAML is accepted on input as a JSON superset and converted at load
-  time. There is no project layout, manifest, or lockfile; the basename of
-  the file is the run name.
+- A workflow is a typed DAG of steps authored in HCL and normalized to the
+  canonical workflow document internally. That document is what the engine
+  executes, what `condukt check` validates, and what editors and agents can
+  read and write. YAML is accepted on input as a JSON superset and converted
+  at load time. There is no project layout, manifest, or lockfile; the
+  basename of the file is the run name.
 - The schema lives at `priv/schemas/condukt.workflow.schema.json` and
   is referenced from workflow files via its raw GitHub URL,
   `https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json`.
@@ -98,22 +98,21 @@
   many times with different inputs or runtime options.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the schema together.
-- CLI verbs are `condukt run PATH [--input JSON]`,
-  `condukt check PATH`, and `condukt compile PATH` (`.hcl`/`.exs` to JSON on
-  stdout), mirrored by `mix condukt.run`, `mix condukt.check`, and
-  `mix condukt.compile`. `run` and `check` accept `.hcl`, `.json`,
-  `.yaml`, `.yml`, and `.exs` paths; `.hcl` and `.exs` are compiled
-  transparently.
+- CLI verbs are `condukt run PATH [--input JSON]` and
+  `condukt check PATH`, mirrored by `mix condukt.run` and
+  `mix condukt.check`. `run` and `check` accept `.hcl`, `.json`,
+  `.yaml`, `.yml`, and `.exs` paths; `.hcl` and `.exs` are loaded and
+  normalized internally.
 - Tool ids on `tool` steps are resolved through
   `Condukt.Workflows.ToolRegistry`. Built-ins
   (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of
   the box; callers extend the registry by passing
   `tools: %{id => spec}` as an option to `Condukt.Workflows.run/3`.
 - Future slices will add: remote `load(...)` of versioned helpers from
-  GitHub URLs (with compiled JSON cached locally), an opt-in `--lock`
+  GitHub URLs (with normalized documents cached locally), an opt-in `--lock`
   integrity file, triggers (`condukt.trigger.webhook`,
-  `condukt.schedule.cron`) declared at the top of the JSON document,
-  and a visual editor that reads and writes the same JSON.
+  `condukt.schedule.cron`) declared at the top of the workflow document,
+  and a visual editor that reads and writes the same document shape.
 
 ## Engine releases
 

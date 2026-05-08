@@ -1,10 +1,10 @@
 defmodule Condukt.Workflows.HCLCompiler do
   @moduledoc """
-  Compiles HCL workflow files to canonical workflow documents.
+  Normalizes HCL workflow files to canonical workflow documents.
 
   HCL is the human-authored workflow format. It keeps the DAG visible by
   requiring every `task.<id>` reference inside a step to also appear in
-  that step's `needs` list. The compiled document is still the same JSON
+  that step's `needs` list. The normalized document is still the same
   shape used by the executor, schema validator, and visual tooling.
   """
 
@@ -38,7 +38,7 @@ defmodule Condukt.Workflows.HCLCompiler do
   }
 
   @doc """
-  Reads, parses, and compiles an HCL workflow file.
+  Reads, parses, and normalizes an HCL workflow file.
   """
   @spec compile(Path.t()) :: {:ok, map()} | {:error, term()}
   def compile(path) when is_binary(path) do
@@ -48,7 +48,7 @@ defmodule Condukt.Workflows.HCLCompiler do
   end
 
   @doc """
-  Compiles HCL source into a workflow document. `path` is used only for
+  Normalizes HCL source into a workflow document. `path` is used only for
   diagnostics.
   """
   @spec compile_string(String.t(), Path.t()) :: {:ok, map()} | {:error, term()}

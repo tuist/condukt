@@ -8,7 +8,7 @@
 #
 # 1. Writes a temporary `.hcl` workflow.
 # 2. Validates it with `Condukt.Workflows.check/1`.
-# 3. Compiles it to the canonical JSON document.
+# 3. Loads it as a workflow document.
 # 4. Runs it with input.
 # 5. Prints the resolved workflow output.
 
@@ -32,11 +32,11 @@ workflow "hello" {
 """)
 
 :ok = Condukt.Workflows.check(path)
-{:ok, json} = Condukt.Workflows.compile(path)
+{:ok, workflow} = Condukt.Workflows.load(path)
 {:ok, output} = Condukt.Workflows.run(path, %{"name" => "world"})
 
 IO.puts("workflow: #{path}")
-IO.puts("compiled bytes: #{byte_size(json)}")
+IO.puts("loaded: #{workflow.name}")
 IO.puts("\n--- workflow output ---")
 IO.write(output)
 
