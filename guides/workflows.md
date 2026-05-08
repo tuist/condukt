@@ -1,12 +1,12 @@
 # Workflows
 
 A workflow is a typed JSON document describing a directed acyclic graph
-of steps. The document is the source of truth: it is what `condukt run`
-executes, what `condukt check` validates, and what editors and agents
-read and write. The basename of the file is the run name.
+of steps. The document is the source of truth: it is what `condukt
+run` executes, what `condukt check` validates, and what editors and
+agents read and write. The basename of the file is the run name.
 
-There is no project layout, manifest, or lockfile. To run a workflow you
-point the engine at a path or, in a future slice, a versioned URL.
+There is no project layout, manifest, or lockfile. To run a workflow
+you point the engine at a `.json`, `.yaml`, or `.star` path.
 
 ## A first workflow
 
@@ -14,6 +14,7 @@ point the engine at a path or, in a future slice, a versioned URL.
 
 ```json
 {
+  "$schema": "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json",
   "inputs": {
     "name": { "type": "string" }
   },
@@ -37,12 +38,9 @@ mix condukt.run hello.json --input '{"name": "world"}'
 The resolved `output` expression is printed on stdout. Strings are
 printed as is, other values are JSON-encoded.
 
-YAML is accepted on input as a JSON superset. The canonical on-disk form
-is JSON; YAML is converted at load time.
-
 ## The schema
 
-The workflow document is validated against a published JSON Schema,
+The workflow document is validated against a published JSON Schema
 served at:
 
 ```
@@ -50,17 +48,10 @@ https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
 ```
 
 Reference it from a workflow file with the standard `$schema` key so
-editors pick up auto-completion and validation:
-
-```json
-{
-  "$schema": "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json",
-  "steps": { ... }
-}
-```
+editors pick up auto-completion and validation.
 
 The canonical source lives in the repository at
-`priv/schemas/condukt.workflow.schema.json` and is also mirrored under
+`priv/schemas/condukt.workflow.schema.json` and is mirrored under
 `website/src/static/schemas/`.
 
 The top-level shape is:
@@ -85,23 +76,25 @@ A step has the shape:
 }
 ```
 
-Implicit dependencies are inferred from `${steps.X.*}` references inside
-a step's fields, so `needs:` is only required when the dependency is
+Implicit dependencies are inferred from `${steps.X.*}` references
+inside any field, so `needs:` is only required when the dependency is
 purely ordering and not data flow.
 
 ## Step kinds
 
 - `cmd`: runs an executable on the host. Fields: `argv` (list of
-  strings), `cwd` (optional), `env` (optional dict). Outputs: `stdout`,
-  `exit_code`, `ok`.
-- `agent`: runs an LLM-driven step. Fields: `model`, `tools` (list of
-  tool ids), `input`. Outputs: `output` and any structured fields the
-  agent declares.
+  strings, required), `cwd` (optional), `env` (optional dict).
+  Outputs: `stdout`, `exit_code`, `ok`.
+- `agent`: runs an LLM-driven step. Fields: `model` (required),
+  `input` (required, any), `tools` (optional list of tool ids),
+  `system` (optional system prompt), `output_schema` (optional JSON
+  Schema for structured output). Output: `output` and `ok`.
 - `http`: deterministic HTTP call. Fields: `method`, `url`, `headers`,
-  `body`. Outputs: `status`, `headers`, `body`.
+  `body`, `expect_status`. Output: `status`, `headers`, `body`.
 - `tool`: invokes a registered host tool by id. Fields: `id`, `args`.
+  Output: `output` and `ok`.
 - `map`: fan-out. Fields: `over` (expression resolving to a list),
-  `as` (binding name), `do` (a sub-step definition). Outputs: a list of
+  `as` (binding name), `do` (a sub-step definition). Output: a list of
   the sub-step's outputs in input order.
 
 Each step's outputs are addressable as `${steps.<id>.<field>}` from
@@ -109,18 +102,18 @@ later steps and from the top-level `output`.
 
 ## Expressions
 
-Expressions are written between `${` and `}`. They are evaluated against
-a small, deterministic context: `inputs`, `steps`, and within a `map`
-step, the `as` binding.
+Expressions live between `${` and `}`. They are evaluated against
+`inputs`, `steps`, and (inside a `map` step) the `as` binding.
 
-Supported in expressions:
+Supported:
 
-- Member access: `inputs.name`, `steps.fetch.body.title`.
-- Indexing: `steps.list.items[0]`.
-- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
-- Boolean: `&&`, `||`, `!`.
-- String, number, and boolean literals.
-- Type-aware formatters: `${var:json}`, `${var:csv}`.
+- Member access: `inputs.name`, `steps.fetch.body.title`
+- Indexing: `steps.list.items[0]`, `obj["a key"]`, negative indices
+- Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Boolean: `&&`, `||`, `!`
+- Unary minus: `-1`, `xs[-1]`
+- Literals: strings, numbers, booleans, null, parens
+- Type-aware formatters: `${var:json}`, `${var:csv}`
 
 Not supported:
 
@@ -128,77 +121,99 @@ Not supported:
   Anything more substantial belongs in a `cmd`, `agent`, or `tool`
   step.
 
-A `when:` expression must evaluate to a boolean. A field in a step that
-is a string with `${...}` placeholders is interpolated; if the entire
-string is one `${...}`, the underlying value's type is preserved.
+A `when:` expression must evaluate to a boolean. Member access on
+`null` returns `null` so a reference to a skipped step degrades
+gracefully; typos against a real value still raise a loud error.
+
+## Skipping and cascade
+
+If a step's `when:` evaluates to false, the step is skipped. Any
+downstream step whose declared or inferred dependencies include a
+skipped step is also skipped. The step's slot in `steps.<id>` is set
+to `null`.
+
+## YAML
+
+YAML files (`.yaml`, `.yml`) are accepted and converted to the same
+JSON document at load time. The same `hello.json` above looks like:
+
+```yaml
+$schema: https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+inputs:
+  name:
+    type: string
+steps:
+  greet:
+    kind: cmd
+    argv: ["echo", "Hello, ${inputs.name}"]
+output: "${steps.greet.stdout}"
+```
 
 ## Authoring DSL (Starlark)
 
-Hand-writing JSON is fine for small workflows and for what editors and
-agents emit. For larger workflows there is an authoring DSL that
-compiles to the same JSON document. The DSL is a Starlark dialect: it
-runs at compile time, builds the step graph, and prints JSON.
+Hand-writing JSON or YAML is fine for most workflows. For larger
+graphs there is an authoring DSL: a Starlark file that compiles to
+the same JSON document. The Starlark layer runs at compile time and
+lets you use `def`, `for`, `if`, list and dict comprehensions, and
+`load(...)` to build the document programmatically. There is no
+runtime suspension and no introspection of step outputs at compile
+time: references between steps are written as plain `${...}`
+expression strings.
 
-`review-pr.star`:
+`hello.star`:
 
 ```python
-def run():
-    pr = http.get(
-        "https://api.github.com/repos/${inputs.repo}/pulls/${inputs.pr_number}",
-    )
-    review = agent(
-        model = "claude-opus-4-7",
-        input = pr.body,
-    )
-    if review.output.score < 7:
-        http.post(
-            url = "https://api.github.com/repos/${inputs.repo}/issues/${inputs.pr_number}/comments",
-            body = {"body": review.output.comment},
-        )
-    return review.output
-
 workflow(
-    inputs = {
-        "repo": {"type": "string"},
-        "pr_number": {"type": "integer"},
+    name = "hello",
+    inputs = {"name": {"type": "string"}},
+    steps = {
+        "greet": {
+            "kind": "cmd",
+            "argv": ["echo", "Hello, ${inputs.name}"],
+        },
     },
+    output = "${steps.greet.stdout}",
 )
 ```
 
 Compile and run:
 
 ```sh
-condukt compile review-pr.star > review-pr.json
-condukt run review-pr.json --input '{"repo": "tuist/condukt", "pr_number": 42}'
+condukt compile hello.star > hello.json
+condukt run hello.json --input '{"name": "world"}'
 ```
 
-`condukt run review-pr.star` does the compile step transparently.
+`condukt run hello.star` does the compile step transparently.
 
-What the DSL does at compile time:
+A more substantial example uses `for` to fan out a map step over a
+static list of stages:
 
-- Each builtin call (`http.get`, `agent`, `cmd`, etc.) returns a *step
-  handle*, not a real value. Reading `.body` on a handle records a
-  reference and emits a `${steps.X.body}` expression in the generated
-  JSON.
-- `if cond:` becomes a `when:` expression on the steps inside the
-  branch. The condition is compiled from the Starlark expression.
-- `for item in xs:` becomes a `map:` step.
-- `def` and `load("...", "name")` are compile-time only. They produce
-  helpers that fold into the graph; they do not appear in the output
-  JSON.
+```python
+stages = ["lint", "test", "build"]
 
-Because the DSL is a graph builder, it cannot do runtime branching on a
-step's actual value: control flow must be expressible as a `when:` edge
-or a `map:` step. This is the property that lets the JSON document
-remain statically validatable, visually editable, and safe to load from
-arbitrary URLs.
+steps = {}
+for stage in stages:
+    steps[stage] = {
+        "kind": "cmd",
+        "argv": ["./script/" + stage],
+    }
+
+workflow(
+    steps = steps,
+    output = {stage: "${steps." + stage + ".stdout}" for stage in stages},
+)
+```
+
+The `workflow(...)` builtin must be called exactly once at top level.
+Any Starlark feature is fair game for *building* the data; it is
+expression strings, not Starlark values, that represent runtime
+references between steps.
 
 ## Validating a workflow
 
 `condukt check PATH` parses and validates the document against the
 schema and reports all problems without executing it. It accepts
-`.json`, `.yaml`, and `.star` paths; for `.star` it compiles first and
-then validates the JSON.
+`.json`, `.yaml`, and `.star` paths.
 
 ```sh
 condukt check review-pr.json
@@ -213,12 +228,10 @@ fix, repeat.
 These are planned but not yet implemented:
 
 - Remote `load(...)` of versioned helpers from
-  `github.com/owner/repo/path/file.star@v1.0.0`, with the compiled JSON
-  cached locally.
+  `github.com/owner/repo/path/file.star@v1.0.0`, with the compiled
+  JSON cached locally.
 - Optional `--lock` mode that records SHA-256 per fetched URL and
   verifies on later runs (Deno-style integrity).
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and
-  `condukt serve PATH` to host webhook and cron-driven runs. Triggers
-  are declared at the top of the JSON document and exposed by the DSL
-  through a `condukt` namespace.
+  `condukt serve PATH` to host webhook and cron-driven runs.
 - Visual editor that reads and writes the same JSON document.

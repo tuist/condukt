@@ -61,40 +61,46 @@
   YAML is accepted on input as a JSON superset and converted at load time.
   There is no project layout, manifest, or lockfile; the basename of the
   file is the run name.
-- The schema is published as `condukt.workflow.schema.json`. Top level:
-  `name`, `inputs`, `steps`, `output`. Each step has a `kind`
+- The schema lives at `priv/schemas/condukt.workflow.schema.json` and is
+  served at `https://condukt.tuist.dev/schemas/condukt.workflow.schema.json`.
+  Top level: `name`, `inputs`, `steps`, `output`. Each step has a `kind`
   (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional
   `when`, and kind-specific fields. Implicit dependencies are inferred
   from `${steps.X.*}` references.
 - The expression sub-language is intentionally small: `${...}`
   interpolation with member access, indexing, comparisons, boolean ops,
-  literals, and `:json`/`:csv` formatters. No arbitrary function calls
-  or arithmetic beyond comparisons. Anything more substantial belongs
-  in a `cmd`/`agent`/`tool` step.
-- The Starlark surface is now an authoring DSL, not a runtime. A
-  `.star` file evaluates at compile time and emits the JSON document.
-  Builtin calls return *step handles*; reading a field on a handle
-  records a `${steps.X.field}` reference. `if` becomes a `when:` edge,
-  `for` becomes a `map:` step. The DSL has no runtime suspension and
-  cannot branch on a step's actual value.
+  literals, unary minus, and `:json`/`:csv` formatters. No arbitrary
+  function calls or arithmetic beyond comparisons. Anything more
+  substantial belongs in a `cmd`/`agent`/`tool` step. Member access on
+  `null` returns `null` so a reference to a skipped step degrades
+  gracefully; missing keys against a real value still error.
+- The Starlark surface is an authoring DSL, not a runtime. A `.star`
+  file evaluates at compile time and must call `workflow(name = ...,
+  inputs = ..., steps = ..., output = ...)` exactly once. Standard
+  Starlark features (`def`, `for`, `if`, list/dict comprehensions,
+  `load(...)`) are available for *building* the document; references
+  between steps are written as `${...}` strings. There is no runtime
+  suspension and no introspection of step outputs at compile time.
 - The workflows NIF lives in `native/condukt_workflows/`. Surface:
-  `compile/2` (Starlark to JSON), `validate/1` (JSON against schema),
-  and `execute/2` (run a validated JSON document). The legacy
-  suspending-VM API (`start_run`/`resume_run`/`cancel_run`/`parse_only`)
-  is being removed as part of this redesign.
+  `compile/2` (Starlark to JSON) and `parse_only/2` (early syntax
+  check). Schema validation and execution are pure Elixir.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the schema together.
 - CLI verbs are `condukt run PATH [--input JSON]`,
   `condukt check PATH`, and `condukt compile PATH` (Starlark to JSON
   on stdout), mirrored by `mix condukt.run`, `mix condukt.check`, and
-  `mix condukt.compile`. `run` and `check` accept `.json`, `.yaml`, and
-  `.star` paths; `.star` is compiled transparently.
+  `mix condukt.compile`. `run` and `check` accept `.json`, `.yaml`,
+  `.yml`, and `.star` paths; `.star` is compiled transparently.
+- Tool ids on `tool` steps are resolved through
+  `Condukt.Workflows.ToolRegistry`. Built-ins
+  (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of
+  the box; callers extend the registry by passing
+  `tools: %{id => spec}` as an option to `Condukt.Workflows.run/3`.
 - Future slices will add: remote `load(...)` of versioned helpers from
   GitHub URLs (with compiled JSON cached locally), an opt-in `--lock`
   integrity file, triggers (`condukt.trigger.webhook`,
-  `condukt.schedule.cron`) declared at the top of the JSON document and
-  surfaced by the DSL through a `condukt` namespace, and a visual
-  editor that reads and writes the same JSON.
+  `condukt.schedule.cron`) declared at the top of the JSON document,
+  and a visual editor that reads and writes the same JSON.
 
 ## Engine releases
 
