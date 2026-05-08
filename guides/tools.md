@@ -138,6 +138,8 @@ The second argument to `call/2` is a context map that includes:
   themselves I/O operations)
 * `:secrets` contains resolved session secrets for trusted tools
 * `:opts` is the keyword list from `{Module, opts}`
+* `:assigns` is a map of session-scoped values populated by previous tool
+  calls. See [Sharing state across tool calls](#sharing-state-across-tool-calls).
 
 ## Sandbox-aware tools
 
@@ -252,5 +254,76 @@ end
 
 * `{:ok, value}` for success. Strings, maps, and lists are all fine. Non
   binary values are JSON encoded before being sent to the LLM.
+* `{:ok, value, assigns}` for success with state. The `assigns` map is
+  merged into the session's `:assigns` so later tools can read it. See
+  the next section.
 * `{:error, reason}` for failures. The error is reported back to the model
   so it can recover.
+
+## Sharing state across tool calls
+
+Tools in a single agent run often need to refer to facts established by
+earlier tools: an account id from a lookup, a parsed config, a session
+token. Returning a third element from the success tuple, ExUnit-style,
+merges values into the session's `assigns` map. Subsequent tool calls
+read them as `context.assigns[:key]`:
+
+```elixir
+find_account =
+  Condukt.tool(
+    name: "find_account",
+    description: "Looks up an account by email",
+    parameters: %{
+      type: "object",
+      properties: %{email: %{type: "string"}},
+      required: ["email"]
+    },
+    call: fn %{"email" => email}, _ctx ->
+      case Accounts.find_by_email(email) do
+        {:ok, account} ->
+          {:ok, %{found: true, account: account}, %{found_account_id: account.id}}
+
+        :error ->
+          {:ok, %{found: false}}
+      end
+    end
+  )
+
+store_event =
+  Condukt.tool(
+    name: "store_event",
+    description: "Stores an event on the matched account",
+    parameters: %{
+      type: "object",
+      properties: %{title: %{type: "string"}},
+      required: ["title"]
+    },
+    call: fn %{"title" => title}, ctx ->
+      case ctx.assigns[:found_account_id] do
+        nil ->
+          {:error, "call find_account first"}
+
+        id ->
+          {:ok, Events.create!(account_id: id, title: title)}
+      end
+    end
+  )
+```
+
+Returned maps are merged into the session's `:assigns` last-write-wins,
+matching `Phoenix.Component.assign/3`. Assigns persist for the lifetime
+of the session, so they remain visible across multiple `Condukt.run/2`
+calls on the same agent process.
+
+You can also seed assigns when starting a session:
+
+```elixir
+{:ok, agent} =
+  MyAgent.start_link(assigns: %{tenant_id: "acme"})
+```
+
+Within a single batch of tool calls in one assistant message, all tools
+see the same start-of-batch snapshot of `:assigns`; their returned maps
+are merged after the batch and visible in the next turn. If the LLM
+proposes tools A and B together and B needs A's update, prompt the model
+to call them in separate turns.

@@ -752,7 +752,7 @@ defmodule Condukt.SessionTest do
 
     assert {:noreply, updated_state} =
              Condukt.Session.handle_cast(
-               {:stream_complete, ref, {:ok, messages, "d"}},
+               {:stream_complete, ref, {:ok, messages, "d", %{}}},
                state
              )
 
@@ -811,7 +811,7 @@ defmodule Condukt.SessionTest do
 
     assert {:noreply, updated_state} =
              Condukt.Session.handle_cast(
-               {:stream_complete, ref, {:ok, messages, "world"}},
+               {:stream_complete, ref, {:ok, messages, "world", %{}}},
                state
              )
 

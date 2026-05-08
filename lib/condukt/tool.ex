@@ -56,6 +56,29 @@ defmodule Condukt.Tool do
     as environment variables. Custom trusted tools can use
     `Condukt.Secrets.env/1` when they need the same values.
   - `:opts` - Options passed when adding the tool to the agent
+  - `:assigns` - A map of session-scoped assigns visible to every tool in
+    the run. A tool can return `{:ok, result, %{key: value}}` to merge new
+    entries into this map for the next turn.
+
+  ## Sharing State Between Tools
+
+  Use the third element of the success tuple to share facts across tool
+  calls within a session, ExUnit-style:
+
+      def call(args, ctx) do
+        case ctx.assigns[:found_account_id] do
+          nil ->
+            {:ok, account} = lookup(args)
+            {:ok, render(account), %{found_account_id: account.id}}
+
+          id ->
+            {:ok, render(get_account(id))}
+        end
+      end
+
+  Returned maps are merged into the session's `:assigns` last-write-wins.
+  Within a single batch of tool calls all tools see the same
+  start-of-batch snapshot; updates take effect in the next turn.
 
   ## Sandbox-aware tools
 
@@ -117,8 +140,23 @@ defmodule Condukt.Tool do
 
   @doc """
   Executes the tool with the given arguments.
+
+  Tools may return:
+
+    * `{:ok, result}` — the result is sent back to the LLM. Non-binary
+      results are JSON-encoded automatically.
+    * `{:ok, result, assigns}` — same as above, plus a map of values merged
+      into the session's `:assigns`. Subsequent tool calls in the same run
+      can read them as `context.assigns[:key]`. Last-write-wins on key
+      collisions, matching `Phoenix.Component.assign/3`.
+    * `{:error, reason}` — the LLM receives an error.
+
+  Within a single batch of tool calls in one assistant message, each tool
+  starts from the same start-of-batch `assigns` snapshot; updates are
+  merged after the batch and visible in the next turn.
   """
-  @callback call(args :: map(), context :: map()) :: {:ok, term()} | {:error, term()}
+  @callback call(args :: map(), context :: map()) ::
+              {:ok, term()} | {:ok, term(), map()} | {:error, term()}
 
   @optional_callbacks [name: 1, description: 1, parameters: 1]
 

@@ -59,7 +59,8 @@ defmodule Condukt.Session do
     abort_ref: nil,
     steering_messages: [],
     follow_up_messages: [],
-    subscribers: []
+    subscribers: [],
+    assigns: %{}
   ]
 
   # ============================================================================
@@ -288,7 +289,8 @@ defmodule Condukt.Session do
               compactor: opts[:compactor],
               redactor: opts[:redactor],
               project_context: project_context,
-              user_state: user_state
+              user_state: user_state,
+              assigns: Keyword.get(opts, :assigns, %{})
             }
             |> restore_messages(snapshot)
 
@@ -420,16 +422,16 @@ defmodule Condukt.Session do
     {:noreply, maybe_dispatch_event(state, event)}
   end
 
-  def handle_cast({:run_complete, from, {result, messages}}, state) do
+  def handle_cast({:run_complete, from, {result, messages, assigns}}, state) do
     GenServer.reply(from, result)
-    state = %{state | streaming: false, messages: messages} |> maybe_compact()
+    state = %{state | streaming: false, messages: messages, assigns: assigns} |> maybe_compact()
     persist_snapshot(state)
     {:noreply, state}
   end
 
-  def handle_cast({:stream_complete, ref, {:ok, messages, _response}}, state) do
+  def handle_cast({:stream_complete, ref, {:ok, messages, _response, assigns}}, state) do
     broadcast(state, ref, :done)
-    state = %{state | streaming: false, messages: messages} |> maybe_compact()
+    state = %{state | streaming: false, messages: messages, assigns: assigns} |> maybe_compact()
     persist_snapshot(state)
     {:noreply, state}
   end
@@ -463,11 +465,11 @@ defmodule Condukt.Session do
 
     Telemetry.span(:agent, %{agent: state.agent_module, session_id: state.id}, fn ->
       case agent_loop(state, messages, max_turns, 0) do
-        {:ok, final_messages, response} ->
-          {{:ok, response}, final_messages}
+        {:ok, final_messages, response, final_assigns} ->
+          {{:ok, response}, final_messages, final_assigns}
 
         {:error, reason} ->
-          {{:error, reason}, messages}
+          {{:error, reason}, messages, state.assigns}
       end
     end)
   end
@@ -488,9 +490,9 @@ defmodule Condukt.Session do
     end)
   end
 
-  defp agent_loop(_state, messages, max_turns, turn) when turn >= max_turns do
+  defp agent_loop(state, messages, max_turns, turn) when turn >= max_turns do
     response = extract_text_response(messages)
-    {:ok, messages, response}
+    {:ok, messages, response, state.assigns}
   end
 
   defp agent_loop(state, messages, max_turns, turn) do
@@ -512,12 +514,13 @@ defmodule Condukt.Session do
         messages = messages ++ [assistant_message]
 
         if Message.has_tool_calls?(assistant_message) do
-          {tool_results, messages} = execute_tool_calls(state, assistant_message, messages)
+          {tool_results, messages, assigns_diff} = execute_tool_calls(state, assistant_message, messages)
           messages = messages ++ tool_results
+          state = %{state | assigns: Map.merge(state.assigns, assigns_diff)}
           agent_loop(state, messages, max_turns, turn + 1)
         else
           response_text = Message.text(assistant_message)
-          {:ok, messages, response_text}
+          {:ok, messages, response_text, state.assigns}
         end
 
       {:error, reason} ->
@@ -525,9 +528,9 @@ defmodule Condukt.Session do
     end
   end
 
-  defp streaming_loop(_state, messages, max_turns, turn, _emit, _abort_ref) when turn >= max_turns do
+  defp streaming_loop(state, messages, max_turns, turn, _emit, _abort_ref) when turn >= max_turns do
     response = extract_text_response(messages)
-    {:ok, messages, response}
+    {:ok, messages, response, state.assigns}
   end
 
   defp streaming_loop(%{abort_ref: abort_ref} = state, messages, max_turns, turn, emit, abort_ref) do
@@ -599,13 +602,14 @@ defmodule Condukt.Session do
 
     case Message.has_tool_calls?(assistant_message) do
       true ->
-        {tool_results, messages} =
+        {tool_results, messages, assigns_diff} =
           execute_tool_calls_streaming(state, assistant_message, messages, emit)
 
+        state = %{state | assigns: Map.merge(state.assigns, assigns_diff)}
         streaming_loop(state, messages ++ tool_results, max_turns, turn + 1, emit, abort_ref)
 
       false ->
-        {:ok, messages, text}
+        {:ok, messages, text, state.assigns}
     end
   end
 
@@ -700,6 +704,8 @@ defmodule Condukt.Session do
           context = tool_context(state, [])
 
           case Tool.execute(tool_spec, args, context) do
+            {:ok, result, _assigns} when is_binary(result) -> Secrets.redact_text(state.secrets, result)
+            {:ok, result, _assigns} -> JSON.encode!(Secrets.redact_result(state.secrets, result))
             {:ok, result} when is_binary(result) -> Secrets.redact_text(state.secrets, result)
             {:ok, result} -> JSON.encode!(Secrets.redact_result(state.secrets, result))
             {:error, reason} -> "Error: #{inspect(reason)}"
@@ -775,7 +781,7 @@ defmodule Condukt.Session do
     tool_calls = Message.tool_calls(assistant_message)
     tool_map = build_tool_map(state.tools)
 
-    tool_results =
+    {tool_results, assigns_diff} =
       tool_calls
       |> Task.async_stream(
         fn tool_call -> execute_tool_call(tool_map, tool_call, state) end,
@@ -784,8 +790,9 @@ defmodule Condukt.Session do
       )
       |> Enum.zip(tool_calls)
       |> Enum.map(&task_result_to_tool_result/1)
+      |> split_results_and_assigns()
 
-    {tool_results, messages}
+    {tool_results, messages, assigns_diff}
   end
 
   defp execute_tool_calls_streaming(state, assistant_message, messages, emit) do
@@ -796,7 +803,7 @@ defmodule Condukt.Session do
       emit.({:tool_call, name, id, args})
     end)
 
-    tool_results =
+    {tool_results, assigns_diff} =
       tool_calls
       |> Task.async_stream(
         fn tool_call -> execute_tool_call(tool_map, tool_call, state) end,
@@ -805,13 +812,21 @@ defmodule Condukt.Session do
       )
       |> Enum.zip(tool_calls)
       |> Enum.map(&task_result_to_tool_result/1)
-      |> Enum.map(fn result ->
+      |> Enum.map(fn {result, assigns} ->
         emit.({:tool_result, result.tool_call_id, Message.tool_result_content(result)})
 
-        result
+        {result, assigns}
       end)
+      |> split_results_and_assigns()
 
-    {tool_results, messages}
+    {tool_results, messages, assigns_diff}
+  end
+
+  defp split_results_and_assigns(results_with_assigns) do
+    Enum.reduce(results_with_assigns, {[], %{}}, fn {result, assigns}, {acc, merged} ->
+      {[result | acc], Map.merge(merged, assigns)}
+    end)
+    |> then(fn {results, merged} -> {Enum.reverse(results), merged} end)
   end
 
   defp execute_tool_call(tool_map, {id, name, args}, state) do
@@ -831,8 +846,9 @@ defmodule Condukt.Session do
     )
   end
 
-  defp tool_call_stop_metadata(%Message{content: {:error, _} = error}), do: %{status: :error, result: error}
-  defp tool_call_stop_metadata(%Message{content: content}), do: %{status: :ok, result: content}
+  defp tool_call_stop_metadata({%Message{content: {:error, _} = error}, _assigns}), do: %{status: :error, result: error}
+
+  defp tool_call_stop_metadata({%Message{content: content}, _assigns}), do: %{status: :ok, result: content}
 
   defp llm_turn_metadata(state, messages, turn, streaming?) do
     %{
@@ -862,16 +878,16 @@ defmodule Condukt.Session do
   defp model_identifier(model) when is_binary(model), do: model
   defp model_identifier(model), do: inspect(model)
 
-  defp task_result_to_tool_result({{:ok, result}, _tool_call}), do: result
+  defp task_result_to_tool_result({{:ok, {message, assigns}}, _tool_call}), do: {message, assigns}
 
   defp task_result_to_tool_result({{:exit, reason}, {id, _name, _args}}) do
-    Message.tool_result(id, {:error, reason})
+    {Message.tool_result(id, {:error, reason}), %{}}
   end
 
   defp execute_tool(tool_map, name, args, state, id) do
     case Map.fetch(tool_map, name) do
       :error ->
-        Message.tool_result(id, {:error, "Unknown tool: #{name}"})
+        {Message.tool_result(id, {:error, "Unknown tool: #{name}"}), %{}}
 
       {:ok, tool_spec} ->
         emit_secret_access(state, name, id)
@@ -930,14 +946,21 @@ defmodule Condukt.Session do
       subagents: state.subagents,
       subagent_supervisor: state.subagent_supervisor,
       api_key: state.api_key,
-      base_url: state.base_url
+      base_url: state.base_url,
+      assigns: state.assigns
     }
   end
 
   defp execute_tool_spec(tool_spec, args, context, id) do
     case Tool.execute(tool_spec, args, context) do
-      {:ok, result} -> Message.tool_result(id, Secrets.redact_result(context[:secrets], result))
-      {:error, reason} -> Message.tool_result(id, Secrets.redact_result(context[:secrets], {:error, reason}))
+      {:ok, result, assigns} when is_map(assigns) ->
+        {Message.tool_result(id, Secrets.redact_result(context[:secrets], result)), assigns}
+
+      {:ok, result} ->
+        {Message.tool_result(id, Secrets.redact_result(context[:secrets], result)), %{}}
+
+      {:error, reason} ->
+        {Message.tool_result(id, Secrets.redact_result(context[:secrets], {:error, reason})), %{}}
     end
   end
 
