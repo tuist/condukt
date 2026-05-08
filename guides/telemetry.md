@@ -10,6 +10,8 @@ Attach handlers to feed your existing observability stack: Logger,
 | ----- | ------------ | -------- |
 | `[:condukt, :agent, :start]` | `system_time` | `:agent`, `:session_id` |
 | `[:condukt, :agent, :stop]` | `duration` | `:agent`, `:session_id` |
+| `[:condukt, :llm_turn, :start]` | `system_time` | `:agent`, `:session_id`, `:model`, `:turn`, `:streaming?`, `:messages`, `:tool_count` |
+| `[:condukt, :llm_turn, :stop]` | `duration` | same as `:start` plus `:status`, `:assistant_message`, `:usage`, `:finish_reason`, `:error` |
 | `[:condukt, :tool_call, :start]` | `system_time` | `:tool`, `:tool_call_id`, `:args`, `:agent`, `:session_id` |
 | `[:condukt, :tool_call, :stop]` | `duration` | `:tool`, `:tool_call_id`, `:args`, `:agent`, `:session_id`, `:status`, `:result` |
 | `[:condukt, :subagent, :start]` | `system_time` | `:agent`, `:role`, `:child_agent`, `:input?`, `:output?`, `:parent_session_id` |
@@ -24,6 +26,21 @@ Attach handlers to feed your existing observability stack: Logger,
 
 The exact set may grow over time. Attach broadly with `attach_many/4` so
 new events surface in your handlers without code changes.
+
+## LLM transcripts
+
+Every iteration of the agent loop emits a `[:condukt, :llm_turn, :start]`
+and a `[:condukt, :llm_turn, :stop]`. `:messages` on `:start` is the
+conversation context the model received for this turn;
+`:assistant_message` on `:stop` is the model's response (including any
+tool calls it issued). Together with `[:condukt, :tool_call, :*]`
+events they make it possible to persist a complete transcript of an
+agentic run for auditing or replay.
+
+`:turn` starts at 0 and increments by one per loop iteration.
+`:streaming?` is `true` when the call went through `ReqLLM.stream_text`,
+`false` when it went through `ReqLLM.generate_text`. `:usage` is the
+provider-reported token usage map when available, `nil` otherwise.
 
 ## Tool call payloads
 

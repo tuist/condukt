@@ -498,7 +498,15 @@ defmodule Condukt.Session do
     tools = build_req_llm_tools(state.tools, state)
     llm_opts = build_llm_opts(state, tools)
 
-    case ReqLLM.generate_text(state.model, context, llm_opts) do
+    result =
+      Telemetry.span(
+        :llm_turn,
+        llm_turn_metadata(state, messages, turn, false),
+        fn -> ReqLLM.generate_text(state.model, context, llm_opts) end,
+        &llm_turn_stop_metadata/1
+      )
+
+    case result do
       {:ok, response} ->
         assistant_message = response_to_message(response)
         messages = messages ++ [assistant_message]
@@ -558,21 +566,23 @@ defmodule Condukt.Session do
     tools = build_req_llm_tools(state.tools, state)
     llm_opts = build_llm_opts(state, tools)
 
-    case ReqLLM.stream_text(state.model, context, llm_opts) do
-      {:ok, stream_response} ->
-        process_stream_turn(state, stream_response, messages, max_turns, turn, emit, abort_ref)
+    result =
+      Telemetry.span(
+        :llm_turn,
+        llm_turn_metadata(state, messages, turn, true),
+        fn ->
+          with {:ok, stream_response} <- ReqLLM.stream_text(state.model, context, llm_opts) do
+            ReqLLM.StreamResponse.process_stream(
+              stream_response,
+              on_result: fn chunk -> emit.({:text, chunk}) end,
+              on_thinking: fn chunk -> emit.({:thinking, chunk}) end
+            )
+          end
+        end,
+        &llm_turn_stop_metadata/1
+      )
 
-      {:error, reason} ->
-        emit_stream_error(emit, reason)
-    end
-  end
-
-  defp process_stream_turn(state, stream_response, messages, max_turns, turn, emit, abort_ref) do
-    case ReqLLM.StreamResponse.process_stream(
-           stream_response,
-           on_result: fn chunk -> emit.({:text, chunk}) end,
-           on_thinking: fn chunk -> emit.({:thinking, chunk}) end
-         ) do
+    case result do
       {:ok, response} ->
         handle_stream_response(state, response, messages, max_turns, turn, emit, abort_ref)
 
@@ -823,6 +833,34 @@ defmodule Condukt.Session do
 
   defp tool_call_stop_metadata(%Message{content: {:error, _} = error}), do: %{status: :error, result: error}
   defp tool_call_stop_metadata(%Message{content: content}), do: %{status: :ok, result: content}
+
+  defp llm_turn_metadata(state, messages, turn, streaming?) do
+    %{
+      agent: state.agent_module,
+      session_id: state.id,
+      model: model_identifier(state.model),
+      turn: turn,
+      streaming?: streaming?,
+      messages: messages,
+      tool_count: length(state.tools)
+    }
+  end
+
+  defp llm_turn_stop_metadata({:ok, response}) do
+    %{
+      status: :ok,
+      assistant_message: response_to_message(response),
+      usage: Map.get(response, :usage),
+      finish_reason: Map.get(response, :finish_reason)
+    }
+  end
+
+  defp llm_turn_stop_metadata({:error, reason}) do
+    %{status: :error, error: reason}
+  end
+
+  defp model_identifier(model) when is_binary(model), do: model
+  defp model_identifier(model), do: inspect(model)
 
   defp task_result_to_tool_result({{:ok, result}, _tool_call}), do: result
 
