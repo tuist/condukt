@@ -17,7 +17,7 @@ defmodule Condukt.Workflows do
   `run_document/3`.
   """
 
-  alias Condukt.Workflows.{Document, Executor, NIF}
+  alias Condukt.Workflows.{Compiler, Document, Executor}
 
   @type input :: map()
   @type result :: term()
@@ -67,17 +67,17 @@ defmodule Condukt.Workflows do
   end
 
   @doc """
-  Compiles a Starlark `.star` workflow file to its JSON document
+  Compiles an `.exs` workflow file to its JSON document
   representation. Returns the JSON as a (compact) string.
   """
   @spec compile(Path.t()) :: {:ok, String.t()} | {:error, term()}
   def compile(path) when is_binary(path) do
-    with ".star" <- Path.extname(path),
-         {:ok, source} <- File.read(path) do
-      NIF.compile(source, path)
+    with ".exs" <- Path.extname(path),
+         {:ok, decoded} <- Compiler.compile(path) do
+      {:ok, JSON.encode!(decoded)}
     else
-      ext when is_binary(ext) -> {:error, {:not_a_starlark_file, path, ext}}
-      {:error, reason} -> {:error, {:read_failed, path, reason}}
+      ext when is_binary(ext) -> {:error, {:not_an_exs_file, path, ext}}
+      {:error, reason} -> {:error, reason}
     end
   end
 end

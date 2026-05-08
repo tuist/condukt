@@ -11,7 +11,7 @@ defmodule Condukt.Workflows.Document do
   of this module before validation.
   """
 
-  alias Condukt.Workflows.{NIF, Schema}
+  alias Condukt.Workflows.{Compiler, Schema}
 
   @enforce_keys [:name, :steps]
   defstruct [
@@ -45,14 +45,14 @@ defmodule Condukt.Workflows.Document do
   @doc """
   Loads, decodes, and validates a workflow document at `path`.
 
-  Returns `{:ok, %Document{}}` when the file parses, decodes, and
-  matches the schema. Otherwise returns a tagged error suitable for
-  reporting from the CLI.
+  Accepts `.json`, `.yaml`/`.yml`, and `.exs` paths. Returns
+  `{:ok, %Document{}}` when the file parses, decodes, and matches the
+  schema. Otherwise returns a tagged error suitable for reporting
+  from the CLI.
   """
   @spec load(Path.t()) :: {:ok, t()} | {:error, load_error()}
   def load(path) when is_binary(path) do
-    with {:ok, source} <- read(path),
-         {:ok, decoded} <- decode(path, source),
+    with {:ok, decoded} <- decode_file(path),
          {:ok, validated} <- validate(decoded) do
       {:ok, build(path, validated)}
     end
@@ -90,29 +90,29 @@ defmodule Condukt.Workflows.Document do
     end
   end
 
-  defp read(path) do
-    case File.read(path) do
-      {:ok, source} -> {:ok, source}
-      {:error, reason} -> {:error, {:read_failed, path, reason}}
-    end
-  end
-
-  defp decode(path, source) do
+  defp decode_file(path) do
     case Path.extname(path) do
       ext when ext in [".json", ""] ->
-        decode_json(path, source)
+        with {:ok, source} <- read(path), do: decode_json(path, source)
 
       ext when ext in [".yaml", ".yml"] ->
-        decode_yaml(path, source)
+        with {:ok, source} <- read(path), do: decode_yaml(path, source)
 
-      ".star" ->
-        case NIF.compile(source, path) do
-          {:ok, json_string} -> decode_json(path, json_string)
+      ".exs" ->
+        case Compiler.compile(path) do
+          {:ok, decoded} -> {:ok, decoded}
           {:error, reason} -> {:error, {:compile_failed, path, reason}}
         end
 
       _ ->
         {:error, {:unsupported_extension, path}}
+    end
+  end
+
+  defp read(path) do
+    case File.read(path) do
+      {:ok, source} -> {:ok, source}
+      {:error, reason} -> {:error, {:read_failed, path, reason}}
     end
   end
 
