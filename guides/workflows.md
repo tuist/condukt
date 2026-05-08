@@ -1,115 +1,204 @@
 # Workflows
 
-A workflow is a single self-contained Starlark file. The file defines a
-top-level `run(inputs)` function and calls `workflow(inputs = ...)` at
-module top level to mark itself as runnable. The basename of the file is
-the run name.
+A workflow is a typed JSON document describing a directed acyclic graph
+of steps. The document is the source of truth: it is what `condukt run`
+executes, what `condukt check` validates, and what editors and agents
+read and write. The basename of the file is the run name.
 
 There is no project layout, manifest, or lockfile. To run a workflow you
 point the engine at a path or, in a future slice, a versioned URL.
 
 ## A first workflow
 
-`hello.star`:
+`hello.json`:
 
-```python
-def run(inputs):
-    result = run_cmd(["echo", "Hello, " + inputs["name"]])
-    return result["stdout"]
-
-workflow(inputs = {"name": {"type": "string"}})
+```json
+{
+  "inputs": {
+    "name": { "type": "string" }
+  },
+  "steps": {
+    "greet": {
+      "kind": "cmd",
+      "argv": ["echo", "Hello, ${inputs.name}"]
+    }
+  },
+  "output": "${steps.greet.stdout}"
+}
 ```
 
 Run it with the standalone engine or with Mix:
 
 ```sh
-condukt run hello.star --input '{"name": "world"}'
-mix condukt.run hello.star --input '{"name": "world"}'
+condukt run hello.json --input '{"name": "world"}'
+mix condukt.run hello.json --input '{"name": "world"}'
 ```
 
-The return value of `run(inputs)` is printed on stdout. Strings are
+The resolved `output` expression is printed on stdout. Strings are
 printed as is, other values are JSON-encoded.
 
-## How a workflow runs
+YAML is accepted on input as a JSON superset. The canonical on-disk form
+is JSON; YAML is converted at load time.
 
-The Starlark source is evaluated on a dedicated OS thread. When `run()`
-calls a suspending builtin like `run_cmd(...)`, the Starlark VM blocks
-while the host runs the side effect, then resumes with the real return
-value. From the script's view the call is synchronous: `result` is a
-plain Starlark value you can branch on, iterate, or pass to the next
-step.
+## The schema
 
-```python
-def run(inputs):
-    result = run_cmd(["git", "status", "--porcelain"])
-    if result["stdout"].strip() == "":
-        return "clean"
-    else:
-        return "dirty"
+The workflow document is validated against a published JSON Schema,
+`condukt.workflow.schema.json`. The top-level shape is:
 
-workflow(inputs = {})
+```jsonc
+{
+  "name": "review-pr",            // optional, defaults to file basename
+  "inputs": { ... },              // typed input map (JSON Schema fragments)
+  "steps": { "<id>": { ... } },   // map of step id to step definition
+  "output": "<expression>"        // optional, what `condukt run` prints
+}
 ```
 
-`if` and `for` work over real step output. There is no graph of step
-references, no template strings, and no `${{ ... }}` syntax.
+A step has the shape:
 
-## Builtins
+```jsonc
+{
+  "kind": "cmd" | "agent" | "http" | "tool" | "map",
+  "needs": ["other_step"],        // explicit dependencies, optional
+  "when": "<expression>",         // optional gate; step is skipped if false
+  // ...kind-specific fields
+}
+```
 
-Top-level builtins available in a workflow file:
+Implicit dependencies are inferred from `${steps.X.*}` references inside
+a step's fields, so `needs:` is only required when the dependency is
+purely ordering and not data flow.
 
-- `workflow(inputs = ...)`: marks the file as a runnable workflow.
-  Required exactly once at module top level.
-- `run_cmd(argv, cwd = None, env = None)`: runs an executable on the
-  host. Returns a dict with `ok`, `stdout`, and `exit_code`. `argv` must
-  be a list of strings. `cwd` defaults to the workflow's working
-  directory. `env` is an optional dict of additional environment
-  variables.
+## Step kinds
 
-Future slices will add `agent`, `http`, `tool`, `parallel_map`, and the
-configuration namespace (`condukt.trigger.webhook`,
-`condukt.schedule.cron`, `condukt.sandbox.local`).
+- `cmd`: runs an executable on the host. Fields: `argv` (list of
+  strings), `cwd` (optional), `env` (optional dict). Outputs: `stdout`,
+  `exit_code`, `ok`.
+- `agent`: runs an LLM-driven step. Fields: `model`, `tools` (list of
+  tool ids), `input`. Outputs: `output` and any structured fields the
+  agent declares.
+- `http`: deterministic HTTP call. Fields: `method`, `url`, `headers`,
+  `body`. Outputs: `status`, `headers`, `body`.
+- `tool`: invokes a registered host tool by id. Fields: `id`, `args`.
+- `map`: fan-out. Fields: `over` (expression resolving to a list),
+  `as` (binding name), `do` (a sub-step definition). Outputs: a list of
+  the sub-step's outputs in input order.
+
+Each step's outputs are addressable as `${steps.<id>.<field>}` from
+later steps and from the top-level `output`.
+
+## Expressions
+
+Expressions are written between `${` and `}`. They are evaluated against
+a small, deterministic context: `inputs`, `steps`, and within a `map`
+step, the `as` binding.
+
+Supported in expressions:
+
+- Member access: `inputs.name`, `steps.fetch.body.title`.
+- Indexing: `steps.list.items[0]`.
+- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
+- Boolean: `&&`, `||`, `!`.
+- String, number, and boolean literals.
+- Type-aware formatters: `${var:json}`, `${var:csv}`.
+
+Not supported:
+
+- Arbitrary function calls, regex, or arithmetic beyond comparisons.
+  Anything more substantial belongs in a `cmd`, `agent`, or `tool`
+  step.
+
+A `when:` expression must evaluate to a boolean. A field in a step that
+is a string with `${...}` placeholders is interpolated; if the entire
+string is one `${...}`, the underlying value's type is preserved.
+
+## Authoring DSL (Starlark)
+
+Hand-writing JSON is fine for small workflows and for what editors and
+agents emit. For larger workflows there is an authoring DSL that
+compiles to the same JSON document. The DSL is a Starlark dialect: it
+runs at compile time, builds the step graph, and prints JSON.
+
+`review-pr.star`:
+
+```python
+def run():
+    pr = http.get(
+        "https://api.github.com/repos/${inputs.repo}/pulls/${inputs.pr_number}",
+    )
+    review = agent(
+        model = "claude-opus-4-7",
+        input = pr.body,
+    )
+    if review.output.score < 7:
+        http.post(
+            url = "https://api.github.com/repos/${inputs.repo}/issues/${inputs.pr_number}/comments",
+            body = {"body": review.output.comment},
+        )
+    return review.output
+
+workflow(
+    inputs = {
+        "repo": {"type": "string"},
+        "pr_number": {"type": "integer"},
+    },
+)
+```
+
+Compile and run:
+
+```sh
+condukt compile review-pr.star > review-pr.json
+condukt run review-pr.json --input '{"repo": "tuist/condukt", "pr_number": 42}'
+```
+
+`condukt run review-pr.star` does the compile step transparently.
+
+What the DSL does at compile time:
+
+- Each builtin call (`http.get`, `agent`, `cmd`, etc.) returns a *step
+  handle*, not a real value. Reading `.body` on a handle records a
+  reference and emits a `${steps.X.body}` expression in the generated
+  JSON.
+- `if cond:` becomes a `when:` expression on the steps inside the
+  branch. The condition is compiled from the Starlark expression.
+- `for item in xs:` becomes a `map:` step.
+- `def` and `load("...", "name")` are compile-time only. They produce
+  helpers that fold into the graph; they do not appear in the output
+  JSON.
+
+Because the DSL is a graph builder, it cannot do runtime branching on a
+step's actual value: control flow must be expressible as a `when:` edge
+or a `map:` step. This is the property that lets the JSON document
+remain statically validatable, visually editable, and safe to load from
+arbitrary URLs.
 
 ## Validating a workflow
 
-`condukt check PATH` (or `mix condukt.check PATH`) parses the file and
-reports any static problems without executing it:
+`condukt check PATH` parses and validates the document against the
+schema and reports all problems without executing it. It accepts
+`.json`, `.yaml`, and `.star` paths; for `.star` it compiles first and
+then validates the JSON.
 
 ```sh
+condukt check review-pr.json
 condukt check review-pr.star
 ```
 
 Use it in CI or as part of an LLM authoring loop: generate, check,
 fix, repeat.
 
-## What Starlark does not have
-
-Workflows execute in standard Starlark, which is a deterministic Python
-subset. Things to remember when writing a workflow:
-
-- No `try`/`except`. Builtins return structured `ok`/`error` values; you
-  branch on those.
-- No `while` loops and no recursion. Use `for` over a finite iterable.
-- No f-strings. Use `+` concatenation or `"...{}".format(...)`.
-- Lambdas are single-expression. For multi-statement parallel work, the
-  `parallel_map(items, fn)` builtin (future slice) takes a regular `def`
-  function.
-- No imports beyond `load("...", "name")` of other Starlark files.
-
-These constraints make workflows safe to load from arbitrary URLs and
-make `condukt check` able to catch most mistakes statically.
-
 ## Future direction
 
-These features are planned but not yet implemented:
+These are planned but not yet implemented:
 
-- `agent(model = ..., tools = ..., input = ...)` for LLM-driven steps.
-- `http(method, url, headers, body)` for deterministic API calls.
-- `tool("read")`, `tool("grep")`, etc.: tool references usable by
-  `agent`.
-- `parallel_map(items, fn)` for fan-out.
 - Remote `load(...)` of versioned helpers from
-  `github.com/owner/repo/path/file.star@v1.0.0`.
+  `github.com/owner/repo/path/file.star@v1.0.0`, with the compiled JSON
+  cached locally.
 - Optional `--lock` mode that records SHA-256 per fetched URL and
   verifies on later runs (Deno-style integrity).
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and
-  `condukt serve PATH` to host webhook and cron-driven runs.
+  `condukt serve PATH` to host webhook and cron-driven runs. Triggers
+  are declared at the top of the JSON document and exposed by the DSL
+  through a `condukt` namespace.
+- Visual editor that reads and writes the same JSON document.
