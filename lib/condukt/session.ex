@@ -805,10 +805,24 @@ defmodule Condukt.Session do
   end
 
   defp execute_tool_call(tool_map, {id, name, args}, state) do
-    Telemetry.span(:tool_call, %{tool: name, session_id: state.id, agent: state.agent_module}, fn ->
-      execute_tool(tool_map, name, args, state, id)
-    end)
+    metadata = %{
+      tool: name,
+      tool_call_id: id,
+      args: args,
+      session_id: state.id,
+      agent: state.agent_module
+    }
+
+    Telemetry.span(
+      :tool_call,
+      metadata,
+      fn -> execute_tool(tool_map, name, args, state, id) end,
+      &tool_call_stop_metadata/1
+    )
   end
+
+  defp tool_call_stop_metadata(%Message{content: {:error, _} = error}), do: %{status: :error, result: error}
+  defp tool_call_stop_metadata(%Message{content: content}), do: %{status: :ok, result: content}
 
   defp task_result_to_tool_result({{:ok, result}, _tool_call}), do: result
 

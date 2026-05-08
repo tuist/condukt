@@ -31,15 +31,20 @@ defmodule Condukt.Telemetry do
 
   - `[:condukt, :tool_call, :start]` - Tool call started
     - Measurements: `%{system_time: integer}`
-    - Metadata: `%{tool: string, agent: module, session_id: String.t()}`
+    - Metadata: `%{tool: string, tool_call_id: string, args: map, agent: module, session_id: String.t()}`
 
   - `[:condukt, :tool_call, :stop]` - Tool call completed
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{tool: string, agent: module, session_id: String.t()}`
+    - Metadata: `%{tool: string, tool_call_id: string, args: map, agent: module, session_id: String.t(), status: :ok | :error, result: term}`
 
   - `[:condukt, :tool_call, :exception]` - Tool call raised an exception
     - Measurements: `%{duration: integer}`
-    - Metadata: `%{tool: string, agent: module, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
+    - Metadata: `%{tool: string, tool_call_id: string, args: map, agent: module, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
+
+  `:args` is the parsed argument map the model passed to the tool. `:result`
+  on `:stop` is the tool's return value after session-secret redaction; on
+  errors it is the `{:error, reason}` tuple. Consumers that ship payloads to
+  external systems should size-limit or sample these fields themselves.
 
   ### Sub-agent Events
 
@@ -129,8 +134,14 @@ defmodule Condukt.Telemetry do
   Executes a function within a telemetry span.
 
   Emits start, stop, and exception events for the given event name.
+
+  An optional `augment_stop` function receives the result of `fun` and returns
+  a map of extra metadata to merge into the `:stop` event. Use it to attach
+  result-derived fields (status, payload, …) that are only known once the
+  wrapped work has finished.
   """
-  def span(event, metadata, fun) when is_atom(event) and is_map(metadata) and is_function(fun, 0) do
+  def span(event, metadata, fun, augment_stop \\ fn _result -> %{} end)
+      when is_atom(event) and is_map(metadata) and is_function(fun, 0) and is_function(augment_stop, 1) do
     event_prefix = [:condukt, event]
     start_time = System.monotonic_time()
 
@@ -146,7 +157,7 @@ defmodule Condukt.Telemetry do
       :telemetry.execute(
         event_prefix ++ [:stop],
         %{duration: System.monotonic_time() - start_time},
-        metadata
+        Map.merge(metadata, augment_stop.(result))
       )
 
       result

@@ -10,8 +10,8 @@ Attach handlers to feed your existing observability stack: Logger,
 | ----- | ------------ | -------- |
 | `[:condukt, :agent, :start]` | `system_time` | `:agent`, `:session_id` |
 | `[:condukt, :agent, :stop]` | `duration` | `:agent`, `:session_id` |
-| `[:condukt, :tool_call, :start]` | `system_time` | `:tool`, `:agent`, `:session_id` |
-| `[:condukt, :tool_call, :stop]` | `duration` | `:tool`, `:agent`, `:session_id` |
+| `[:condukt, :tool_call, :start]` | `system_time` | `:tool`, `:tool_call_id`, `:args`, `:agent`, `:session_id` |
+| `[:condukt, :tool_call, :stop]` | `duration` | `:tool`, `:tool_call_id`, `:args`, `:agent`, `:session_id`, `:status`, `:result` |
 | `[:condukt, :subagent, :start]` | `system_time` | `:agent`, `:role`, `:child_agent`, `:input?`, `:output?`, `:parent_session_id` |
 | `[:condukt, :subagent, :stop]` | `duration` | `:agent`, `:role`, `:child_agent`, `:input?`, `:output?`, `:status`, `:error`, `:parent_session_id`, `:session_id` |
 | `[:condukt, :operation, :start]` | `system_time` | `:agent`, `:operation`, `:session_id` |
@@ -24,6 +24,20 @@ Attach handlers to feed your existing observability stack: Logger,
 
 The exact set may grow over time. Attach broadly with `attach_many/4` so
 new events surface in your handlers without code changes.
+
+## Tool call payloads
+
+`[:condukt, :tool_call, :start]` and `:stop` events carry the parsed
+arguments the model passed to the tool (`:args`) and a stable
+`:tool_call_id` provided by the LLM. `:stop` also carries `:status`
+(`:ok` or `:error`) and `:result`, which is the tool's return value
+after session-secret redaction has been applied. This makes it possible
+to persist a full audit trail of every tool invocation for an agentic
+run.
+
+`:result` is whatever the tool returned (string, map, list, error
+tuple). Tools that produce large payloads should expect downstream
+consumers to truncate or sample.
 
 ## Session ids
 
