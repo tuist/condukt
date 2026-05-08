@@ -1,6 +1,40 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.20.0] - 2026-05-08
+
+### Features
+
+- emit :llm_turn events around each LLM round-trip
+
+
+## [0.19.0] - 2026-05-08
+
+### Features
+
+- include tool args, status, and result in tool_call events
+
+
+## [0.18.0] - 2026-05-07
+
+### Features
+
+- identify sessions with UUIDv7 and propagate through events
+
+
+## [0.17.0] - 2026-05-07
+
+### Bug Fixes
+
+- encode image messages as ReqLLM ContentPart structs
+
+
+
+### Features
+
+- One-shot agent execution
+
+
 ## [0.16.5] - 2026-05-04
 
 ### Bug Fixes

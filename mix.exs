@@ -1,7 +1,7 @@
 defmodule Condukt.MixProject do
   use Mix.Project
 
-  @version "0.16.5"
+  @version "0.20.0"
   @source_url "https://github.com/tuist/condukt"
 
   def project do
@@ -58,6 +58,9 @@ defmodule Condukt.MixProject do
 
       # Telemetry
       {:telemetry, "~> 1.0"},
+
+      # UUIDv7 generation for session identifiers in telemetry metadata
+      {:uniq, "~> 0.6"},
 
       # Native interop with the bashkit virtual sandbox.
       # Dev builds compile NIFs from source by default. Tests can opt into

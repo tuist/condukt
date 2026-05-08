@@ -18,6 +18,21 @@ Condukt starts a transient `Condukt.Session`, runs the prompt, returns the
 final text, and stops the session. No conversation history is kept across
 calls.
 
+If you already have an agent module and want its callbacks without managing a
+long-lived process, pass the module as the first argument instead:
+
+```elixir
+{:ok, text} =
+  Condukt.run(MyApp.ReviewAgent, "Review the current branch.",
+    timeout: 120_000
+  )
+```
+
+This module-defined one-shot form uses the agent's `system_prompt/0`,
+`tools/0`, `model/0`, sandbox, secrets, and sub-agent defaults. It also
+supports typed input and structured output through the same options described
+below.
+
 ## Runtime options
 
 Anonymous workflows accept the same run options as agent runs:
@@ -153,6 +168,9 @@ Common structured workflow reasons include:
 
 Use anonymous workflows when the task fits in one call and no module-level
 agent identity is useful.
+
+Use `Condukt.run(MyApp.Agent, prompt, opts)` when the task fits in one call
+but the agent module's callbacks are useful.
 
 Use `operation/2` when you want a named compile-time entrypoint on an agent
 module.

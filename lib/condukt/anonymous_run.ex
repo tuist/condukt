@@ -19,51 +19,66 @@ defmodule Condukt.AnonymousRun do
   alias Condukt.AnonymousAgent
   alias Condukt.Operation.SubmitTool
   alias Condukt.Session
+  alias Condukt.SessionID
   alias Condukt.Telemetry
 
   @run_opt_keys [:timeout, :max_turns, :images]
   @runtime_keys [:input, :output, :input_schema]
 
   def run(prompt, opts) when is_binary(prompt) and is_list(opts) do
+    opts = Keyword.put_new_lazy(opts, :id, &SessionID.generate/0)
+
     Telemetry.span(:run, run_metadata(opts), fn ->
-      do_run(prompt, opts)
+      do_run(prompt, opts, AnonymousAgent, false)
+    end)
+  end
+
+  def run(agent_module, prompt, opts) when is_atom(agent_module) and is_binary(prompt) and is_list(opts) do
+    opts =
+      opts
+      |> Keyword.put_new(:tools, agent_module.tools())
+      |> Keyword.put_new_lazy(:id, &SessionID.generate/0)
+
+    Telemetry.span(:run, run_metadata(opts), fn ->
+      do_run(prompt, opts, agent_module, true)
     end)
   end
 
   defp run_metadata(opts) do
     %{
       structured?: not is_nil(Keyword.get(opts, :output)),
-      input?: not is_nil(Keyword.get(opts, :input))
+      input?: not is_nil(Keyword.get(opts, :input)),
+      session_id: Keyword.get(opts, :id)
     }
   end
 
-  defp do_run(prompt, opts) do
+  defp do_run(prompt, opts, agent_module, load_project_instructions) do
     output_schema = Keyword.get(opts, :output)
     input_args = Keyword.get(opts, :input)
     input_schema = Keyword.get(opts, :input_schema)
 
     cond do
       not is_nil(output_schema) ->
-        run_structured(prompt, input_args, input_schema, output_schema, opts)
+        run_structured(prompt, input_args, input_schema, output_schema, opts, agent_module, load_project_instructions)
 
       not is_nil(input_args) ->
-        run_freeform_with_input(prompt, input_args, input_schema, opts)
+        run_freeform_with_input(prompt, input_args, input_schema, opts, agent_module, load_project_instructions)
 
       true ->
-        run_freeform(prompt, opts)
+        run_freeform(prompt, opts, agent_module, load_project_instructions)
     end
   end
 
-  defp run_freeform(prompt, opts) do
+  defp run_freeform(prompt, opts, agent_module, load_project_instructions) do
     {session_opts, run_opts} = split_opts(opts)
-    session_opts = Keyword.put_new(session_opts, :load_project_instructions, false)
+    session_opts = put_load_project_instructions_default(session_opts, load_project_instructions)
 
-    with_session(session_opts, fn pid ->
+    with_session(agent_module, session_opts, fn pid ->
       Session.run(pid, prompt, run_opts)
     end)
   end
 
-  defp run_freeform_with_input(prompt, input, input_schema, opts) do
+  defp run_freeform_with_input(prompt, input, input_schema, opts, agent_module, load_project_instructions) do
     with :ok <- validate_input(input, input_schema) do
       base_system = Keyword.get(opts, :system_prompt)
       system_prompt = compose_system(base_system, prompt, nil)
@@ -74,21 +89,21 @@ defmodule Condukt.AnonymousRun do
       session_opts =
         session_opts
         |> Keyword.put(:system_prompt, system_prompt)
-        |> Keyword.put_new(:load_project_instructions, false)
+        |> put_load_project_instructions_default(load_project_instructions)
 
-      with_session(session_opts, fn pid ->
+      with_session(agent_module, session_opts, fn pid ->
         Session.run(pid, user_message, run_opts)
       end)
     end
   end
 
-  defp run_structured(prompt, input, input_schema, output_schema, opts) do
+  defp run_structured(prompt, input, input_schema, output_schema, opts, agent_module, load_project_instructions) do
     with :ok <- validate_input(input, input_schema) do
-      do_run_structured(prompt, input, output_schema, opts)
+      do_run_structured(prompt, input, output_schema, opts, agent_module, load_project_instructions)
     end
   end
 
-  defp do_run_structured(prompt, input, output_schema, opts) do
+  defp do_run_structured(prompt, input, output_schema, opts, agent_module, load_project_instructions) do
     ref = make_ref()
     submit_tool = {SubmitTool, schema: output_schema, reply_to: self(), ref: ref}
     user_message = structured_user_message(input)
@@ -97,9 +112,9 @@ defmodule Condukt.AnonymousRun do
     session_opts =
       opts
       |> structured_session_opts(prompt, submit_tool, session_opts)
-      |> Keyword.put_new(:load_project_instructions, false)
+      |> put_load_project_instructions_default(load_project_instructions)
 
-    with_session(session_opts, fn pid ->
+    with_session(agent_module, session_opts, fn pid ->
       complete_structured_run(pid, user_message, run_opts, output_schema, ref)
     end)
   end
@@ -132,18 +147,12 @@ defmodule Condukt.AnonymousRun do
     {session_opts, run_opts}
   end
 
-  defp with_session(session_opts, fun) do
-    case Session.start_link(AnonymousAgent, session_opts) do
-      {:ok, pid} ->
-        try do
-          fun.(pid)
-        after
-          if Process.alive?(pid), do: GenServer.stop(pid)
-        end
+  defp put_load_project_instructions_default(session_opts, value) do
+    Keyword.put_new(session_opts, :load_project_instructions, value)
+  end
 
-      {:error, reason} ->
-        {:error, reason}
-    end
+  defp with_session(agent_module, session_opts, fun) do
+    Session.with_transient(agent_module, session_opts, fun)
   end
 
   defp encode_args(args) do

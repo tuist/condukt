@@ -305,6 +305,55 @@ defmodule Condukt.Tools.SubagentTest do
     GenServer.stop(parent)
   end
 
+  test "subagent telemetry carries parent and child session ids" do
+    handler_id = "subagent-session-ids-#{inspect(make_ref())}"
+    test_pid = self()
+
+    :telemetry.attach_many(
+      handler_id,
+      [[:condukt, :subagent, :start], [:condukt, :subagent, :stop]],
+      fn event, _measurements, metadata, _config ->
+        send(test_pid, {:subagent_telemetry, event, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    parent_call = ToolCall.new("parent_call_1", "subagent", JSON.encode!(%{"role" => "researcher", "task" => "go"}))
+
+    {parent_model, _parent_model_id} =
+      LLMProvider.model([
+        LLMProvider.response(%Message{role: :assistant, content: [], tool_calls: [parent_call]}, :tool_calls),
+        LLMProvider.text_response("parent done")
+      ])
+
+    {child_model, _child_model_id} =
+      LLMProvider.model([LLMProvider.text_response("child done")])
+
+    parent_id = "11111111-2222-7333-8444-555555555555"
+
+    {:ok, parent} =
+      ParentAgent.start_link(
+        id: parent_id,
+        model: parent_model,
+        subagents: [researcher: {ChildAgent, model: child_model, load_project_instructions: false}],
+        load_project_instructions: false
+      )
+
+    assert {:ok, "parent done"} = Condukt.run(parent, "delegate")
+
+    assert_receive {:subagent_telemetry, [:condukt, :subagent, :start], %{parent_session_id: ^parent_id}}
+
+    assert_receive {:subagent_telemetry, [:condukt, :subagent, :stop],
+                    %{parent_session_id: ^parent_id, session_id: child_session_id, status: :ok}}
+
+    assert is_binary(child_session_id)
+    assert child_session_id != parent_id
+
+    GenServer.stop(parent)
+  end
+
   test "emits telemetry when structured input validation fails" do
     handler_id = "subagent-invalid-input-telemetry-#{inspect(make_ref())}"
     test_pid = self()

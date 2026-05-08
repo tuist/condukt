@@ -135,6 +135,11 @@
 
 ## Elixir
 
+- Condukt supports module-defined one-shot runs with
+  `Condukt.run(MyApp.Agent, prompt, opts)`. Prefer this form for synchronous
+  work that does not need conversation history. Use `start_link/1` and a
+  persistent session only when the caller needs state, streaming, persistence,
+  supervision, or multiple turns against the same process.
 - Do not type Elixir code by hand when avoidable. Prefer structural edits and tool-assisted changes.
 - Do not introduce `try`/`catch` or `rescue` patterns in production Elixir
   code. Prefer tuple-returning APIs and explicit pattern matching. If a
