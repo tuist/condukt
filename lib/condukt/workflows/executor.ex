@@ -18,7 +18,7 @@ defmodule Condukt.Workflows.Executor do
   resolved and returned.
   """
 
-  alias Condukt.Workflows.{Document, Expr}
+  alias Condukt.Workflows.{Document, Expr, ToolRegistry}
 
   @type state :: %{
           doc: Document.t(),
@@ -171,8 +171,8 @@ defmodule Condukt.Workflows.Executor do
       "cmd" -> run_cmd(step_id, step, state)
       "http" -> run_http(step_id, step, state)
       "map" -> run_map(step_id, step, state)
-      "agent" -> {:error, {:unsupported_kind, "agent", step_id}}
-      "tool" -> {:error, {:unsupported_kind, "tool", step_id}}
+      "tool" -> run_tool(step_id, step, state)
+      "agent" -> run_agent(step_id, step, state)
     end
   end
 
@@ -337,6 +337,99 @@ defmodule Condukt.Workflows.Executor do
         err
     end
   end
+
+  ## tool
+
+  defp run_tool(step_id, step, state) do
+    fields = Map.take(step, ["id", "args"])
+
+    case interpolate(fields, state) do
+      {:ok, %{"id" => id} = resolved} when is_binary(id) ->
+        args = Map.get(resolved, "args", %{})
+        extra = Keyword.get(state.opts, :tools, %{})
+
+        with {:ok, spec} <- ToolRegistry.resolve(id, extra),
+             tool_ctx = build_tool_context(state),
+             {:ok, output} <- Condukt.Tool.execute(spec, args, tool_ctx) do
+          record(state, step_id, %{"ok" => true, "output" => output})
+        else
+          {:error, {:unknown_tool, _} = reason} ->
+            {:error, {:tool_failed, step_id, reason}}
+
+          {:error, reason} ->
+            record(state, step_id, %{"ok" => false, "error" => format_error(reason)})
+        end
+
+      {:ok, _} ->
+        {:error, {:invalid_tool_id, step_id}}
+
+      {:error, reason} ->
+        {:error, {:interpolate_failed, step_id, reason}}
+    end
+  end
+
+  defp build_tool_context(state) do
+    %{
+      sandbox: Keyword.get(state.opts, :sandbox),
+      cwd: Keyword.get(state.opts, :cwd, File.cwd!()),
+      secrets: Keyword.get(state.opts, :secrets, %{})
+    }
+  end
+
+  defp format_error(reason) when is_binary(reason), do: reason
+  defp format_error(reason), do: inspect(reason)
+
+  ## agent
+
+  defp run_agent(step_id, step, state) do
+    fields = Map.take(step, ["model", "input", "system", "tools", "output_schema"])
+
+    case interpolate(fields, state) do
+      {:ok, %{"model" => model, "input" => input} = resolved} when is_binary(model) ->
+        prompt = stringify_input(input)
+        extra = Keyword.get(state.opts, :tools, %{})
+
+        with {:ok, tool_specs} <- resolve_tool_specs(Map.get(resolved, "tools", []), extra) do
+          run_opts =
+            [model: model, tools: tool_specs]
+            |> maybe_put(:system_prompt, Map.get(resolved, "system"))
+            |> maybe_put(:output, Map.get(resolved, "output_schema"))
+            |> Keyword.merge(Keyword.get(state.opts, :agent_options, []))
+
+          case Condukt.run(prompt, run_opts) do
+            {:ok, output} -> record(state, step_id, %{"ok" => true, "output" => output})
+            {:error, reason} -> {:error, {:agent_failed, step_id, reason}}
+          end
+        else
+          {:error, reason} -> {:error, {:agent_failed, step_id, reason}}
+        end
+
+      {:ok, _} ->
+        {:error, {:invalid_agent_step, step_id}}
+
+      {:error, reason} ->
+        {:error, {:interpolate_failed, step_id, reason}}
+    end
+  end
+
+  defp resolve_tool_specs(ids, extra) when is_list(ids) do
+    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, acc} ->
+      case ToolRegistry.resolve(id, extra) do
+        {:ok, spec} -> {:cont, {:ok, [spec | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, specs} -> {:ok, Enum.reverse(specs)}
+      err -> err
+    end
+  end
+
+  defp stringify_input(value) when is_binary(value), do: value
+  defp stringify_input(value), do: JSON.encode!(value)
+
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   ## Helpers.
 
