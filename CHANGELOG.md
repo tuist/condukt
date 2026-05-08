@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.19.0] - 2026-05-08
+
+### Features
+
+- include tool args, status, and result in tool_call events
+
+
 ## [0.18.0] - 2026-05-07
 
 ### Features
