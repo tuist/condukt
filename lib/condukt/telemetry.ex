@@ -27,6 +27,30 @@ defmodule Condukt.Telemetry do
     - Measurements: `%{duration: integer}`
     - Metadata: `%{agent: module, session_id: String.t(), kind: atom, reason: term, stacktrace: list}`
 
+  ### LLM Turn Events
+
+  Wrap a single LLM round-trip inside an agent loop iteration. One
+  `:llm_turn` pair fires per call to the underlying provider, so
+  multi-turn agent runs emit one pair per turn (the same `:session_id`
+  appears on each pair, with `:turn` increasing).
+
+  - `[:condukt, :llm_turn, :start]` - LLM call started
+    - Measurements: `%{system_time: integer}`
+    - Metadata: `%{agent: module, session_id: String.t(), model: term, turn: non_neg_integer, streaming?: boolean, messages: [Condukt.Message.t()], tool_count: non_neg_integer}`
+
+  - `[:condukt, :llm_turn, :stop]` - LLM call returned
+    - Measurements: `%{duration: integer}`
+    - Metadata: same as `:start` plus `%{status: :ok | :error, assistant_message: Condukt.Message.t() | nil, usage: map | nil, finish_reason: atom | nil, error: term | nil}`
+
+  - `[:condukt, :llm_turn, :exception]` - LLM call raised an exception
+    - Measurements: `%{duration: integer}`
+    - Metadata: same as `:start` plus `%{kind: atom, reason: term, stacktrace: list}`
+
+  `:messages` is the conversation context handed to the model for this
+  turn. `:assistant_message` is the model's response, including any
+  tool calls it issued. Together they let downstream consumers persist
+  a complete transcript of an agentic run.
+
   ### Tool Events
 
   - `[:condukt, :tool_call, :start]` - Tool call started

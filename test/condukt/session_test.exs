@@ -231,6 +231,102 @@ defmodule Condukt.SessionTest do
       GenServer.stop(pid)
     end
 
+    test "emits :llm_turn events with the conversation context and assistant response" do
+      handler_id = "llm-turn-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:condukt, :llm_turn, :start], [:condukt, :llm_turn, :stop]],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:llm_turn, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {model, _} = LLMProvider.model([LLMProvider.text_response("hello back")])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, load_project_instructions: false)
+      id = Condukt.Session.id(pid)
+
+      assert {:ok, "hello back"} = Condukt.run(pid, "hi there")
+
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :start],
+                      %{
+                        agent: ConfigAgent,
+                        session_id: ^id,
+                        turn: 0,
+                        streaming?: false,
+                        messages: messages,
+                        tool_count: tool_count
+                      }}
+
+      assert is_list(messages)
+      assert tool_count == 0
+      assert Enum.any?(messages, fn msg -> msg.role == :user and Message.text(msg) == "hi there" end)
+
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :stop],
+                      %{
+                        agent: ConfigAgent,
+                        session_id: ^id,
+                        turn: 0,
+                        status: :ok,
+                        assistant_message: %Message{role: :assistant} = assistant_message
+                      }}
+
+      assert Message.text(assistant_message) == "hello back"
+
+      GenServer.stop(pid)
+    end
+
+    test "emits one :llm_turn pair per loop iteration with increasing :turn" do
+      handler_id = "llm-turn-multi-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:condukt, :llm_turn, :start], [:condukt, :llm_turn, :stop]],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:llm_turn, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      tool =
+        Condukt.tool(
+          name: "noop",
+          description: "noop",
+          parameters: %{type: "object", properties: %{}},
+          call: fn _args, _context -> {:ok, "ok"} end
+        )
+
+      tool_call = ToolCall.new("call_z", "noop", JSON.encode!(%{}))
+
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [tool_call]},
+            :tool_calls
+          ),
+          LLMProvider.text_response("done")
+        ])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, tools: [tool], load_project_instructions: false)
+
+      assert {:ok, "done"} = Condukt.run(pid, "go")
+
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :start], %{turn: 0, tool_count: 1}}
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :stop], %{turn: 0, status: :ok}}
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :start], %{turn: 1, tool_count: 1}}
+      assert_receive {:llm_turn, [:condukt, :llm_turn, :stop], %{turn: 1, status: :ok}}
+
+      GenServer.stop(pid)
+    end
+
     test "tool_call telemetry redacts session secrets from the result" do
       handler_id = "tool-call-redacted-#{inspect(make_ref())}"
       test_pid = self()
