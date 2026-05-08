@@ -82,13 +82,16 @@ the authored file:
 
 ```hcl
 workflow "release_notes" {
+  runtime {
+    model = "openai:gpt-4.1-mini"
+  }
+
   cmd "version" {
     argv = ["sh", "-c", "git describe --tags --always"]
   }
 
   agent "draft" {
     needs = ["version"]
-    model = "openai:gpt-4.1-mini"
     input = "Draft release notes for ${task.version.stdout}"
   }
 
@@ -113,6 +116,7 @@ The compiled JSON shape is:
 {
   "name": "review-pr",            // optional, defaults to file basename
   "inputs": { ... },              // typed input map
+  "runtime": { ... },             // optional runtime defaults
   "steps": { "<id>": { ... } },   // map of step id to step definition
   "output": "<expression>"        // optional, what `condukt run` prints
 }
@@ -139,6 +143,12 @@ with `input "id"` blocks, and steps are declared with kind blocks:
 
 ```hcl
 workflow "deploy" {
+  runtime {
+    model = "openai:gpt-4.1-mini"
+    sandbox = "local"
+    cwd = "."
+  }
+
   input "environment" {
     type = "string"
     enum = ["staging", "production"]
@@ -175,15 +185,29 @@ Inside HCL:
 - A string template, such as `"Hello, ${input.name}"`, interpolates the
   value into a string.
 
+The optional `runtime` block declares file-level defaults:
+
+- `model`: default ReqLLM model spec for `agent` steps that do not set
+  their own `model`.
+- `sandbox`: `local` or `virtual`. Command steps and built-in tools run
+  through this sandbox when set.
+- `cwd`: default working directory for command steps, tools, and sandbox
+  initialization.
+
+Runtime values are defaults. Library callers can override them when they
+call `Condukt.Workflows.run/3`.
+
 ## Step kinds
 
-- `cmd`: runs an executable on the host. Fields: `argv` (list of
-  strings, required), `cwd` (optional), `env` (optional dict).
-  Outputs: `stdout`, `exit_code`, `ok`.
-- `agent`: runs an LLM-driven step. Fields: `model` (required),
-  `input` (required, any), `tools` (optional list of tool ids),
-  `system` (optional system prompt), `output_schema` (optional JSON
-  Schema for structured output). Output: `output` and `ok`.
+- `cmd`: runs an executable on the host, or through the configured
+  sandbox when one is set. Fields: `argv` (list of strings, required),
+  `cwd` (optional), `env` (optional dict). Outputs: `stdout`,
+  `exit_code`, `ok`.
+- `agent`: runs an LLM-driven step. Fields: `input` (required, any),
+  `model` (optional when a runtime or caller model is set), `tools`
+  (optional list of tool ids), `system` (optional system prompt),
+  `output_schema` (optional JSON Schema for structured output). Output:
+  `output` and `ok`.
 - `http`: deterministic HTTP call. Fields: `method`, `url`, `headers`,
   `body`, `expect_status`. Output: `status`, `headers`, `body`.
 - `tool`: invokes a registered host tool by id. Fields: `id`, `args`.
@@ -304,6 +328,27 @@ condukt compile hello.hcl > hello.json
 
 `condukt run hello.hcl` compiles transparently before validation and
 execution.
+
+## Evaluating as a library
+
+Elixir callers can load a workflow once and run it multiple times:
+
+```elixir
+{:ok, workflow} = Condukt.Workflows.load("release_notes.hcl")
+
+{:ok, output} =
+  Condukt.Workflows.run(workflow, %{},
+    model: "openai:gpt-4.1-mini",
+    sandbox: {Condukt.Sandbox.Local, cwd: File.cwd!()}
+  )
+```
+
+The third argument accepts the same runtime options used by workflow
+execution: `:model`, `:sandbox`, `:cwd`, `:tools`, `:secrets`,
+`:req_options`, and `:agent_options`. These options override the
+workflow's `runtime` block, so applications can keep portable workflow
+files while choosing the model, sandbox, and working directory at the
+library boundary.
 
 ## Validating a workflow
 

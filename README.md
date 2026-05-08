@@ -81,6 +81,13 @@ condukt compile hello.hcl > hello.json
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64 builds.
 
+Library callers can also load and evaluate workflow files directly:
+
+```elixir
+{:ok, workflow} = Condukt.Workflows.load("hello.hcl")
+{:ok, output} = Condukt.Workflows.run(workflow, %{"name" => "world"})
+```
+
 See the [Workflows](https://hexdocs.pm/condukt/workflows.html) guide for creating, running, and
 sharing workflows.
 

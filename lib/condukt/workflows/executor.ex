@@ -18,6 +18,7 @@ defmodule Condukt.Workflows.Executor do
   resolved and returned.
   """
 
+  alias Condukt.Sandbox
   alias Condukt.Workflows.{Document, Expr, ToolRegistry}
 
   @type state :: %{
@@ -38,10 +39,62 @@ defmodule Condukt.Workflows.Executor do
   @spec run(Document.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(%Document{} = doc, inputs \\ %{}, opts \\ []) when is_map(inputs) do
     with {:ok, normalized_inputs} <- Document.validate_inputs(doc, inputs),
-         {:ok, order} <- topological_sort(doc.steps) do
-      execute(order, doc, normalized_inputs, opts)
+         {:ok, order} <- topological_sort(doc.steps),
+         {:ok, runtime_opts, owned_sandbox} <- prepare_runtime(doc, opts) do
+      result = execute(order, doc, normalized_inputs, runtime_opts)
+      cleanup_runtime(owned_sandbox)
+      result
     end
   end
+
+  defp prepare_runtime(%Document{runtime: runtime}, opts) do
+    runtime_opts =
+      []
+      |> put_runtime(:model, Map.get(runtime, "model"))
+      |> put_runtime(:cwd, Map.get(runtime, "cwd"))
+      |> put_runtime(:sandbox, Map.get(runtime, "sandbox"))
+
+    opts = Keyword.merge(runtime_opts, opts)
+
+    case Keyword.fetch(opts, :sandbox) do
+      :error ->
+        {:ok, opts, nil}
+
+      {:ok, nil} ->
+        {:ok, opts, nil}
+
+      {:ok, %Sandbox{} = sandbox} ->
+        {:ok, Keyword.put(opts, :sandbox, sandbox), nil}
+
+      {:ok, sandbox_spec} ->
+        with {:ok, sandbox} <- resolve_sandbox(sandbox_spec, opts) do
+          {:ok, Keyword.put(opts, :sandbox, sandbox), sandbox}
+        end
+    end
+  end
+
+  defp put_runtime(opts, _key, nil), do: opts
+  defp put_runtime(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp resolve_sandbox("local", opts) do
+    Sandbox.resolve({Condukt.Sandbox.Local, sandbox_init_opts(opts)})
+  end
+
+  defp resolve_sandbox("virtual", opts) do
+    Sandbox.resolve({Condukt.Sandbox.Virtual, sandbox_init_opts(opts)})
+  end
+
+  defp resolve_sandbox(spec, _opts), do: Sandbox.resolve(spec)
+
+  defp sandbox_init_opts(opts) do
+    case Keyword.get(opts, :cwd) do
+      nil -> []
+      cwd -> [cwd: cwd]
+    end
+  end
+
+  defp cleanup_runtime(nil), do: :ok
+  defp cleanup_runtime(%Sandbox{} = sandbox), do: Sandbox.shutdown(sandbox)
 
   ## Topological sort.
 
@@ -85,8 +138,7 @@ defmodule Condukt.Workflows.Executor do
 
   defp do_kahn([id | rest], incoming, deps_map, order) do
     {new_ready, new_incoming} =
-      Enum.reduce(deps_map, {rest, Map.put(incoming, id, 0)}, fn {dep_id, deps},
-                                                                 {ready_acc, incoming_acc} ->
+      Enum.reduce(deps_map, {rest, Map.put(incoming, id, 0)}, fn {dep_id, deps}, {ready_acc, incoming_acc} ->
         if MapSet.member?(deps, id) and dep_id != id do
           new_count = Map.fetch!(incoming_acc, dep_id) - 1
           ready_acc = if new_count == 0, do: ready_acc ++ [dep_id], else: ready_acc
@@ -185,29 +237,54 @@ defmodule Condukt.Workflows.Executor do
   defp run_cmd(step_id, step, state) do
     fields = Map.take(step, ["argv", "cwd", "env"])
 
-    with {:ok, %{"argv" => [program | args]} = resolved} when is_binary(program) <-
-           interpolate(fields, state) do
-      cwd = Map.get(resolved, "cwd") || Keyword.get(state.opts, :cwd, File.cwd!())
-      env = normalize_env(Map.get(resolved, "env"))
+    case interpolate(fields, state) do
+      {:ok, %{"argv" => [program | args]} = resolved} when is_binary(program) ->
+        cwd = Map.get(resolved, "cwd") || Keyword.get(state.opts, :cwd)
+        env = normalize_env(Map.get(resolved, "env"))
 
-      case execute_cmd(program, args, cwd, env) do
-        {:ok, output, exit_code} ->
-          record(state, step_id, %{
-            "ok" => exit_code == 0,
-            "stdout" => output,
-            "exit_code" => exit_code
-          })
+        case execute_cmd(program, args, cwd, env, state.opts) do
+          {:ok, output, exit_code} ->
+            record(state, step_id, %{
+              "ok" => exit_code == 0,
+              "stdout" => output,
+              "exit_code" => exit_code
+            })
 
-        {:error, reason} ->
-          {:error, {:cmd_failed, step_id, reason}}
-      end
-    else
-      {:ok, _} -> {:error, {:invalid_argv, step_id}}
-      {:error, reason} -> {:error, {:interpolate_failed, step_id, reason}}
+          {:error, reason} ->
+            {:error, {:cmd_failed, step_id, reason}}
+        end
+
+      {:ok, _} ->
+        {:error, {:invalid_argv, step_id}}
+
+      {:error, reason} ->
+        {:error, {:interpolate_failed, step_id, reason}}
     end
   end
 
-  defp execute_cmd(program, args, cwd, env) do
+  defp execute_cmd(program, args, cwd, env, opts) do
+    case Keyword.get(opts, :sandbox) do
+      %Sandbox{} = sandbox ->
+        sandbox_exec(sandbox, [program | args], cwd, env)
+
+      _ ->
+        host_exec(program, args, cwd || File.cwd!(), env)
+    end
+  end
+
+  defp sandbox_exec(sandbox, argv, cwd, env) do
+    exec_opts =
+      []
+      |> maybe_put(:cwd, cwd)
+      |> maybe_put(:env, env)
+
+    case Sandbox.exec(sandbox, shell_join(argv), exec_opts) do
+      {:ok, %{output: output, exit_code: exit_code}} -> {:ok, output, exit_code}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp host_exec(program, args, cwd, env) do
     case System.find_executable(program) do
       nil ->
         {:error, {:not_found, program}}
@@ -222,10 +299,21 @@ defmodule Condukt.Workflows.Executor do
     end
   end
 
+  defp shell_join(argv), do: Enum.map_join(argv, " ", &shell_escape/1)
+
+  defp shell_escape(value) do
+    value = to_string(value)
+
+    if Regex.match?(~r/^[A-Za-z0-9_\/\.\-:=@%+,]+$/, value) do
+      value
+    else
+      "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
+    end
+  end
+
   defp normalize_env(nil), do: []
 
-  defp normalize_env(map) when is_map(map),
-    do: Enum.map(map, fn {k, v} -> {to_string(k), to_string(v)} end)
+  defp normalize_env(map) when is_map(map), do: Enum.map(map, fn {k, v} -> {to_string(k), to_string(v)} end)
 
   ## http
 
@@ -278,9 +366,15 @@ defmodule Condukt.Workflows.Executor do
 
   defp enforce_expect_status(resolved, %{"status" => status}) do
     case Map.get(resolved, "expect_status") do
-      nil -> :ok
-      ^status -> :ok
-      expected when is_integer(expected) -> {:error, {:expected, expected, :got, status}}
+      nil ->
+        :ok
+
+      ^status ->
+        :ok
+
+      expected when is_integer(expected) ->
+        {:error, {:expected, expected, :got, status}}
+
       expected when is_list(expected) ->
         if status in expected, do: :ok, else: {:error, {:expected, expected, :got, status}}
     end
@@ -372,7 +466,7 @@ defmodule Condukt.Workflows.Executor do
     %{
       sandbox: Keyword.get(state.opts, :sandbox),
       cwd: Keyword.get(state.opts, :cwd, File.cwd!()),
-      secrets: Keyword.get(state.opts, :secrets, %{})
+      secrets: Keyword.get(state.opts, :secrets)
     }
   end
 
@@ -385,15 +479,19 @@ defmodule Condukt.Workflows.Executor do
     fields = Map.take(step, ["model", "input", "system", "tools", "output_schema"])
 
     case interpolate(fields, state) do
-      {:ok, %{"model" => model, "input" => input} = resolved} when is_binary(model) ->
+      {:ok, %{"input" => input} = resolved} ->
         prompt = stringify_input(input)
         extra = Keyword.get(state.opts, :tools, %{})
 
-        with {:ok, tool_specs} <- resolve_tool_specs(Map.get(resolved, "tools", []), extra) do
+        with {:ok, model} <- agent_model(resolved, state),
+             {:ok, tool_specs} <- resolve_tool_specs(Map.get(resolved, "tools", []), extra) do
           run_opts =
             [model: model, tools: tool_specs]
             |> maybe_put(:system_prompt, Map.get(resolved, "system"))
             |> maybe_put(:output, Map.get(resolved, "output_schema"))
+            |> maybe_put(:sandbox, Keyword.get(state.opts, :sandbox))
+            |> maybe_put(:cwd, Keyword.get(state.opts, :cwd))
+            |> maybe_put(:secrets, Keyword.get(state.opts, :secrets))
             |> Keyword.merge(Keyword.get(state.opts, :agent_options, []))
 
           case Condukt.run(prompt, run_opts) do
@@ -409,6 +507,18 @@ defmodule Condukt.Workflows.Executor do
 
       {:error, reason} ->
         {:error, {:interpolate_failed, step_id, reason}}
+    end
+  end
+
+  defp agent_model(resolved, state) do
+    model =
+      Map.get(resolved, "model") ||
+        Keyword.get(state.opts, :model) ||
+        Keyword.get(Keyword.get(state.opts, :agent_options, []), :model)
+
+    case model do
+      nil -> {:error, :missing_agent_model}
+      model -> {:ok, model}
     end
   end
 

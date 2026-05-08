@@ -36,6 +36,12 @@ defmodule Condukt.Workflows.HCLCompilerTest do
 
       File.write!(path, """
       workflow "all_kinds" {
+        runtime {
+          model = "openai:gpt-4.1-mini"
+          sandbox = "local"
+          cwd = "."
+        }
+
         input "token" {
           type = "string"
           default = "dev"
@@ -52,7 +58,6 @@ defmodule Condukt.Workflows.HCLCompilerTest do
 
         agent "review" {
           needs = ["fetch"]
-          model = "openai:gpt-4.1-mini"
           input = task.fetch.body
           tools = ["Read"]
           system = "Review fetched data"
@@ -86,6 +91,7 @@ defmodule Condukt.Workflows.HCLCompilerTest do
       """)
 
       assert {:ok, doc} = HCLCompiler.compile(path)
+      assert doc["runtime"] == %{"model" => "openai:gpt-4.1-mini", "sandbox" => "local", "cwd" => "."}
       assert doc["steps"]["fetch"]["method"] == "GET"
       assert doc["steps"]["fetch"]["headers"]["Authorization"] == "Bearer ${inputs.token}"
       assert doc["steps"]["fetch"]["expect_status"] == [200, 204]

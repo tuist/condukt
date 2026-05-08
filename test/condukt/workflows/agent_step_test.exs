@@ -29,6 +29,25 @@ defmodule Condukt.Workflows.AgentStepTest do
                Executor.run(doc, %{}, agent_options: [model: model])
     end
 
+    test "uses the workflow runtime model when the step omits one" do
+      {model, model_id} = LLMProvider.model(LLMProvider.text_response("runtime model"))
+
+      doc =
+        doc(%{
+          "runtime" => %{"model" => model},
+          "steps" => %{
+            "say" => %{
+              "kind" => "agent",
+              "input" => "say hi"
+            }
+          },
+          "output" => "${steps.say.output}"
+        })
+
+      assert {:ok, %{output: "runtime model"}} = Executor.run(doc)
+      assert_receive {LLMProvider, :request, ^model_id, _context, _opts}
+    end
+
     test "includes the system prompt and resolves expression interpolation in input" do
       {model, model_id} = LLMProvider.model(LLMProvider.text_response("acknowledged"))
 

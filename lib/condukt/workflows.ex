@@ -24,19 +24,37 @@ defmodule Condukt.Workflows do
   @type opts :: keyword()
 
   @doc """
-  Runs a workflow file at `path` with the given `inputs`.
+  Runs a workflow path or an already-loaded workflow document.
 
   Returns `{:ok, value}` where `value` is the resolved top-level
   `output` expression of the document. Returns `{:error, reason}`
   on read, decode, validation, or execution failure.
+
+  Passing a loaded `Condukt.Workflows.Document` lets library callers
+  load or compile a workflow once, then execute it multiple times with
+  different inputs or runtime options.
   """
   @spec run(Path.t(), input(), opts()) :: {:ok, result()} | {:error, term()}
-  def run(path, inputs \\ %{}, opts \\ []) when is_binary(path) and is_map(inputs) do
-    with {:ok, doc} <- Document.load(path),
-         {:ok, %{output: output}} <- Executor.run(doc, inputs, opts) do
+  @spec run(Document.t(), input(), opts()) :: {:ok, result()} | {:error, term()}
+  def run(path_or_doc, inputs \\ %{}, opts \\ [])
+
+  def run(path, inputs, opts) when is_binary(path) and is_map(inputs) do
+    with {:ok, doc} <- Document.load(path) do
+      run(doc, inputs, opts)
+    end
+  end
+
+  def run(%Document{} = doc, inputs, opts) when is_map(inputs) do
+    with {:ok, %{output: output}} <- Executor.run(doc, inputs, opts) do
       {:ok, output}
     end
   end
+
+  @doc """
+  Loads and validates a workflow file without executing it.
+  """
+  @spec load(Path.t()) :: {:ok, Document.t()} | {:error, term()}
+  def load(path) when is_binary(path), do: Document.load(path)
 
   @doc """
   Runs a pre-decoded workflow document. The map is validated against

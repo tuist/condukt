@@ -1,7 +1,33 @@
 defmodule Condukt.Workflows.ExecutorTest do
   use ExUnit.Case, async: true
 
+  alias Condukt.Sandbox
   alias Condukt.Workflows.{Document, Executor}
+
+  defmodule RecordingSandbox do
+    @behaviour Sandbox
+
+    @impl Sandbox
+    def init(opts), do: {:ok, opts}
+
+    @impl Sandbox
+    def shutdown(_state), do: :ok
+
+    @impl Sandbox
+    def read_file(_state, _path), do: {:error, :not_supported}
+
+    @impl Sandbox
+    def write_file(_state, _path, _content), do: {:error, :not_supported}
+
+    @impl Sandbox
+    def edit_file(_state, _path, _old_text, _new_text), do: {:error, :not_supported}
+
+    @impl Sandbox
+    def exec(state, command, opts) do
+      send(Keyword.fetch!(state, :reply_to), {:sandbox_exec, command, opts})
+      {:ok, %{output: "from sandbox\n", exit_code: 0}}
+    end
+  end
 
   defp doc(map) do
     {:ok, doc} = Document.from_map(map)
@@ -35,6 +61,42 @@ defmodule Condukt.Workflows.ExecutorTest do
         })
 
       assert {:ok, %{output: "hi world\n"}} = Executor.run(doc, %{"name" => "world"})
+    end
+
+    test "uses a configured sandbox for command steps" do
+      {:ok, sandbox} = Sandbox.new(RecordingSandbox, reply_to: self())
+
+      doc =
+        doc(%{
+          "steps" => %{
+            "greet" => %{"kind" => "cmd", "argv" => ["echo", "hello world"]}
+          },
+          "output" => "${steps.greet.stdout}"
+        })
+
+      assert {:ok, %{output: "from sandbox\n"}} = Executor.run(doc, %{}, sandbox: sandbox, cwd: "/work")
+      assert_receive {:sandbox_exec, "echo 'hello world'", opts}
+      assert opts[:cwd] == "/work"
+      assert opts[:env] == []
+    end
+
+    @tag :tmp_dir
+    test "uses the workflow runtime sandbox for built-in tools", %{tmp_dir: dir} do
+      doc =
+        doc(%{
+          "runtime" => %{"sandbox" => "local", "cwd" => dir},
+          "steps" => %{
+            "pwd" => %{
+              "kind" => "tool",
+              "id" => "Bash",
+              "args" => %{"command" => "pwd"}
+            }
+          },
+          "output" => "${steps.pwd.output}"
+        })
+
+      assert {:ok, %{output: output}} = Executor.run(doc)
+      assert String.trim(output) == dir
     end
   end
 

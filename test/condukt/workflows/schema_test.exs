@@ -37,6 +37,11 @@ defmodule Condukt.Workflows.SchemaTest do
 
     test "accepts agent, http, tool, and map step kinds" do
       doc = %{
+        "runtime" => %{
+          "model" => "claude-opus-4-7",
+          "sandbox" => "local",
+          "cwd" => "."
+        },
         "steps" => %{
           "fetch" => %{
             "kind" => "http",
@@ -45,7 +50,6 @@ defmodule Condukt.Workflows.SchemaTest do
           },
           "review" => %{
             "kind" => "agent",
-            "model" => "claude-opus-4-7",
             "input" => "${steps.fetch.body}"
           },
           "search" => %{
@@ -63,6 +67,24 @@ defmodule Condukt.Workflows.SchemaTest do
             }
           }
         }
+      }
+
+      assert {:ok, _} = JSV.validate(doc, Schema.root())
+    end
+
+    test "rejects an unknown runtime sandbox" do
+      doc = %{
+        "runtime" => %{"sandbox" => "docker"},
+        "steps" => %{"a" => %{"kind" => "cmd", "argv" => ["true"]}}
+      }
+
+      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+    end
+
+    test "accepts an object runtime model spec" do
+      doc = %{
+        "runtime" => %{"model" => %{"provider" => "custom", "id" => "chat"}},
+        "steps" => %{"a" => %{"kind" => "agent", "input" => "hello"}}
       }
 
       assert {:ok, _} = JSV.validate(doc, Schema.root())

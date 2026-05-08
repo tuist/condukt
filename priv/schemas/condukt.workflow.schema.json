@@ -33,6 +33,25 @@
         }
       }
     },
+    "runtime": {
+      "type": "object",
+      "description": "Workflow-level runtime defaults. Library options passed to Condukt.Workflows.run/3 override these values.",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "oneOf": [{ "type": "string" }, { "type": "object" }],
+          "description": "Default ReqLLM model spec for agent steps that do not declare their own model."
+        },
+        "sandbox": {
+          "enum": ["local", "virtual"],
+          "description": "Default sandbox backend for command and tool execution."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Default working directory for command steps, tools, and sandbox initialization."
+        }
+      }
+    },
     "steps": {
       "type": "object",
       "description": "Map of step id to step definition. Step ids must match ^[a-zA-Z_][a-zA-Z0-9_]*$.",
@@ -115,7 +134,7 @@
     },
     "agentStep": {
       "type": "object",
-      "required": ["model", "input"],
+      "required": ["input"],
       "additionalProperties": false,
       "properties": {
         "kind": { "const": "agent" },

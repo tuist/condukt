@@ -20,6 +20,7 @@ defmodule Condukt.Workflows.Document do
     :output,
     :raw,
     inputs: %{},
+    runtime: %{},
     steps: %{}
   ]
 
@@ -30,6 +31,7 @@ defmodule Condukt.Workflows.Document do
           name: String.t(),
           path: nil | Path.t(),
           inputs: %{optional(String.t()) => input_spec()},
+          runtime: map(),
           steps: %{optional(String.t()) => step()},
           output: term(),
           raw: map()
@@ -150,6 +152,7 @@ defmodule Condukt.Workflows.Document do
       name: name,
       path: path,
       inputs: Map.get(validated, "inputs", %{}),
+      runtime: Map.get(validated, "runtime", %{}),
       steps: Map.fetch!(validated, "steps"),
       output: Map.get(validated, "output"),
       raw: validated

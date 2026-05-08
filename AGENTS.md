@@ -64,12 +64,16 @@
 - The schema lives at `priv/schemas/condukt.workflow.schema.json` and
   is referenced from workflow files via its raw GitHub URL,
   `https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json`.
-  Top level: `name`, `inputs`, `steps`, `output`. Each step has a `kind`
-  (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional
-  `when`, and kind-specific fields. Implicit dependencies are inferred
-  from `${steps.X.*}` references in JSON, YAML, and `.exs`. HCL requires
-  every `task.X` reference inside a step to be declared in that step's
-  `needs` list so the DAG is visible in the authored file.
+  Top level: `name`, `inputs`, optional `runtime`, `steps`, `output`.
+  `runtime` carries workflow-level defaults such as `model`, `sandbox`
+  (`local`/`virtual`), and `cwd`; library options passed to
+  `Condukt.Workflows.run/3` override those defaults. Each step has a `kind`
+  (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional `when`,
+  and kind-specific fields. Agent steps may omit `model` when a workflow or
+  caller model is configured. Implicit dependencies are inferred from
+  `${steps.X.*}` references in JSON, YAML, and `.exs`. HCL requires every
+  `task.X` reference inside a step to be declared in that step's `needs`
+  list so the DAG is visible in the authored file.
 - The expression sub-language is intentionally small: `${...}`
   interpolation with member access, indexing, comparisons, boolean ops,
   literals, unary minus, and `:json`/`:csv` formatters. No arbitrary
@@ -88,6 +92,10 @@
   normalizes an `.hcl` file. `Condukt.Workflows.Compiler.compile/1` reads,
   evaluates, and normalizes an `.exs` file. Validation and execution are
   pure Elixir; there is no native NIF for workflows.
+- `Condukt.Workflows.load/1` loads and validates a workflow file without
+  executing it. `Condukt.Workflows.run/3` accepts either a path or a loaded
+  `Condukt.Workflows.Document`, so library callers can load once and evaluate
+  many times with different inputs or runtime options.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the schema together.
 - CLI verbs are `condukt run PATH [--input JSON]`,

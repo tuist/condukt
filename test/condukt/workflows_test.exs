@@ -70,6 +70,57 @@ defmodule Condukt.WorkflowsTest do
     end
   end
 
+  describe "load/1 and run/3 with a loaded document" do
+    test "loads once and evaluates as a library", %{tmp_dir: dir} do
+      path = Path.join(dir, "hello.hcl")
+
+      File.write!(path, """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
+
+        cmd "greet" {
+          argv = ["echo", "hi ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """)
+
+      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, "hi world\n"} = Workflows.run(workflow, %{"name" => "world"})
+    end
+
+    test "library options override workflow runtime defaults", %{tmp_dir: dir} do
+      configured_cwd = Path.join(dir, "configured")
+      override_cwd = Path.join(dir, "override")
+      File.mkdir_p!(configured_cwd)
+      File.mkdir_p!(override_cwd)
+
+      path = Path.join(dir, "runtime.hcl")
+
+      File.write!(path, """
+      workflow "runtime" {
+        runtime {
+          sandbox = "local"
+          cwd = "#{configured_cwd}"
+        }
+
+        cmd "pwd" {
+          argv = ["pwd"]
+        }
+
+        output = task.pwd.stdout
+      }
+      """)
+
+      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, output} = Workflows.run(workflow, %{}, cwd: override_cwd)
+      assert String.trim(output) == override_cwd
+    end
+  end
+
   describe "run_document/3" do
     test "runs an in-memory document" do
       decoded = %{

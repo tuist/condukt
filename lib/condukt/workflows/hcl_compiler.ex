@@ -27,6 +27,7 @@ defmodule Condukt.Workflows.HCLCompiler do
 
   @step_types ~w(cmd agent http tool map)
   @input_attrs ~w(type description default enum items)
+  @runtime_attrs ~w(model sandbox cwd)
   @common_step_attrs ~w(needs when)
   @step_attrs %{
     "agent" => @common_step_attrs ++ ~w(model input tools system output_schema),
@@ -116,6 +117,16 @@ defmodule Condukt.Workflows.HCLCompiler do
           {:error, _} = err -> {:halt, err}
         end
 
+      %Block{type: "runtime", labels: []} = block, {:ok, doc} ->
+        if Map.has_key?(doc, "runtime") do
+          {:halt, {:error, {:duplicate_runtime, path}}}
+        else
+          case compile_runtime(block, path) do
+            {:ok, runtime} -> {:cont, {:ok, Map.put(doc, "runtime", runtime)}}
+            {:error, _} = err -> {:halt, err}
+          end
+        end
+
       %Block{type: type, labels: [id]} = block, {:ok, doc} when type in @step_types ->
         with {:ok, step} <- compile_step(block, path, :named),
              {:ok, steps} <- put_unique(doc["steps"], id, step, {:duplicate_step, path, id}) do
@@ -140,6 +151,14 @@ defmodule Condukt.Workflows.HCLCompiler do
   end
 
   defp compile_workflow(%Block{labels: labels}, path), do: {:error, {:invalid_workflow_labels, path, labels}}
+
+  defp compile_runtime(%Block{type: "runtime", body: body}, path) do
+    with {:ok, attrs, blocks} <- split_body(body, path),
+         :ok <- reject_blocks(blocks, {:runtime_cannot_have_blocks, path}),
+         :ok <- reject_unknown_attrs(attrs, @runtime_attrs, {:unknown_runtime_attr, path}) do
+      map_values(attrs, &value/1)
+    end
+  end
 
   defp compile_input(%Block{type: "input", labels: [id], body: body}, path) do
     with {:ok, attrs, blocks} <- split_body(body, path),
@@ -188,8 +207,8 @@ defmodule Condukt.Workflows.HCLCompiler do
 
   defp compile_specific_step_attrs("agent", attrs, blocks, path) do
     with :ok <- reject_blocks(blocks, {:step_cannot_have_blocks, path, "agent"}),
-         {:ok, step} <- required_value_attr(%{}, attrs, "model", path, "agent"),
-         {:ok, step} <- required_value_attr(step, attrs, "input", path, "agent"),
+         {:ok, step} <- required_value_attr(%{}, attrs, "input", path, "agent"),
+         {:ok, step} <- maybe_value_attr(step, attrs, "model"),
          {:ok, step} <- maybe_value_attr(step, attrs, "tools"),
          {:ok, step} <- maybe_value_attr(step, attrs, "system") do
       maybe_value_attr(step, attrs, "output_schema")
