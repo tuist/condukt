@@ -128,7 +128,7 @@ defmodule Condukt.Engine.CLI do
       condukt compile PATH               Compile a .star file to JSON on stdout
 
     Workflow JSON Schema:
-      https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+      https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
     """
     |> String.trim()
   end

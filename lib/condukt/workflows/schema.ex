@@ -2,9 +2,9 @@ defmodule Condukt.Workflows.Schema do
   @moduledoc """
   Loader for the canonical Condukt workflow JSON Schema.
 
-  The schema lives at `priv/schemas/condukt.workflow.schema.json` and is
-  also mirrored under `website/src/static/schemas/` so that workflow
-  files can reference it via `$schema`.
+  The schema lives at `priv/schemas/condukt.workflow.schema.json`.
+  Workflow files reference it via `$schema` against the raw URL on
+  GitHub, which is what `url/0` returns.
 
   At compile time the schema is read and built into a `JSV` root so that
   validation does not pay parse cost on every run.
@@ -30,9 +30,10 @@ defmodule Condukt.Workflows.Schema do
   def root, do: @root
 
   @doc """
-  Public canonical URL of the schema. Workflow files can set
-  `"$schema": "#{__MODULE__}.url()"` so editors discover it.
+  Public canonical URL of the schema. Workflow files reference this via
+  `$schema` so editors and validators can discover it.
   """
   @spec url() :: String.t()
-  def url, do: "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json"
+  def url,
+    do: "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json"
 end

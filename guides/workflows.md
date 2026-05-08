@@ -14,7 +14,7 @@ you point the engine at a `.json`, `.yaml`, or `.star` path.
 
 ```json
 {
-  "$schema": "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json",
+  "$schema": "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json",
   "inputs": {
     "name": { "type": "string" }
   },
@@ -40,19 +40,17 @@ printed as is, other values are JSON-encoded.
 
 ## The schema
 
-The workflow document is validated against a published JSON Schema
-served at:
+The workflow document is validated against a published JSON Schema.
+The canonical source lives in this repository at
+`priv/schemas/condukt.workflow.schema.json` and is reachable on GitHub
+at:
 
 ```
-https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 ```
 
 Reference it from a workflow file with the standard `$schema` key so
 editors pick up auto-completion and validation.
-
-The canonical source lives in the repository at
-`priv/schemas/condukt.workflow.schema.json` and is mirrored under
-`website/src/static/schemas/`.
 
 The top-level shape is:
 
@@ -138,7 +136,7 @@ YAML files (`.yaml`, `.yml`) are accepted and converted to the same
 JSON document at load time. The same `hello.json` above looks like:
 
 ```yaml
-$schema: https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+$schema: https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 inputs:
   name:
     type: string

@@ -52,7 +52,8 @@ fn compiler_globals(builder: &mut GlobalsBuilder) {
         doc.insert(
             "$schema".to_owned(),
             JsonValue::String(
-                "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json".to_owned(),
+                "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json"
+                    .to_owned(),
             ),
         );
 

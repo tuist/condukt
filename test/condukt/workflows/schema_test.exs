@@ -12,8 +12,9 @@ defmodule Condukt.Workflows.SchemaTest do
   end
 
   describe "url/0" do
-    test "returns the canonical https url" do
-      assert Schema.url() == "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json"
+    test "returns the canonical raw GitHub url" do
+      assert Schema.url() ==
+               "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json"
     end
   end
 

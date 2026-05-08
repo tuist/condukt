@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json",
+  "$id": "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json",
   "title": "Condukt Workflow",
   "description": "A Condukt workflow document: a typed DAG of steps with inputs, references between steps via ${...} expressions, and an optional top-level output.",
   "type": "object",

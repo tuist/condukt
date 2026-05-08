@@ -10,7 +10,7 @@ defmodule Condukt.Workflows do
   The published JSON Schema lives in this repo at
   `priv/schemas/condukt.workflow.schema.json` and is mirrored at:
 
-      https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+      https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 
   YAML and Starlark inputs are converted to a JSON document upstream
   in later slices and arrive here as already-decoded maps via

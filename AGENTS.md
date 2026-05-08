@@ -61,8 +61,9 @@
   YAML is accepted on input as a JSON superset and converted at load time.
   There is no project layout, manifest, or lockfile; the basename of the
   file is the run name.
-- The schema lives at `priv/schemas/condukt.workflow.schema.json` and is
-  served at `https://condukt.tuist.dev/schemas/condukt.workflow.schema.json`.
+- The schema lives at `priv/schemas/condukt.workflow.schema.json` and
+  is referenced from workflow files via its raw GitHub URL,
+  `https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json`.
   Top level: `name`, `inputs`, `steps`, `output`. Each step has a `kind`
   (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional
   `when`, and kind-specific fields. Implicit dependencies are inferred
