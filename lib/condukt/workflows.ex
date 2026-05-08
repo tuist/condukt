@@ -17,7 +17,7 @@ defmodule Condukt.Workflows do
   `run_document/3`.
   """
 
-  alias Condukt.Workflows.{Document, Executor}
+  alias Condukt.Workflows.{Document, Executor, NIF}
 
   @type input :: map()
   @type result :: term()
@@ -55,13 +55,29 @@ defmodule Condukt.Workflows do
   Validates a workflow file without executing it.
 
   Returns `:ok` on success, or `{:error, reason}` if the file fails to
-  read, decode, or match the schema.
+  read, decode, compile, or match the schema. Accepts `.json` and
+  `.star` paths.
   """
   @spec check(Path.t()) :: :ok | {:error, term()}
   def check(path) when is_binary(path) do
     case Document.load(path) do
       {:ok, _doc} -> :ok
       {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Compiles a Starlark `.star` workflow file to its JSON document
+  representation. Returns the JSON as a (compact) string.
+  """
+  @spec compile(Path.t()) :: {:ok, String.t()} | {:error, term()}
+  def compile(path) when is_binary(path) do
+    with ".star" <- Path.extname(path),
+         {:ok, source} <- File.read(path) do
+      NIF.compile(source, path)
+    else
+      ext when is_binary(ext) -> {:error, {:not_a_starlark_file, path, ext}}
+      {:error, reason} -> {:error, {:read_failed, path, reason}}
     end
   end
 end

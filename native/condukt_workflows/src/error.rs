@@ -11,12 +11,6 @@ pub(crate) enum WorkflowsError {
     Eval(String),
     #[error("invalid arguments: {0}")]
     InvalidArguments(String),
-    #[error("runtime error: {0}")]
-    Runtime(String),
-    #[error("workflow cancelled")]
-    Cancelled,
-    #[error("invalid response: {0}")]
-    InvalidResponse(String),
 }
 
 pub(crate) type WorkflowsResult<T> = Result<T, WorkflowsError>;
@@ -27,9 +21,6 @@ impl WorkflowsError {
             WorkflowsError::Parse(_) => atoms::parse_error(),
             WorkflowsError::Eval(_) => atoms::eval_error(),
             WorkflowsError::InvalidArguments(_) => atoms::invalid_arguments(),
-            WorkflowsError::Runtime(_) => atoms::runtime_error(),
-            WorkflowsError::Cancelled => atoms::cancelled(),
-            WorkflowsError::InvalidResponse(_) => atoms::invalid_response(),
         }
     }
 }

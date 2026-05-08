@@ -11,7 +11,7 @@ defmodule Condukt.Workflows.Document do
   of this module before validation.
   """
 
-  alias Condukt.Workflows.Schema
+  alias Condukt.Workflows.{NIF, Schema}
 
   @enforce_keys [:name, :steps]
   defstruct [
@@ -38,6 +38,7 @@ defmodule Condukt.Workflows.Document do
   @type load_error ::
           {:read_failed, Path.t(), File.posix()}
           | {:decode_failed, Path.t(), term()}
+          | {:compile_failed, Path.t(), term()}
           | {:unsupported_extension, Path.t()}
           | {:invalid_workflow, JSV.ValidationError.t()}
 
@@ -99,14 +100,24 @@ defmodule Condukt.Workflows.Document do
   defp decode(path, source) do
     case Path.extname(path) do
       ext when ext in [".json", ""] ->
-        case JSON.decode(source) do
-          {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
-          {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
-          {:error, reason} -> {:error, {:decode_failed, path, reason}}
+        decode_json(path, source)
+
+      ".star" ->
+        case NIF.compile(source, path) do
+          {:ok, json_string} -> decode_json(path, json_string)
+          {:error, reason} -> {:error, {:compile_failed, path, reason}}
         end
 
       _ ->
         {:error, {:unsupported_extension, path}}
+    end
+  end
+
+  defp decode_json(path, source) do
+    case JSON.decode(source) do
+      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
+      {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
+      {:error, reason} -> {:error, {:decode_failed, path, reason}}
     end
   end
 

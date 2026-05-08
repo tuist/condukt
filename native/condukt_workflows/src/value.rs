@@ -1,8 +1,8 @@
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use starlark::values::dict::{AllocDict, DictRef};
-use starlark::values::list::{AllocList, ListRef};
+use starlark::values::Value;
+use starlark::values::dict::DictRef;
+use starlark::values::list::ListRef;
 use starlark::values::tuple::TupleRef;
-use starlark::values::{Heap, Value};
 
 use crate::error::{WorkflowsError, WorkflowsResult};
 
@@ -62,33 +62,3 @@ pub(crate) fn starlark_to_json(value: Value<'_>) -> WorkflowsResult<JsonValue> {
     )))
 }
 
-pub(crate) fn json_to_starlark<'v>(heap: &'v Heap, value: JsonValue) -> Value<'v> {
-    match value {
-        JsonValue::Null => Value::new_none(),
-        JsonValue::Bool(b) => Value::new_bool(b),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                if let Ok(i) = i32::try_from(i) {
-                    return heap.alloc(i);
-                }
-                return heap.alloc(i.to_string());
-            }
-            if let Some(f) = n.as_f64() {
-                return heap.alloc(f);
-            }
-            heap.alloc(n.to_string())
-        }
-        JsonValue::String(s) => heap.alloc(s),
-        JsonValue::Array(items) => {
-            let values: Vec<Value> = items.into_iter().map(|v| json_to_starlark(heap, v)).collect();
-            heap.alloc(AllocList(values))
-        }
-        JsonValue::Object(map) => {
-            let entries: Vec<(String, Value<'v>)> = map
-                .into_iter()
-                .map(|(k, v)| (k, json_to_starlark(heap, v)))
-                .collect();
-            heap.alloc(AllocDict(entries))
-        }
-    }
-}
