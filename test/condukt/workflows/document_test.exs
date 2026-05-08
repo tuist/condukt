@@ -60,6 +60,27 @@ defmodule Condukt.Workflows.DocumentTest do
       assert {:error, {:unsupported_extension, ^path}} = Document.load(path)
     end
 
+    test "loads a YAML workflow document", %{tmp_dir: dir} do
+      path = Path.join(dir, "hello.yaml")
+
+      File.write!(path, """
+      inputs:
+        name:
+          type: string
+      steps:
+        greet:
+          kind: cmd
+          argv:
+            - echo
+            - "hi ${inputs.name}"
+      output: "${steps.greet.stdout}"
+      """)
+
+      assert {:ok, %Document{} = doc} = Document.load(path)
+      assert doc.name == "hello"
+      assert doc.steps["greet"]["kind"] == "cmd"
+    end
+
     test "returns :invalid_workflow when the schema rejects the document", %{tmp_dir: dir} do
       path = Path.join(dir, "bad.json")
       File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))

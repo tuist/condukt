@@ -102,6 +102,9 @@ defmodule Condukt.Workflows.Document do
       ext when ext in [".json", ""] ->
         decode_json(path, source)
 
+      ext when ext in [".yaml", ".yml"] ->
+        decode_yaml(path, source)
+
       ".star" ->
         case NIF.compile(source, path) do
           {:ok, json_string} -> decode_json(path, json_string)
@@ -115,6 +118,14 @@ defmodule Condukt.Workflows.Document do
 
   defp decode_json(path, source) do
     case JSON.decode(source) do
+      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
+      {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
+      {:error, reason} -> {:error, {:decode_failed, path, reason}}
+    end
+  end
+
+  defp decode_yaml(path, source) do
+    case YamlElixir.read_from_string(source) do
       {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
       {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
       {:error, reason} -> {:error, {:decode_failed, path, reason}}

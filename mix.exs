@@ -46,6 +46,7 @@ defmodule Condukt.MixProject do
 
       # Workflows manifests, lockfiles, triggers, and optional HTTP serving
       {:toml, "~> 0.7.0"},
+      {:yaml_elixir, "~> 2.11"},
       {:crontab, "~> 1.1"},
       {:plug, "~> 1.16", optional: true},
       {:bandit, "~> 1.5", optional: true},
