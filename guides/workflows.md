@@ -6,7 +6,7 @@ run` executes, what `condukt check` validates, and what editors and
 agents read and write. The basename of the file is the run name.
 
 There is no project layout, manifest, or lockfile. To run a workflow
-you point the engine at a `.json`, `.yaml`, or `.star` path.
+you point the engine at a `.json`, `.yaml`, or `.exs` path.
 
 ## A first workflow
 
@@ -147,75 +147,75 @@ steps:
 output: "${steps.greet.stdout}"
 ```
 
-## Authoring DSL (Starlark)
+## Authoring DSL (`.exs`)
 
 Hand-writing JSON or YAML is fine for most workflows. For larger
-graphs there is an authoring DSL: a Starlark file that compiles to
-the same JSON document. The Starlark layer runs at compile time and
-lets you use `def`, `for`, `if`, list and dict comprehensions, and
-`load(...)` to build the document programmatically. There is no
-runtime suspension and no introspection of step outputs at compile
-time: references between steps are written as plain `${...}`
-expression strings.
+graphs there is an authoring DSL: an Elixir script (`.exs`) whose
+final expression evaluates to a map describing the workflow. The
+file evaluates at load time and lets you use `def` (inside a
+`defmodule`), anonymous functions, `for`, `if`, comprehensions, and
+the rest of the standard library to build the document
+programmatically. References between steps are written as plain
+`${...}` expression strings: there is no runtime introspection of
+step outputs at compile time.
 
-`hello.star`:
+Atom keys and atom values (other than `nil`/`true`/`false`) are
+normalized to strings before validation, so the file can use the
+familiar Elixir map syntax.
 
-```python
-workflow(
-    name = "hello",
-    inputs = {"name": {"type": "string"}},
-    steps = {
-        "greet": {
-            "kind": "cmd",
-            "argv": ["echo", "Hello, ${inputs.name}"],
-        },
-    },
-    output = "${steps.greet.stdout}",
-)
+`hello.exs`:
+
+```elixir
+%{
+  name: "hello",
+  inputs: %{name: %{type: :string}},
+  steps: %{
+    greet: %{kind: :cmd, argv: ["echo", "Hello, ${inputs.name}"]}
+  },
+  output: "${steps.greet.stdout}"
+}
 ```
 
 Compile and run:
 
 ```sh
-condukt compile hello.star > hello.json
+condukt compile hello.exs > hello.json
 condukt run hello.json --input '{"name": "world"}'
 ```
 
-`condukt run hello.star` does the compile step transparently.
+`condukt run hello.exs` does the compile step transparently.
 
-A more substantial example uses `for` to fan out a map step over a
-static list of stages:
+A more substantial example uses a comprehension to fan out commands
+over a static list of stages:
 
-```python
+```elixir
 stages = ["lint", "test", "build"]
 
-steps = {}
-for stage in stages:
-    steps[stage] = {
-        "kind": "cmd",
-        "argv": ["./script/" + stage],
-    }
+steps =
+  for stage <- stages, into: %{} do
+    {String.to_atom(stage), %{kind: :cmd, argv: ["./script/" <> stage]}}
+  end
 
-workflow(
-    steps = steps,
-    output = {stage: "${steps." + stage + ".stdout}" for stage in stages},
-)
+%{
+  steps: steps,
+  output: for(stage <- stages, into: %{}, do: {stage, "${steps.#{stage}.stdout}"})
+}
 ```
 
-The `workflow(...)` builtin must be called exactly once at top level.
-Any Starlark feature is fair game for *building* the data; it is
-expression strings, not Starlark values, that represent runtime
-references between steps.
+The result of the file's last expression is the workflow document.
+Any Elixir feature is fair game for *building* the data; it is
+`${...}` expression strings, not Elixir values, that represent
+runtime references between steps.
 
 ## Validating a workflow
 
 `condukt check PATH` parses and validates the document against the
 schema and reports all problems without executing it. It accepts
-`.json`, `.yaml`, and `.star` paths.
+`.json`, `.yaml`, `.yml`, and `.exs` paths.
 
 ```sh
 condukt check review-pr.json
-condukt check review-pr.star
+condukt check review-pr.exs
 ```
 
 Use it in CI or as part of an LLM authoring loop: generate, check,
@@ -225,9 +225,9 @@ fix, repeat.
 
 These are planned but not yet implemented:
 
-- Remote `load(...)` of versioned helpers from
-  `github.com/owner/repo/path/file.star@v1.0.0`, with the compiled
-  JSON cached locally.
+- A Hex-package convention for sharing reusable workflow helpers
+  (e.g., `MyOrg.Workflows.lint_step/1`) so an `.exs` file can `use`
+  or `import` them.
 - Optional `--lock` mode that records SHA-256 per fetched URL and
   verifies on later runs (Deno-style integrity).
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and

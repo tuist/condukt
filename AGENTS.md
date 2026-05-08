@@ -75,23 +75,25 @@
   substantial belongs in a `cmd`/`agent`/`tool` step. Member access on
   `null` returns `null` so a reference to a skipped step degrades
   gracefully; missing keys against a real value still error.
-- The Starlark surface is an authoring DSL, not a runtime. A `.star`
-  file evaluates at compile time and must call `workflow(name = ...,
-  inputs = ..., steps = ..., output = ...)` exactly once. Standard
-  Starlark features (`def`, `for`, `if`, list/dict comprehensions,
-  `load(...)`) are available for *building* the document; references
-  between steps are written as `${...}` strings. There is no runtime
-  suspension and no introspection of step outputs at compile time.
-- The workflows NIF lives in `native/condukt_workflows/`. Surface:
-  `compile/2` (Starlark to JSON) and `parse_only/2` (early syntax
-  check). Schema validation and execution are pure Elixir.
+- The Elixir authoring DSL is `.exs`. A workflow file is an Elixir
+  script whose final expression evaluates to a map describing the
+  workflow. Atom keys and atom values are normalized to strings by
+  `Condukt.Workflows.Compiler` before schema validation. Standard
+  Elixir features (`defmodule`/`def`, anonymous functions, `for`,
+  `if`, comprehensions) are available for *building* the document;
+  references between steps are written as `${...}` strings. There is
+  no runtime suspension and no introspection of step outputs at
+  compile time.
+- `Condukt.Workflows.Compiler.compile/1` reads, evaluates, and
+  normalizes an `.exs` file. Validation and execution are pure
+  Elixir; there is no native NIF for workflows.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the schema together.
 - CLI verbs are `condukt run PATH [--input JSON]`,
-  `condukt check PATH`, and `condukt compile PATH` (Starlark to JSON
-  on stdout), mirrored by `mix condukt.run`, `mix condukt.check`, and
+  `condukt check PATH`, and `condukt compile PATH` (`.exs` to JSON on
+  stdout), mirrored by `mix condukt.run`, `mix condukt.check`, and
   `mix condukt.compile`. `run` and `check` accept `.json`, `.yaml`,
-  `.yml`, and `.star` paths; `.star` is compiled transparently.
+  `.yml`, and `.exs` paths; `.exs` is compiled transparently.
 - Tool ids on `tool` steps are resolved through
   `Condukt.Workflows.ToolRegistry`. Built-ins
   (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of
@@ -121,9 +123,9 @@
 - Burrito requires Zig, XZ, and 7z at build time. Zig is pinned in `mise.toml`.
   Erlang is pinned to an exact OTP 28 patch version so Burrito can fetch the
   matching precompiled ERTS from the Beam Machine cache.
-- Engine builds set `CONDUKT_BASHKIT_PRECOMPILED=1` and
-  `CONDUKT_WORKFLOWS_PRECOMPILED=1` so the release bytecode points at the
-  target-specific NIF artifacts already attached to the GitHub release.
+- Engine builds set `CONDUKT_BASHKIT_PRECOMPILED=1` so the release
+  bytecode points at the target-specific NIF artifacts already
+  attached to the GitHub release.
 
 ## Workflow
 

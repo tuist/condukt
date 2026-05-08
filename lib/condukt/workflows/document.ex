@@ -7,8 +7,8 @@ defmodule Condukt.Workflows.Document do
   against the published schema (`Condukt.Workflows.Schema`), and
   filling in defaults like `name` from the file basename.
 
-  YAML and Starlark inputs are converted to a JSON document upstream
-  of this module before validation.
+  YAML and `.exs` files are decoded to a JSON document upstream of
+  validation.
   """
 
   alias Condukt.Workflows.{Compiler, Schema}
@@ -60,8 +60,7 @@ defmodule Condukt.Workflows.Document do
 
   @doc """
   Validates a decoded document map against the schema without touching
-  the filesystem. Useful when the document is produced by the Starlark
-  compiler in memory.
+  the filesystem. Useful when the document is produced in memory.
   """
   @spec from_map(map(), keyword()) :: {:ok, t()} | {:error, load_error()}
   def from_map(decoded, opts \\ []) when is_map(decoded) do

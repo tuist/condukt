@@ -44,5 +44,4 @@ The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64
 builds.
 
 See [Workflows](workflows.md) for creating, running, and sharing workflow
-projects. See [Workflow Starlark API](workflow_starlark_api.md) for every
-Starlark builtin available to workflow files.
+projects.

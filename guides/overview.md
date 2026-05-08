@@ -36,7 +36,7 @@ using idiomatic Elixir patterns.
 * Compile-time typed operations with JSON Schema input and output validation
 * Anonymous one-off runs with inline tools and optional structured output
 * Sub-agents for delegated child sessions with optional structured contracts
-* Starlark workflow projects runnable from Mix tasks or the standalone engine
+* Typed JSON workflow documents (with YAML and `.exs` authoring forms) runnable from Mix tasks or the standalone engine
 * Multi-provider LLM support through ReqLLM
 * Pluggable redaction, session secrets, compaction, persistence, and telemetry
 

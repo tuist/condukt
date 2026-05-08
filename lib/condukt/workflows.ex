@@ -12,9 +12,8 @@ defmodule Condukt.Workflows do
 
       https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 
-  YAML and Starlark inputs are converted to a JSON document upstream
-  in later slices and arrive here as already-decoded maps via
-  `run_document/3`.
+  YAML and `.exs` files are converted to a JSON document at load
+  time and arrive here as already-decoded maps via `run_document/3`.
   """
 
   alias Condukt.Workflows.{Compiler, Document, Executor}
@@ -40,8 +39,8 @@ defmodule Condukt.Workflows do
 
   @doc """
   Runs a pre-decoded workflow document. The map is validated against
-  the schema before execution. Used by the Starlark compiler and the
-  YAML loader, which both produce documents in memory.
+  the schema before execution. Used by the `.exs` and YAML loaders,
+  which both produce documents in memory.
   """
   @spec run_document(map(), input(), opts()) :: {:ok, result()} | {:error, term()}
   def run_document(decoded, inputs \\ %{}, opts \\ []) when is_map(decoded) do
@@ -55,8 +54,8 @@ defmodule Condukt.Workflows do
   Validates a workflow file without executing it.
 
   Returns `:ok` on success, or `{:error, reason}` if the file fails to
-  read, decode, compile, or match the schema. Accepts `.json` and
-  `.star` paths.
+  read, decode, compile, or match the schema. Accepts `.json`,
+  `.yaml`, `.yml`, and `.exs` paths.
   """
   @spec check(Path.t()) :: :ok | {:error, term()}
   def check(path) when is_binary(path) do
