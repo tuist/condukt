@@ -3,9 +3,10 @@ defmodule Condukt.Workflows.Compiler do
   Compiles `.exs` workflow files to JSON workflow documents.
 
   An `.exs` workflow is an Elixir script whose final expression
-  evaluates to a map describing the workflow. The preferred authoring
-  surface is `Condukt.Workflows.DSL`, which provides macros that build
-  that map. Returning a map directly is still supported.
+  evaluates to a map describing the workflow. This is a low-level
+  generation escape hatch. Human-authored workflow files should
+  generally use HCL and let `Condukt.Workflows.HCLCompiler` produce the
+  same map.
 
   Atom keys and atom values (other than `nil`, `true`, `false`) are
   normalized to strings; the rest of the data must already match the
@@ -14,17 +15,14 @@ defmodule Condukt.Workflows.Compiler do
   Standard Elixir features (`def` inside a `defmodule`, anonymous
   functions, `for`, `if`, comprehensions, `Enum`, etc.) are available
   for compile-time meta-programming. References between steps are
-  written as plain `${...}` expression strings: there is no runtime
-  introspection of step outputs at compile time.
+  written as plain `${...}` expression strings.
 
       # hello.exs
-      use Condukt.Workflows.DSL
-
-      workflow "hello" do
-        input :name, :string
-        cmd :greet, ["echo", "Hello, \#{input(:name)}"]
-        output step(:greet, :stdout)
-      end
+      %{
+        inputs: %{name: %{type: :string}},
+        steps: %{greet: %{kind: :cmd, argv: ["echo", "Hello, ${inputs.name}"]}},
+        output: "${steps.greet.stdout}"
+      }
   """
 
   @doc """

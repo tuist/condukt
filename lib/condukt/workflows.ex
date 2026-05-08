@@ -12,11 +12,12 @@ defmodule Condukt.Workflows do
 
       https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 
-  YAML and `.exs` files are converted to a JSON document at load
-  time and arrive here as already-decoded maps via `run_document/3`.
+  HCL, YAML, and `.exs` files are converted to a JSON document at
+  load time and arrive here as already-decoded maps via
+  `run_document/3`.
   """
 
-  alias Condukt.Workflows.{Compiler, Document, Executor}
+  alias Condukt.Workflows.{Compiler, Document, Executor, HCLCompiler}
 
   @type input :: map()
   @type result :: term()
@@ -39,8 +40,8 @@ defmodule Condukt.Workflows do
 
   @doc """
   Runs a pre-decoded workflow document. The map is validated against
-  the schema before execution. Used by the `.exs` and YAML loaders,
-  which both produce documents in memory.
+  the schema before execution. Used by the HCL, `.exs`, and YAML
+  loaders, which produce documents in memory.
   """
   @spec run_document(map(), input(), opts()) :: {:ok, result()} | {:error, term()}
   def run_document(decoded, inputs \\ %{}, opts \\ []) when is_map(decoded) do
@@ -55,7 +56,7 @@ defmodule Condukt.Workflows do
 
   Returns `:ok` on success, or `{:error, reason}` if the file fails to
   read, decode, compile, or match the schema. Accepts `.json`,
-  `.yaml`, `.yml`, and `.exs` paths.
+  `.yaml`, `.yml`, `.hcl`, and `.exs` paths.
   """
   @spec check(Path.t()) :: :ok | {:error, term()}
   def check(path) when is_binary(path) do
@@ -66,17 +67,26 @@ defmodule Condukt.Workflows do
   end
 
   @doc """
-  Compiles an `.exs` workflow file to its JSON document
-  representation. Returns the JSON as a (compact) string.
+  Compiles an authored workflow file to its JSON document
+  representation. Returns the JSON as a compact string.
   """
   @spec compile(Path.t()) :: {:ok, String.t()} | {:error, term()}
   def compile(path) when is_binary(path) do
-    with ".exs" <- Path.extname(path),
-         {:ok, decoded} <- Compiler.compile(path) do
-      {:ok, JSON.encode!(decoded)}
-    else
-      ext when is_binary(ext) -> {:error, {:not_an_exs_file, path, ext}}
-      {:error, reason} -> {:error, reason}
+    compiler =
+      case Path.extname(path) do
+        ".hcl" -> HCLCompiler
+        ".exs" -> Compiler
+        ext -> {:error, {:unsupported_compile_extension, path, ext}}
+      end
+
+    case compiler do
+      {:error, _} = err ->
+        err
+
+      module ->
+        with {:ok, decoded} <- module.compile(path) do
+          {:ok, JSON.encode!(decoded)}
+        end
     end
   end
 end

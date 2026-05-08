@@ -39,7 +39,7 @@ Rather than wrapping JavaScript agent frameworks, we built Condukt from scratch 
 - **Operations**: Compile-time typed entrypoints with JSON Schema input/output validation
 - **Anonymous Workflows**: One-off `Condukt.run/2` calls with inline tools and optional structured output
 - **Sub-agents**: Delegate isolated tasks to specialized child sessions with optional structured input/output contracts
-- **Workflow Engine**: Standalone `condukt` executable for macro-authored `.exs`, JSON, and YAML workflow files, installable with mise
+- **Workflow Engine**: Standalone `condukt` executable for HCL, JSON, YAML, and `.exs` workflow files, installable with mise
 - **Multi-Provider**: 18+ LLM providers via [ReqLLM](https://github.com/agentjido/req_llm) (Anthropic, OpenAI, Google, etc.)
 - **Redaction**: Pluggable secret redaction on outbound messages with a regex-based default
 - **Session Secrets**: Resolve credentials from providers such as 1Password and expose them only to tool execution environments
@@ -73,9 +73,9 @@ condukt version
 Use engine mode when you want to run a workflow file directly:
 
 ```sh
-condukt check hello.exs
-condukt run hello.exs --input '{"name":"world"}'
-condukt compile hello.exs > hello.json
+condukt check hello.hcl
+condukt run hello.hcl --input '{"name":"world"}'
+condukt compile hello.hcl > hello.json
 ```
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64 builds.

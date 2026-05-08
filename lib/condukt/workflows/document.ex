@@ -7,11 +7,11 @@ defmodule Condukt.Workflows.Document do
   against the published schema (`Condukt.Workflows.Schema`), and
   filling in defaults like `name` from the file basename.
 
-  YAML and `.exs` files are decoded to a JSON document upstream of
-  validation.
+  HCL, YAML, and `.exs` files are decoded to a JSON document upstream
+  of validation.
   """
 
-  alias Condukt.Workflows.{Compiler, Schema}
+  alias Condukt.Workflows.{Compiler, HCLCompiler, Schema}
 
   @enforce_keys [:name, :steps]
   defstruct [
@@ -45,7 +45,7 @@ defmodule Condukt.Workflows.Document do
   @doc """
   Loads, decodes, and validates a workflow document at `path`.
 
-  Accepts `.json`, `.yaml`/`.yml`, and `.exs` paths. Returns
+  Accepts `.json`, `.yaml`/`.yml`, `.hcl`, and `.exs` paths. Returns
   `{:ok, %Document{}}` when the file parses, decodes, and matches the
   schema. Otherwise returns a tagged error suitable for reporting
   from the CLI.
@@ -77,8 +77,7 @@ defmodule Condukt.Workflows.Document do
   inputs. Inputs without a `default` are required.
   """
   @spec validate_inputs(t(), map()) :: {:ok, map()} | {:error, JSV.ValidationError.t()}
-  def validate_inputs(%__MODULE__{inputs: declared}, provided)
-      when is_map(declared) and is_map(provided) do
+  def validate_inputs(%__MODULE__{inputs: declared}, provided) when is_map(declared) and is_map(provided) do
     schema = inputs_schema(declared)
     root = JSV.build!(schema)
     merged = apply_defaults(declared, provided)
@@ -96,6 +95,12 @@ defmodule Condukt.Workflows.Document do
 
       ext when ext in [".yaml", ".yml"] ->
         with {:ok, source} <- read(path), do: decode_yaml(path, source)
+
+      ".hcl" ->
+        case HCLCompiler.compile(path) do
+          {:ok, decoded} -> {:ok, decoded}
+          {:error, reason} -> {:error, {:compile_failed, path, reason}}
+        end
 
       ".exs" ->
         case Compiler.compile(path) do

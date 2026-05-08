@@ -6,27 +6,29 @@
 #
 # What it does:
 #
-# 1. Writes a temporary `.exs` workflow.
+# 1. Writes a temporary `.hcl` workflow.
 # 2. Validates it with `Condukt.Workflows.check/1`.
 # 3. Compiles it to the canonical JSON document.
 # 4. Runs it with input.
 # 5. Prints the resolved workflow output.
 
 dir = Path.join(System.tmp_dir!(), "condukt-workflows-smoke-#{System.unique_integer([:positive])}")
-path = Path.join(dir, "hello.exs")
+path = Path.join(dir, "hello.hcl")
 
 File.mkdir_p!(dir)
 
 File.write!(path, """
-use Condukt.Workflows.DSL
+workflow "hello" {
+  input "name" {
+    type = "string"
+  }
 
-workflow "hello" do
-  input :name, :string
+  cmd "greet" {
+    argv = ["echo", "Hello, ${input.name}"]
+  }
 
-  cmd :greet, ["echo", "Hello, \#{input(:name)}"]
-
-  output step(:greet, :stdout)
-end
+  output = task.greet.stdout
+}
 """)
 
 :ok = Condukt.Workflows.check(path)

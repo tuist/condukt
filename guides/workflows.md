@@ -1,42 +1,100 @@
 # Workflows
 
-A workflow is a typed JSON document describing a directed acyclic graph
-of steps. The document is the source of truth: it is what `condukt
-run` executes, what `condukt check` validates, and what editors and
-agents read and write. The basename of the file is the run name.
+A workflow is a typed DAG of steps. Authors write the graph in HCL,
+and Condukt compiles it to the canonical JSON document that the engine
+executes, `condukt check` validates, and visual tools can read.
 
 There is no project layout, manifest, or lockfile. To run a workflow
-you point the engine at a `.json`, `.yaml`, or `.exs` path.
+you point the engine at a `.hcl`, `.json`, `.yaml`, `.yml`, or `.exs`
+path. The basename of the file is the run name unless the compiled
+document carries an explicit `name`.
 
 ## A first workflow
 
-Author workflows as `.exs` files when you want the most ergonomic
-format. The script's final expression evaluates to the workflow
-document.
+`hello.hcl`:
 
-`hello.exs`:
+```hcl
+workflow "hello" {
+  input "name" {
+    type = "string"
+  }
 
-```elixir
-use Condukt.Workflows.DSL
+  cmd "greet" {
+    argv = ["echo", "Hello, ${input.name}"]
+  }
 
-workflow "hello" do
-  input :name, :string
-
-  cmd :greet, ["echo", "Hello, #{input(:name)}"]
-
-  output step(:greet, :stdout)
-end
+  output = task.greet.stdout
+}
 ```
 
 Run it with the standalone engine or with Mix:
 
 ```sh
-condukt run hello.exs --input '{"name":"world"}'
-mix condukt.run hello.exs --input '{"name":"world"}'
+condukt run hello.hcl --input '{"name":"world"}'
+mix condukt.run hello.hcl --input '{"name":"world"}'
 ```
 
 The resolved `output` expression is printed on stdout. Strings are
 printed as is, other values are JSON-encoded.
+
+## Why HCL
+
+HCL gives workflow authors a purpose-built configuration language
+instead of an embedded programming language. Blocks declare graph
+nodes, `needs` declares edges, and references make data flow visible:
+
+```hcl
+workflow "checks" {
+  cmd "lint" {
+    argv = ["mix", "format", "--check-formatted"]
+  }
+
+  cmd "test" {
+    argv = ["mix", "test"]
+  }
+
+  cmd "package" {
+    needs = ["lint", "test"]
+    argv = ["mix", "hex.build"]
+  }
+
+  output = {
+    lint = task.lint.ok,
+    test = task.test.ok,
+    package = task.package.ok
+  }
+}
+```
+
+This graph has two independent roots, `lint` and `test`, followed by
+`package`. A visualizer can draw it directly from the compiled JSON:
+
+```mermaid
+flowchart LR
+  lint --> package
+  test --> package
+```
+
+HCL intentionally makes dependencies stricter than raw JSON. When an
+HCL step reads `task.<id>`, that step must also declare `<id>` in
+`needs`. This keeps execution order and data dependencies visible in
+the authored file:
+
+```hcl
+workflow "release_notes" {
+  cmd "version" {
+    argv = ["sh", "-c", "git describe --tags --always"]
+  }
+
+  agent "draft" {
+    needs = ["version"]
+    model = "openai:gpt-4.1-mini"
+    input = "Draft release notes for ${task.version.stdout}"
+  }
+
+  output = task.draft.output
+}
+```
 
 ## The schema
 
@@ -45,19 +103,16 @@ The canonical source lives in this repository at
 `priv/schemas/condukt.workflow.schema.json` and is reachable on GitHub
 at:
 
-```
+```text
 https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 ```
 
-Reference it from a workflow file with the standard `$schema` key so
-editors pick up auto-completion and validation.
-
-The top-level shape is:
+The compiled JSON shape is:
 
 ```jsonc
 {
   "name": "review-pr",            // optional, defaults to file basename
-  "inputs": { ... },              // typed input map (JSON Schema fragments)
+  "inputs": { ... },              // typed input map
   "steps": { "<id>": { ... } },   // map of step id to step definition
   "output": "<expression>"        // optional, what `condukt run` prints
 }
@@ -68,15 +123,57 @@ A step has the shape:
 ```jsonc
 {
   "kind": "cmd" | "agent" | "http" | "tool" | "map",
-  "needs": ["other_step"],        // explicit dependencies, optional
-  "when": "<expression>",         // optional gate; step is skipped if false
-  // ...kind-specific fields
+  "needs": ["other_step"],        // explicit dependencies
+  "when": "<expression>"          // optional gate
 }
 ```
 
-Implicit dependencies are inferred from `${steps.X.*}` references
-inside any field, so `needs:` is only required when the dependency is
-purely ordering and not data flow.
+JSON and YAML continue to accept implicit dependencies inferred from
+`${steps.X.*}` references. HCL requires those dependencies to be
+declared in `needs` as well.
+
+## HCL syntax
+
+The top level contains one `workflow "name"` block. Inputs are declared
+with `input "id"` blocks, and steps are declared with kind blocks:
+
+```hcl
+workflow "deploy" {
+  input "environment" {
+    type = "string"
+    enum = ["staging", "production"]
+  }
+
+  http "fetch_version" {
+    method = "GET"
+    url = "https://example.test/version"
+    expect_status = 200
+  }
+
+  cmd "deploy" {
+    needs = ["fetch_version"]
+    when = input.environment == "production"
+    argv = ["./scripts/deploy", task.fetch_version.body.version]
+    env = {
+      DEPLOY_ENV = input.environment
+    }
+  }
+
+  output = {
+    deployed = task.deploy.ok,
+    version = task.fetch_version.body.version
+  }
+}
+```
+
+Inside HCL:
+
+- `input.name` compiles to `${inputs.name}`.
+- `task.fetch.body` compiles to `${steps.fetch.body}`.
+- A bare HCL reference, such as `input.name`, preserves the referenced
+  value's type.
+- A string template, such as `"Hello, ${input.name}"`, interpolates the
+  value into a string.
 
 ## Step kinds
 
@@ -92,26 +189,54 @@ purely ordering and not data flow.
 - `tool`: invokes a registered host tool by id. Fields: `id`, `args`.
   Output: `output` and `ok`.
 - `map`: fan-out. Fields: `over` (expression resolving to a list),
-  `as` (binding name), `do` (a sub-step definition). Output: a list of
-  the sub-step's outputs in input order.
+  `as` (binding name), `do` (a nested step definition). Output: a list
+  of the nested step's outputs in input order.
 
-Each step's outputs are addressable as `${steps.<id>.<field>}` from
-later steps and from the top-level `output`.
+Example fan-out:
+
+```hcl
+workflow "summarize_files" {
+  tool "glob" {
+    id = "Glob"
+    args = {
+      pattern = "guides/*.md"
+    }
+  }
+
+  map "summaries" {
+    needs = ["glob"]
+    over = task.glob.output
+    as = "file"
+
+    tool {
+      id = "Read"
+      args = {
+        file_path = file
+      }
+    }
+  }
+
+  output = task.summaries
+}
+```
 
 ## Expressions
 
-Expressions live between `${` and `}`. They are evaluated against
-`inputs`, `steps`, and (inside a `map` step) the `as` binding.
+Expressions are evaluated against `inputs`, `steps`, and, inside a
+`map` step, the `as` binding. HCL authors normally use the singular
+aliases `input` and `task`; the compiler rewrites them to the canonical
+expression roots.
 
 Supported:
 
-- Member access: `inputs.name`, `steps.fetch.body.title`
-- Indexing: `steps.list.items[0]`, `obj["a key"]`, negative indices
+- Member access: `input.name`, `task.fetch.body.title`
+- Indexing: `task.list.items[0]`, `obj["a key"]`, negative indices
 - Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
 - Boolean: `&&`, `||`, `!`
 - Unary minus: `-1`, `xs[-1]`
 - Literals: strings, numbers, booleans, null, parens
-- Type-aware formatters: `${var:json}`, `${var:csv}`
+- Type-aware formatters in canonical expressions: `${var:json}`,
+  `${var:csv}`
 
 Not supported:
 
@@ -119,25 +244,25 @@ Not supported:
   Anything more substantial belongs in a `cmd`, `agent`, or `tool`
   step.
 
-A `when:` expression must evaluate to a boolean. Member access on
+A `when` expression must evaluate to a boolean. Member access on
 `null` returns `null` so a reference to a skipped step degrades
 gracefully; typos against a real value still raise a loud error.
 
 ## Skipping and cascade
 
-If a step's `when:` evaluates to false, the step is skipped. Any
+If a step's `when` evaluates to false, the step is skipped. Any
 downstream step whose declared or inferred dependencies include a
 skipped step is also skipped. The step's slot in `steps.<id>` is set
 to `null`.
 
-## JSON and YAML
+## JSON, YAML, and EXS
 
-JSON files (`.json`) are accepted as the canonical workflow document
-format. The first `.exs` workflow compiles to this document:
+HCL is the authored workflow format. It compiles to this canonical JSON
+document:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json",
+  "name": "hello",
   "inputs": {
     "name": { "type": "string" }
   },
@@ -151,11 +276,11 @@ format. The first `.exs` workflow compiles to this document:
 }
 ```
 
+JSON files (`.json`) are accepted as canonical workflow documents.
 YAML files (`.yaml`, `.yml`) are accepted and converted to the same
-JSON document at load time:
+document at load time:
 
 ```yaml
-$schema: https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
 inputs:
   name:
     type: string
@@ -166,80 +291,29 @@ steps:
 output: "${steps.greet.stdout}"
 ```
 
-## Authoring DSL (`.exs`)
+For lower-level generation, an `.exs` file may return a workflow map
+directly. Atom keys and atom values, other than `nil`, `true`, and
+`false`, are normalized to strings before validation. Use this only
+when you need Elixir to generate the document programmatically.
 
-Use `.exs` for authored workflows. JSON and YAML remain useful as
-generated or interchange formats, while `Condukt.Workflows.DSL`
-provides macros for the authoring surface. The DSL returns the same
-map that JSON and YAML decode to, then Condukt validates it against
-the schema before execution.
-
-The core macros are:
-
-- `workflow "name" do ... end`: declares a workflow document.
-- `input :name, :string`: declares a typed input.
-- `cmd :step_id, argv`: declares a command step.
-- `http :step_id, :get, url`: declares an HTTP step.
-- `agent :step_id, model, input: ...`: declares an LLM step.
-- `tool :step_id, "Read", args: %{...}`: invokes a registered tool.
-- `map :step_id, over: ..., as: :item do ... end`: fans out over a list.
-- `output value`: declares the value printed by `condukt run`.
-
-Expression helpers keep references readable:
-
-```elixir
-input(:name)                 # "${inputs.name}"
-step(:fetch, :body, :items)  # "${steps.fetch.body.items}"
-item(:id)                    # "${item.id}"
-expr("inputs.enabled")       # "${inputs.enabled}"
-```
-
-The file evaluates at load time, so ordinary Elixir can generate
-declarations. Non-DSL expression results are ignored, which lets you
-use variables, `for`, `if`, comprehensions, and helper functions to
-build the document programmatically. References between steps still
-compile to plain `${...}` expression strings: there is no runtime
-introspection of step outputs at compile time.
-
-Compile a workflow when you need the canonical JSON output:
+Compile an authored workflow when you need the canonical JSON output:
 
 ```sh
-condukt compile hello.exs > hello.json
+condukt compile hello.hcl > hello.json
 ```
 
-`condukt run hello.exs` does that compile step transparently before
-validation and execution.
-
-A more substantial example uses a comprehension to generate several
-steps:
-
-```elixir
-use Condukt.Workflows.DSL
-
-stages = ["lint", "test", "build"]
-
-workflow "checks" do
-  for stage <- stages do
-    cmd stage, ["./script/" <> stage]
-  end
-
-  output for(stage <- stages, into: %{}, do: {stage, step(stage, :stdout)})
-end
-```
-
-For lower-level generation, an `.exs` file may also return a workflow
-map directly. Atom keys and atom values (other than `nil`, `true`, and
-`false`) are normalized to strings before validation.
+`condukt run hello.hcl` compiles transparently before validation and
+execution.
 
 ## Validating a workflow
 
 `condukt check PATH` parses and validates the document against the
-schema and reports all problems without executing it. It accepts
+schema and reports problems without executing it. It accepts `.hcl`,
 `.json`, `.yaml`, `.yml`, and `.exs` paths.
 
 ```sh
+condukt check review-pr.hcl
 condukt check review-pr.json
-condukt check review-pr.exs
 ```
 
 Use it in CI or as part of an LLM authoring loop: generate, check,
@@ -249,11 +323,11 @@ fix, repeat.
 
 These are planned but not yet implemented:
 
-- A Hex-package convention for sharing reusable workflow helpers
-  (e.g., `MyOrg.Workflows.lint_step/1`) so an `.exs` file can `use`
-  or `import` them.
+- Versioned helper packages for generating repeated HCL or JSON
+  fragments.
 - Optional `--lock` mode that records SHA-256 per fetched URL and
-  verifies on later runs (Deno-style integrity).
+  verifies on later runs.
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and
   `condukt serve PATH` to host webhook and cron-driven runs.
-- Visual editor that reads and writes the same JSON document.
+- A visual editor that reads and writes the same compiled JSON
+  document.

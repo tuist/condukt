@@ -1,18 +1,18 @@
 defmodule Mix.Tasks.Condukt.Run do
+  @shortdoc "Runs a Condukt workflow file"
+
   @moduledoc """
   Runs a Condukt workflow file.
 
-      mix condukt.run path/to/workflow.{json,yaml,yml,exs} [--input JSON]
+      mix condukt.run path/to/workflow.{hcl,json,yaml,yml,exs} [--input JSON]
 
   The file is loaded as a JSON document conforming to
-  `condukt.workflow.schema.json`. YAML files are converted at load
-  time; `.exs` files are evaluated as Elixir scripts whose final
+  `condukt.workflow.schema.json`. HCL and YAML files are converted at
+  load time; `.exs` files are evaluated as Elixir scripts whose final
   expression is the workflow document.
   """
 
   use Mix.Task
-
-  @shortdoc "Runs a Condukt workflow file"
 
   @impl Mix.Task
   def run(argv) do

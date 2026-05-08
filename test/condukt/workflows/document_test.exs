@@ -81,6 +81,28 @@ defmodule Condukt.Workflows.DocumentTest do
       assert doc.steps["greet"]["kind"] == "cmd"
     end
 
+    test "loads an HCL workflow document", %{tmp_dir: dir} do
+      path = Path.join(dir, "hello.hcl")
+
+      File.write!(path, """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
+
+        cmd "greet" {
+          argv = ["echo", "hi ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """)
+
+      assert {:ok, %Document{} = doc} = Document.load(path)
+      assert doc.name == "hello"
+      assert doc.steps["greet"]["argv"] == ["echo", "hi ${inputs.name}"]
+    end
+
     test "returns :invalid_workflow when the schema rejects the document", %{tmp_dir: dir} do
       path = Path.join(dir, "bad.json")
       File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))

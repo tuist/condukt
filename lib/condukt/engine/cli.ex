@@ -68,7 +68,7 @@ defmodule Condukt.Engine.CLI do
         end
 
       {:ok, _opts, []} ->
-        {:error, "Expected an .exs workflow path"}
+        {:error, "Expected a workflow path"}
 
       {:ok, _opts, rest} ->
         {:error, "Expected exactly one path, got: #{Enum.join(rest, " ")}"}
@@ -123,9 +123,9 @@ defmodule Condukt.Engine.CLI do
 
     Usage:
       condukt version
-      condukt run PATH [--input JSON]    Run a workflow file (.json/.yaml/.exs)
+      condukt run PATH [--input JSON]    Run a workflow file (.hcl/.json/.yaml/.yml/.exs)
       condukt check PATH                 Validate a workflow against the schema
-      condukt compile PATH               Compile an .exs file to JSON on stdout
+      condukt compile PATH               Compile an .hcl or .exs file to JSON on stdout
 
     Workflow JSON Schema:
       https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json

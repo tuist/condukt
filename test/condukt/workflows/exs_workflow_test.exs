@@ -62,10 +62,10 @@ defmodule Condukt.Workflows.ExsWorkflowTest do
       assert decoded["steps"]["a"]["kind"] == "cmd"
     end
 
-    test "rejects a non-.exs file", %{tmp_dir: dir} do
+    test "rejects a non-authored workflow file", %{tmp_dir: dir} do
       path = Path.join(dir, "x.json")
       File.write!(path, "{}")
-      assert {:error, {:not_an_exs_file, ^path, ".json"}} = Workflows.compile(path)
+      assert {:error, {:unsupported_compile_extension, ^path, ".json"}} = Workflows.compile(path)
     end
   end
 end

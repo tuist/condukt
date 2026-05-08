@@ -1,14 +1,14 @@
 defmodule Mix.Tasks.Condukt.Compile do
+  @shortdoc "Compiles a workflow file to JSON"
+
   @moduledoc """
-  Compiles an `.exs` workflow file to its JSON document
+  Compiles an `.hcl` or `.exs` workflow file to its JSON document
   representation, printing the result to stdout.
 
-      mix condukt.compile path/to/workflow.exs
+      mix condukt.compile path/to/workflow.hcl
   """
 
   use Mix.Task
-
-  @shortdoc "Compiles an .exs workflow file to JSON"
 
   @impl Mix.Task
   def run(argv) do

@@ -55,19 +55,21 @@
 
 ## Workflows
 
-- A workflow is a typed JSON document describing a DAG of steps. The
-  document is the source of truth: it is what the engine executes, what
-  `condukt check` validates, and what editors and agents read and write.
-  YAML is accepted on input as a JSON superset and converted at load time.
-  There is no project layout, manifest, or lockfile; the basename of the
-  file is the run name.
+- A workflow is a typed DAG of steps authored in HCL and compiled to the
+  canonical JSON document. The JSON document is what the engine executes,
+  what `condukt check` validates, and what editors and agents can read and
+  write. YAML is accepted on input as a JSON superset and converted at load
+  time. There is no project layout, manifest, or lockfile; the basename of
+  the file is the run name.
 - The schema lives at `priv/schemas/condukt.workflow.schema.json` and
   is referenced from workflow files via its raw GitHub URL,
   `https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json`.
   Top level: `name`, `inputs`, `steps`, `output`. Each step has a `kind`
   (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional
   `when`, and kind-specific fields. Implicit dependencies are inferred
-  from `${steps.X.*}` references.
+  from `${steps.X.*}` references in JSON, YAML, and `.exs`. HCL requires
+  every `task.X` reference inside a step to be declared in that step's
+  `needs` list so the DAG is visible in the authored file.
 - The expression sub-language is intentionally small: `${...}`
   interpolation with member access, indexing, comparisons, boolean ops,
   literals, unary minus, and `:json`/`:csv` formatters. No arbitrary
@@ -75,27 +77,25 @@
   substantial belongs in a `cmd`/`agent`/`tool` step. Member access on
   `null` returns `null` so a reference to a skipped step degrades
   gracefully; missing keys against a real value still error.
-- The Elixir authoring DSL is `.exs`. Prefer `use Condukt.Workflows.DSL`
-  and the macro surface (`workflow`, `input`, `cmd`, `http`, `agent`,
-  `tool`, `map`, `output`) for authored workflow files. The macros return
-  a map describing the workflow; direct map-returning `.exs` files remain
-  supported for lower-level generation. Atom keys and atom values are
-  normalized to strings by `Condukt.Workflows.Compiler` before schema
-  validation. Standard Elixir features (`defmodule`/`def`, anonymous
-  functions, `for`, `if`, comprehensions) are available for *building*
-  the document; references between steps compile to `${...}` strings.
-  There is no runtime suspension and no introspection of step outputs at
-  compile time.
-- `Condukt.Workflows.Compiler.compile/1` reads, evaluates, and
-  normalizes an `.exs` file. Validation and execution are pure
-  Elixir; there is no native NIF for workflows.
+- The authored workflow format is `.hcl`. Use `workflow "name" { ... }`
+  with `input`, `cmd`, `http`, `agent`, `tool`, and `map` blocks. HCL
+  references use `input.name` and `task.step.output`; the compiler rewrites
+  them to canonical `${inputs.name}` and `${steps.step.output}` strings.
+  Direct map-returning `.exs` files remain supported only for lower-level
+  generation. Atom keys and atom values are normalized to strings by
+  `Condukt.Workflows.Compiler` before schema validation.
+- `Condukt.Workflows.HCLCompiler.compile/1` reads, parses with `hxl`, and
+  normalizes an `.hcl` file. `Condukt.Workflows.Compiler.compile/1` reads,
+  evaluates, and normalizes an `.exs` file. Validation and execution are
+  pure Elixir; there is no native NIF for workflows.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the schema together.
 - CLI verbs are `condukt run PATH [--input JSON]`,
-  `condukt check PATH`, and `condukt compile PATH` (`.exs` to JSON on
+  `condukt check PATH`, and `condukt compile PATH` (`.hcl`/`.exs` to JSON on
   stdout), mirrored by `mix condukt.run`, `mix condukt.check`, and
-  `mix condukt.compile`. `run` and `check` accept `.json`, `.yaml`,
-  `.yml`, and `.exs` paths; `.exs` is compiled transparently.
+  `mix condukt.compile`. `run` and `check` accept `.hcl`, `.json`,
+  `.yaml`, `.yml`, and `.exs` paths; `.hcl` and `.exs` are compiled
+  transparently.
 - Tool ids on `tool` steps are resolved through
   `Condukt.Workflows.ToolRegistry`. Built-ins
   (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of
