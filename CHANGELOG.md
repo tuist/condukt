@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.20.0] - 2026-05-08
+
+### Features
+
+- emit :llm_turn events around each LLM round-trip
+
+
 ## [0.19.0] - 2026-05-08
 
 ### Features
