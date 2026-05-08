@@ -221,7 +221,7 @@ defmodule Condukt.MixProject do
         "GitHub" => @source_url
       },
       files:
-        ~w(lib guides native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs native/condukt_workflows/Cargo.toml native/condukt_workflows/Cargo.lock native/condukt_workflows/src native/condukt_workflows/rust-toolchain.toml native/condukt_workflows/README.md checksum-Elixir.Condukt.Workflows.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
+        ~w(lib priv guides native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
     ]
   end
 

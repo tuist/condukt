@@ -1,14 +1,14 @@
 defmodule Mix.Tasks.Condukt.Compile do
   @moduledoc """
-  Compiles a Starlark `.star` workflow file to its JSON document
+  Compiles an `.exs` workflow file to its JSON document
   representation, printing the result to stdout.
 
-      mix condukt.compile path/to/workflow.star
+      mix condukt.compile path/to/workflow.exs
   """
 
   use Mix.Task
 
-  @shortdoc "Compiles a Starlark workflow file to JSON"
+  @shortdoc "Compiles an .exs workflow file to JSON"
 
   @impl Mix.Task
   def run(argv) do
