@@ -139,6 +139,149 @@ defmodule Condukt.SessionTest do
       GenServer.stop(pid)
     end
 
+    test "tool_call telemetry includes args, tool_call_id, status and result on success" do
+      handler_id = "tool-call-payload-ok-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:condukt, :tool_call, :start], [:condukt, :tool_call, :stop]],
+        fn event, _measurements, metadata, _ ->
+          send(test_pid, {:tool_telemetry, event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      tool =
+        Condukt.tool(
+          name: "echo",
+          description: "echoes a message",
+          parameters: %{type: "object", properties: %{message: %{type: "string"}}, required: ["message"]},
+          call: fn %{"message" => message}, _context -> {:ok, "echo: " <> message} end
+        )
+
+      tool_call = ToolCall.new("call_ok", "echo", JSON.encode!(%{"message" => "hi"}))
+
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [tool_call]},
+            :tool_calls
+          ),
+          LLMProvider.text_response("done")
+        ])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, tools: [tool], load_project_instructions: false)
+
+      assert {:ok, "done"} = Condukt.run(pid, "go")
+
+      assert_receive {:tool_telemetry, [:condukt, :tool_call, :start],
+                      %{tool: "echo", tool_call_id: "call_ok", args: %{"message" => "hi"}}}
+
+      assert_receive {:tool_telemetry, [:condukt, :tool_call, :stop],
+                      %{tool: "echo", tool_call_id: "call_ok", status: :ok, result: "echo: hi"}}
+
+      GenServer.stop(pid)
+    end
+
+    test "tool_call telemetry surfaces :error status and the error tuple as :result" do
+      handler_id = "tool-call-payload-error-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:condukt, :tool_call, :stop],
+        fn _event, _measurements, metadata, _ ->
+          send(test_pid, {:tool_telemetry, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      err_tool =
+        Condukt.tool(
+          name: "boom",
+          description: "always errors",
+          parameters: %{type: "object", properties: %{}},
+          call: fn _args, _context -> {:error, "kaboom"} end
+        )
+
+      err_call = ToolCall.new("call_err", "boom", JSON.encode!(%{}))
+
+      # max_turns: 1 stops the loop after the first tool batch so the broken
+      # error tuple never has to be re-serialized for a second LLM turn.
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [err_call]},
+            :tool_calls
+          )
+        ])
+
+      {:ok, pid} = ConfigAgent.start_link(model: model, tools: [err_tool], load_project_instructions: false)
+
+      Condukt.run(pid, "go", max_turns: 1)
+
+      assert_receive {:tool_telemetry,
+                      %{tool: "boom", tool_call_id: "call_err", status: :error, result: {:error, "kaboom"}}}
+
+      GenServer.stop(pid)
+    end
+
+    test "tool_call telemetry redacts session secrets from the result" do
+      handler_id = "tool-call-redacted-#{inspect(make_ref())}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:condukt, :tool_call, :stop],
+        fn _event, _measurements, metadata, _ ->
+          send(test_pid, {:tool_telemetry, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      tool =
+        Condukt.tool(
+          name: "show_secret",
+          description: "Returns a configured secret",
+          parameters: %{type: "object", properties: %{}},
+          call: fn _args, _context -> {:ok, "secret-token"} end
+        )
+
+      tool_call = ToolCall.new("call_redacted", "show_secret", JSON.encode!(%{}))
+
+      {model, _} =
+        LLMProvider.model([
+          LLMProvider.response(
+            %ReqLLM.Message{role: :assistant, content: [], tool_calls: [tool_call]},
+            :tool_calls
+          ),
+          LLMProvider.text_response("done")
+        ])
+
+      {:ok, pid} =
+        ConfigAgent.start_link(
+          model: model,
+          tools: [tool],
+          secrets: [GH_TOKEN: {:static, "secret-token"}],
+          load_project_instructions: false
+        )
+
+      assert {:ok, "done"} = Condukt.run(pid, "go")
+
+      assert_receive {:tool_telemetry, %{tool: "show_secret", status: :ok, result: result}}
+      assert result == "[REDACTED:GH_TOKEN]"
+      refute inspect(result) =~ "secret-token"
+
+      GenServer.stop(pid)
+    end
+
     test "secrets telemetry includes the session id" do
       handler_id = "secrets-session-id-#{inspect(make_ref())}"
       test_pid = self()
