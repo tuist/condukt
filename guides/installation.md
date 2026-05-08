@@ -1,7 +1,7 @@
 # Installation
 
 Condukt can run as a Hex library inside an Elixir application or as the
-standalone `condukt` engine for workflow projects.
+standalone `condukt` engine for workflow files.
 
 ## Library mode
 
@@ -32,16 +32,16 @@ mise use -g github:tuist/condukt
 condukt version
 ```
 
-Use engine mode when you want to run a workflow project directly:
+Use engine mode when you want to run a workflow file directly:
 
 ```sh
-condukt workflows check --root .
-condukt workflows run triage --root . --input '{"issue":"broken"}'
-condukt workflows serve --root . --port 4000
+condukt check hello.exs
+condukt run hello.exs --input '{"name":"world"}'
+condukt compile hello.exs > hello.json
 ```
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64
 builds.
 
 See [Workflows](workflows.md) for creating, running, and sharing workflow
-projects.
+files.

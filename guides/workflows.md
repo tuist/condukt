@@ -10,29 +10,33 @@ you point the engine at a `.json`, `.yaml`, or `.exs` path.
 
 ## A first workflow
 
-`hello.json`:
+Author workflows as `.exs` files when you want the most ergonomic
+format. The script's final expression evaluates to the workflow
+document.
 
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json",
-  "inputs": {
-    "name": { "type": "string" }
+`hello.exs`:
+
+```elixir
+%{
+  name: "hello",
+  inputs: %{
+    name: %{type: :string}
   },
-  "steps": {
-    "greet": {
-      "kind": "cmd",
-      "argv": ["echo", "Hello, ${inputs.name}"]
+  steps: %{
+    greet: %{
+      kind: :cmd,
+      argv: ["echo", "Hello, ${inputs.name}"]
     }
   },
-  "output": "${steps.greet.stdout}"
+  output: "${steps.greet.stdout}"
 }
 ```
 
 Run it with the standalone engine or with Mix:
 
 ```sh
-condukt run hello.json --input '{"name": "world"}'
-mix condukt.run hello.json --input '{"name": "world"}'
+condukt run hello.exs --input '{"name":"world"}'
+mix condukt.run hello.exs --input '{"name":"world"}'
 ```
 
 The resolved `output` expression is printed on stdout. Strings are
@@ -130,10 +134,29 @@ downstream step whose declared or inferred dependencies include a
 skipped step is also skipped. The step's slot in `steps.<id>` is set
 to `null`.
 
-## YAML
+## JSON and YAML
+
+JSON files (`.json`) are accepted as the canonical workflow document
+format. The first `.exs` workflow compiles to this document:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json",
+  "inputs": {
+    "name": { "type": "string" }
+  },
+  "steps": {
+    "greet": {
+      "kind": "cmd",
+      "argv": ["echo", "Hello, ${inputs.name}"]
+    }
+  },
+  "output": "${steps.greet.stdout}"
+}
+```
 
 YAML files (`.yaml`, `.yml`) are accepted and converted to the same
-JSON document at load time. The same `hello.json` above looks like:
+JSON document at load time:
 
 ```yaml
 $schema: https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
@@ -149,41 +172,28 @@ output: "${steps.greet.stdout}"
 
 ## Authoring DSL (`.exs`)
 
-Hand-writing JSON or YAML is fine for most workflows. For larger
-graphs there is an authoring DSL: an Elixir script (`.exs`) whose
-final expression evaluates to a map describing the workflow. The
-file evaluates at load time and lets you use `def` (inside a
-`defmodule`), anonymous functions, `for`, `if`, comprehensions, and
-the rest of the standard library to build the document
-programmatically. References between steps are written as plain
-`${...}` expression strings: there is no runtime introspection of
-step outputs at compile time.
+Use `.exs` for authored workflows. JSON and YAML remain useful as
+generated or interchange formats, while an Elixir script gives you a
+small DSL whose final expression evaluates to a map describing the
+workflow. The file evaluates at load time and lets you use `def`
+(inside a `defmodule`), anonymous functions, `for`, `if`,
+comprehensions, and the rest of the standard library to build the
+document programmatically. References between steps are written as
+plain `${...}` expression strings: there is no runtime introspection
+of step outputs at compile time.
 
 Atom keys and atom values (other than `nil`/`true`/`false`) are
 normalized to strings before validation, so the file can use the
 familiar Elixir map syntax.
 
-`hello.exs`:
-
-```elixir
-%{
-  name: "hello",
-  inputs: %{name: %{type: :string}},
-  steps: %{
-    greet: %{kind: :cmd, argv: ["echo", "Hello, ${inputs.name}"]}
-  },
-  output: "${steps.greet.stdout}"
-}
-```
-
-Compile and run:
+Compile a workflow when you need the canonical JSON output:
 
 ```sh
 condukt compile hello.exs > hello.json
-condukt run hello.json --input '{"name": "world"}'
 ```
 
-`condukt run hello.exs` does the compile step transparently.
+`condukt run hello.exs` does that compile step transparently before
+validation and execution.
 
 A more substantial example uses a comprehension to fan out commands
 over a static list of stages:
@@ -193,7 +203,7 @@ stages = ["lint", "test", "build"]
 
 steps =
   for stage <- stages, into: %{} do
-    {String.to_atom(stage), %{kind: :cmd, argv: ["./script/" <> stage]}}
+    {stage, %{kind: :cmd, argv: ["./script/" <> stage]}}
   end
 
 %{

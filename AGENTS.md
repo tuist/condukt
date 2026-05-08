@@ -109,7 +109,7 @@
 
 - Condukt has two distribution modes. Library mode is the Hex package consumed
   by Elixir applications. Engine mode is the standalone `condukt` executable
-  built with Burrito for running workflow projects without a local Elixir or
+  built with Burrito for running workflow files without a local Elixir or
   Erlang install.
 - Burrito targets are configured in `mix.exs` under `releases/0`. Release CI
   builds Linux x64, macOS x64, macOS arm64, and Windows x64 archives and

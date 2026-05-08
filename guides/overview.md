@@ -1,15 +1,15 @@
 # Overview
 
 Condukt is an Elixir library and standalone agentic engine for building
-reliable AI agents and workflow projects.
+reliable AI agents and workflow files.
 
 Condukt has two modes. Use it as a Hex library inside an Elixir application
 when you want agents embedded in your own OTP system. Install it as the
 `condukt` engine when you want a single executable that runs agentic workflow
-projects from the command line, cron, or webhooks.
+files from the command line, cron, or webhooks.
 
 The engine is built with Burrito and bundles Erlang plus Condukt's bytecode, so
-workflow projects can run without a local Elixir toolchain. Both modes share
+workflow files can run without a local Elixir toolchain. Both modes share
 the same OTP-native agent runtime, tool system, sandboxing model, and
 multi-provider LLM support.
 

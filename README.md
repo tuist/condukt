@@ -12,11 +12,11 @@
   <a href="https://github.com/tuist/condukt/commits/main"><img src="https://img.shields.io/github/last-commit/tuist/condukt.svg" alt="Last commit" /></a>
 </p>
 
-An Elixir library and standalone agentic engine for building reliable AI agents and workflow projects.
+An Elixir library and standalone agentic engine for building reliable AI agents and workflow files.
 
-Condukt has two modes. Use it as a Hex library inside an Elixir application when you want agents embedded in your own OTP system. Install it as the `condukt` engine when you want a single executable that runs agentic workflow projects from the command line, cron, or webhooks.
+Condukt has two modes. Use it as a Hex library inside an Elixir application when you want agents embedded in your own OTP system. Install it as the `condukt` engine when you want a single executable that runs agentic workflow files from the command line, cron, or webhooks.
 
-The engine is built with Burrito and bundles Erlang plus Condukt's bytecode, so workflow projects can run without a local Elixir toolchain. Both modes share the same OTP-native agent runtime, tool system, sandboxing model, and multi-provider LLM support.
+The engine is built with Burrito and bundles Erlang plus Condukt's bytecode, so workflow files can run without a local Elixir toolchain. Both modes share the same OTP-native agent runtime, tool system, sandboxing model, and multi-provider LLM support.
 
 ## Motivation
 
@@ -39,7 +39,7 @@ Rather than wrapping JavaScript agent frameworks, we built Condukt from scratch 
 - **Operations**: Compile-time typed entrypoints with JSON Schema input/output validation
 - **Anonymous Workflows**: One-off `Condukt.run/2` calls with inline tools and optional structured output
 - **Sub-agents**: Delegate isolated tasks to specialized child sessions with optional structured input/output contracts
-- **Workflow Engine**: Standalone `condukt` executable for Starlark workflow projects, installable with mise
+- **Workflow Engine**: Standalone `condukt` executable for `.exs`, JSON, and YAML workflow files, installable with mise
 - **Multi-Provider**: 18+ LLM providers via [ReqLLM](https://github.com/agentjido/req_llm) (Anthropic, OpenAI, Google, etc.)
 - **Redaction**: Pluggable secret redaction on outbound messages with a regex-based default
 - **Session Secrets**: Resolve credentials from providers such as 1Password and expose them only to tool execution environments
@@ -70,19 +70,18 @@ mise use -g github:tuist/condukt
 condukt version
 ```
 
-Use engine mode when you want to run a workflow project directly:
+Use engine mode when you want to run a workflow file directly:
 
 ```sh
-condukt workflows check --root .
-condukt workflows run triage --root . --input '{"issue":"broken"}'
-condukt workflows serve --root . --port 4000
+condukt check hello.exs
+condukt run hello.exs --input '{"name":"world"}'
+condukt compile hello.exs > hello.json
 ```
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64 builds.
 
 See the [Workflows](https://hexdocs.pm/condukt/workflows.html) guide for creating, running, and
-sharing workflows. See the [Workflow Starlark API](https://hexdocs.pm/condukt/workflow_starlark_api.html)
-reference for every Starlark builtin available to workflow files.
+sharing workflows.
 
 ## Quick Start
 
