@@ -43,7 +43,27 @@ is JSON; YAML is converted at load time.
 ## The schema
 
 The workflow document is validated against a published JSON Schema,
-`condukt.workflow.schema.json`. The top-level shape is:
+served at:
+
+```
+https://condukt.tuist.dev/schemas/condukt.workflow.schema.json
+```
+
+Reference it from a workflow file with the standard `$schema` key so
+editors pick up auto-completion and validation:
+
+```json
+{
+  "$schema": "https://condukt.tuist.dev/schemas/condukt.workflow.schema.json",
+  "steps": { ... }
+}
+```
+
+The canonical source lives in the repository at
+`priv/schemas/condukt.workflow.schema.json` and is also mirrored under
+`website/src/static/schemas/`.
+
+The top-level shape is:
 
 ```jsonc
 {
