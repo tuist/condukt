@@ -75,14 +75,16 @@
   substantial belongs in a `cmd`/`agent`/`tool` step. Member access on
   `null` returns `null` so a reference to a skipped step degrades
   gracefully; missing keys against a real value still error.
-- The Elixir authoring DSL is `.exs`. A workflow file is an Elixir
-  script whose final expression evaluates to a map describing the
-  workflow. Atom keys and atom values are normalized to strings by
-  `Condukt.Workflows.Compiler` before schema validation. Standard
-  Elixir features (`defmodule`/`def`, anonymous functions, `for`,
-  `if`, comprehensions) are available for *building* the document;
-  references between steps are written as `${...}` strings. There is
-  no runtime suspension and no introspection of step outputs at
+- The Elixir authoring DSL is `.exs`. Prefer `use Condukt.Workflows.DSL`
+  and the macro surface (`workflow`, `input`, `cmd`, `http`, `agent`,
+  `tool`, `map`, `output`) for authored workflow files. The macros return
+  a map describing the workflow; direct map-returning `.exs` files remain
+  supported for lower-level generation. Atom keys and atom values are
+  normalized to strings by `Condukt.Workflows.Compiler` before schema
+  validation. Standard Elixir features (`defmodule`/`def`, anonymous
+  functions, `for`, `if`, comprehensions) are available for *building*
+  the document; references between steps compile to `${...}` strings.
+  There is no runtime suspension and no introspection of step outputs at
   compile time.
 - `Condukt.Workflows.Compiler.compile/1` reads, evaluates, and
   normalizes an `.exs` file. Validation and execution are pure

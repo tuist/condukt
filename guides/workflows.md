@@ -17,19 +17,15 @@ document.
 `hello.exs`:
 
 ```elixir
-%{
-  name: "hello",
-  inputs: %{
-    name: %{type: :string}
-  },
-  steps: %{
-    greet: %{
-      kind: :cmd,
-      argv: ["echo", "Hello, ${inputs.name}"]
-    }
-  },
-  output: "${steps.greet.stdout}"
-}
+use Condukt.Workflows.DSL
+
+workflow "hello" do
+  input :name, :string
+
+  cmd :greet, ["echo", "Hello, #{input(:name)}"]
+
+  output step(:greet, :stdout)
+end
 ```
 
 Run it with the standalone engine or with Mix:
@@ -173,18 +169,37 @@ output: "${steps.greet.stdout}"
 ## Authoring DSL (`.exs`)
 
 Use `.exs` for authored workflows. JSON and YAML remain useful as
-generated or interchange formats, while an Elixir script gives you a
-small DSL whose final expression evaluates to a map describing the
-workflow. The file evaluates at load time and lets you use `def`
-(inside a `defmodule`), anonymous functions, `for`, `if`,
-comprehensions, and the rest of the standard library to build the
-document programmatically. References between steps are written as
-plain `${...}` expression strings: there is no runtime introspection
-of step outputs at compile time.
+generated or interchange formats, while `Condukt.Workflows.DSL`
+provides macros for the authoring surface. The DSL returns the same
+map that JSON and YAML decode to, then Condukt validates it against
+the schema before execution.
 
-Atom keys and atom values (other than `nil`/`true`/`false`) are
-normalized to strings before validation, so the file can use the
-familiar Elixir map syntax.
+The core macros are:
+
+- `workflow "name" do ... end`: declares a workflow document.
+- `input :name, :string`: declares a typed input.
+- `cmd :step_id, argv`: declares a command step.
+- `http :step_id, :get, url`: declares an HTTP step.
+- `agent :step_id, model, input: ...`: declares an LLM step.
+- `tool :step_id, "Read", args: %{...}`: invokes a registered tool.
+- `map :step_id, over: ..., as: :item do ... end`: fans out over a list.
+- `output value`: declares the value printed by `condukt run`.
+
+Expression helpers keep references readable:
+
+```elixir
+input(:name)                 # "${inputs.name}"
+step(:fetch, :body, :items)  # "${steps.fetch.body.items}"
+item(:id)                    # "${item.id}"
+expr("inputs.enabled")       # "${inputs.enabled}"
+```
+
+The file evaluates at load time, so ordinary Elixir can generate
+declarations. Non-DSL expression results are ignored, which lets you
+use variables, `for`, `if`, comprehensions, and helper functions to
+build the document programmatically. References between steps still
+compile to plain `${...}` expression strings: there is no runtime
+introspection of step outputs at compile time.
 
 Compile a workflow when you need the canonical JSON output:
 
@@ -195,27 +210,26 @@ condukt compile hello.exs > hello.json
 `condukt run hello.exs` does that compile step transparently before
 validation and execution.
 
-A more substantial example uses a comprehension to fan out commands
-over a static list of stages:
+A more substantial example uses a comprehension to generate several
+steps:
 
 ```elixir
+use Condukt.Workflows.DSL
+
 stages = ["lint", "test", "build"]
 
-steps =
-  for stage <- stages, into: %{} do
-    {stage, %{kind: :cmd, argv: ["./script/" <> stage]}}
+workflow "checks" do
+  for stage <- stages do
+    cmd stage, ["./script/" <> stage]
   end
 
-%{
-  steps: steps,
-  output: for(stage <- stages, into: %{}, do: {stage, "${steps.#{stage}.stdout}"})
-}
+  output for(stage <- stages, into: %{}, do: {stage, step(stage, :stdout)})
+end
 ```
 
-The result of the file's last expression is the workflow document.
-Any Elixir feature is fair game for *building* the data; it is
-`${...}` expression strings, not Elixir values, that represent
-runtime references between steps.
+For lower-level generation, an `.exs` file may also return a workflow
+map directly. Atom keys and atom values (other than `nil`, `true`, and
+`false`) are normalized to strings before validation.
 
 ## Validating a workflow
 

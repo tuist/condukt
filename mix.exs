@@ -161,6 +161,7 @@ defmodule Condukt.MixProject do
           Condukt.Workflows,
           Condukt.Workflows.Compiler,
           Condukt.Workflows.Document,
+          Condukt.Workflows.DSL,
           Condukt.Workflows.Executor,
           Condukt.Workflows.Expr,
           Condukt.Workflows.Schema,

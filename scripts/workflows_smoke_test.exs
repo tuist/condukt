@@ -18,19 +18,15 @@ path = Path.join(dir, "hello.exs")
 File.mkdir_p!(dir)
 
 File.write!(path, """
-%{
-  name: "hello",
-  inputs: %{
-    name: %{type: :string}
-  },
-  steps: %{
-    greet: %{
-      kind: :cmd,
-      argv: ["echo", "Hello, ${inputs.name}"]
-    }
-  },
-  output: "${steps.greet.stdout}"
-}
+use Condukt.Workflows.DSL
+
+workflow "hello" do
+  input :name, :string
+
+  cmd :greet, ["echo", "Hello, \#{input(:name)}"]
+
+  output step(:greet, :stdout)
+end
 """)
 
 :ok = Condukt.Workflows.check(path)
