@@ -297,7 +297,7 @@ execution.
 
 ## Evaluating as a library
 
-Elixir callers can load HCL content once and run it multiple times:
+Elixir callers can pass HCL content directly:
 
 ```elixir
 workflow_source = """
@@ -320,10 +320,8 @@ workflow "release_notes" {
 }
 """
 
-{:ok, workflow} = Condukt.Workflows.load_hcl(workflow_source)
-
 {:ok, output} =
-  Condukt.Workflows.run(workflow, %{},
+  Condukt.Workflows.run(workflow_source, %{},
     model: "openai:gpt-4.1-mini",
     sandbox: {Condukt.Sandbox.Local, cwd: File.cwd!()}
   )
@@ -334,8 +332,9 @@ execution: `:model`, `:sandbox`, `:cwd`, `:tools`, `:secrets`,
 `:req_options`, and `:agent_options`. These options override the
 workflow's `runtime` block, so applications can keep portable workflow
 files while choosing the model, sandbox, and working directory at the
-library boundary. For one-shot evaluation, use
-`Condukt.Workflows.run_hcl/3`.
+library boundary. If the workflow lives in a file, read the file first
+and pass the content to `Condukt.Workflows.run/3`, or use
+`Condukt.Workflows.load/1` when you want a loaded document.
 
 ## Validating a workflow
 

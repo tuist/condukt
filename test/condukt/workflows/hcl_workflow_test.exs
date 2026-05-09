@@ -5,7 +5,7 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
 
   @moduletag :tmp_dir
 
-  describe "Workflows.run/3 with an .hcl path" do
+  describe "Workflows.load/1 with an .hcl path and Workflows.run/3" do
     test "loads and runs the workflow end to end", %{tmp_dir: dir} do
       path = Path.join(dir, "echo.hcl")
 
@@ -23,7 +23,8 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
       }
       """)
 
-      assert {:ok, "hello\n"} = Workflows.run(path, %{"msg" => "hello"})
+      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, "hello\n"} = Workflows.run(workflow, %{"msg" => "hello"})
     end
   end
 

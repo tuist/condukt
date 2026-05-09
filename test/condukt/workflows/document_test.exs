@@ -95,43 +95,6 @@ defmodule Condukt.Workflows.DocumentTest do
     end
   end
 
-  describe "from_hcl/2" do
-    test "validates an HCL source string without a file path" do
-      source = """
-      workflow "inline" {
-        cmd "a" {
-          argv = ["true"]
-        }
-      }
-      """
-
-      assert {:ok, %Document{name: "inline", path: nil}} = Document.from_hcl(source)
-    end
-
-    test "uses the optional path for diagnostics and document metadata" do
-      source = """
-      workflow "inline" {
-        cmd "a" {
-          argv = []
-        }
-      }
-      """
-
-      assert {:error, {:invalid_workflow, {:empty_list, [:workflow, "steps", "a", "argv"]}}} =
-               Document.from_hcl(source, path: "inline.hcl")
-
-      valid_source = """
-      workflow "inline" {
-        cmd "a" {
-          argv = ["true"]
-        }
-      }
-      """
-
-      assert {:ok, %Document{path: "inline.hcl"}} = Document.from_hcl(valid_source, path: "inline.hcl")
-    end
-  end
-
   describe "validate_inputs/2" do
     setup do
       doc = %Document{

@@ -30,7 +30,8 @@ defmodule Condukt.Engine.CLI do
   defp run_workflow(args) do
     with {:ok, opts, [path]} <- parse_options(args, input: :string),
          {:ok, inputs} <- decode_input(opts[:input]),
-         {:ok, result} <- Workflows.run(path, inputs) do
+         {:ok, workflow} <- Workflows.load(path),
+         {:ok, result} <- Workflows.run(workflow, inputs) do
       {:ok, format_result(result)}
     else
       {:ok, _opts, []} -> {:error, "Expected a workflow path"}

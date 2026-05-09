@@ -20,7 +20,8 @@ defmodule Mix.Tasks.Condukt.Run do
     case args do
       [path] ->
         with {:ok, inputs} <- decode_inputs(opts[:input]),
-             {:ok, result} <- Condukt.Workflows.run(path, inputs) do
+             {:ok, workflow} <- Condukt.Workflows.load(path),
+             {:ok, result} <- Condukt.Workflows.run(workflow, inputs) do
           IO.puts(format_result(result))
           :ok
         else

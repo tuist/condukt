@@ -6,10 +6,8 @@ defmodule Condukt.WorkflowsTest do
   @moduletag :tmp_dir
 
   describe "run/3" do
-    test "runs a workflow with a cmd step and returns the resolved output", %{tmp_dir: dir} do
-      path = Path.join(dir, "hello.hcl")
-
-      File.write!(path, """
+    test "runs an HCL source string with a cmd step and returns the resolved output" do
+      source = """
       workflow "hello" {
         input "name" {
           type = "string"
@@ -21,15 +19,13 @@ defmodule Condukt.WorkflowsTest do
 
         output = task.greet.stdout
       }
-      """)
+      """
 
-      assert {:ok, "hello, world\n"} = Workflows.run(path, %{"name" => "world"})
+      assert {:ok, "hello, world\n"} = Workflows.run(source, %{"name" => "world"})
     end
 
-    test "branches with when:", %{tmp_dir: dir} do
-      path = Path.join(dir, "branch.hcl")
-
-      File.write!(path, """
+    test "branches with when:" do
+      source = """
       workflow "branch" {
         input "mode" {
           type = "string"
@@ -50,38 +46,36 @@ defmodule Condukt.WorkflowsTest do
           denied = task.deny.stdout
         }
       }
-      """)
+      """
 
       assert {:ok, %{"approved" => "approved\n", "denied" => nil}} =
-               Workflows.run(path, %{"mode" => "approve"})
+               Workflows.run(source, %{"mode" => "approve"})
 
       assert {:ok, %{"approved" => nil, "denied" => "rejected\n"}} =
-               Workflows.run(path, %{"mode" => "deny"})
+               Workflows.run(source, %{"mode" => "deny"})
     end
 
-    test "errors when the file is missing" do
+    test "load/1 errors when the file is missing" do
       assert {:error, {:read_failed, "/nope/missing.hcl", :enoent}} =
-               Workflows.run("/nope/missing.hcl", %{})
+               Workflows.load("/nope/missing.hcl")
     end
 
-    test "errors when the document fails validation", %{tmp_dir: dir} do
-      path = Path.join(dir, "invalid.hcl")
-
-      File.write!(path, """
+    test "errors when the document fails validation" do
+      source = """
       workflow "invalid" {
         cmd "a" {
           argv = []
         }
       }
-      """)
+      """
 
       assert {:error, {:invalid_workflow, {:empty_list, [:workflow, "steps", "a", "argv"]}}} =
-               Workflows.run(path, %{})
+               Workflows.run(source, %{})
     end
   end
 
-  describe "load_hcl/2, run_hcl/3, and run/3 with a loaded document" do
-    test "loads an HCL string once and evaluates it as a library" do
+  describe "run/3 with HCL source and loaded documents" do
+    test "runs an HCL string as a library" do
       source = """
       workflow "hello" {
         input "name" {
@@ -96,26 +90,7 @@ defmodule Condukt.WorkflowsTest do
       }
       """
 
-      assert {:ok, workflow} = Workflows.load_hcl(source)
-      assert {:ok, "hi world\n"} = Workflows.run(workflow, %{"name" => "world"})
-    end
-
-    test "runs an HCL string in one call" do
-      source = """
-      workflow "hello" {
-        input "name" {
-          type = "string"
-        }
-
-        cmd "greet" {
-          argv = ["echo", "hi ${input.name}"]
-        }
-
-        output = task.greet.stdout
-      }
-      """
-
-      assert {:ok, "hi world\n"} = Workflows.run_hcl(source, %{"name" => "world"})
+      assert {:ok, "hi world\n"} = Workflows.run(source, %{"name" => "world"})
     end
 
     test "reports compile errors for HCL strings with the optional diagnostic path" do
@@ -128,7 +103,7 @@ defmodule Condukt.WorkflowsTest do
       """
 
       assert {:error, {:compile_failed, "inline.hcl", {:missing_needs, "a", ["missing"]}}} =
-               Workflows.load_hcl(source, path: "inline.hcl")
+               Workflows.run(source, %{}, path: "inline.hcl")
     end
 
     test "library options override workflow runtime defaults", %{tmp_dir: dir} do

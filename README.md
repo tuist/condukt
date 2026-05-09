@@ -80,7 +80,7 @@ condukt run hello.hcl --input '{"name":"world"}'
 
 The release assets include Linux x64, macOS x64, macOS arm64, and Windows x64 builds.
 
-Library callers can also load and evaluate HCL content directly:
+Library callers can also evaluate HCL content directly:
 
 ```elixir
 source = """
@@ -97,8 +97,7 @@ workflow "hello" {
 }
 """
 
-{:ok, workflow} = Condukt.Workflows.load_hcl(source)
-{:ok, output} = Condukt.Workflows.run(workflow, %{"name" => "world"})
+{:ok, output} = Condukt.Workflows.run(source, %{"name" => "world"})
 ```
 
 See the [Workflows](https://hexdocs.pm/condukt/workflows.html) guide for creating, running, and

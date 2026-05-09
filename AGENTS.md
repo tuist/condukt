@@ -90,13 +90,11 @@
   normalizes an `.hcl` file. `Condukt.Workflows.Compiler.compile/1` reads,
   evaluates, and normalizes an `.exs` file. Validation and execution are
   pure Elixir; there is no native NIF for workflows.
-- `Condukt.Workflows.load/1` loads and validates a workflow file without
-  executing it. `Condukt.Workflows.run/3` accepts either a path or a loaded
-  `Condukt.Workflows.Document`, so library callers can load once and evaluate
-  many times with different inputs or runtime options.
-- `Condukt.Workflows.load_hcl/2` loads and validates an HCL source string
-  without touching the filesystem. `Condukt.Workflows.run_hcl/3` is the
-  one-shot form. Both accept optional `:path` metadata for diagnostics.
+- `Condukt.Workflows.run/3` accepts either an HCL source string or a loaded
+  `Condukt.Workflows.Document`. A binary passed to `run/3` is HCL content,
+  not a file path. File callers should `File.read!/1` first or use
+  `Condukt.Workflows.load/1` to load and validate a file without executing
+  it. `run/3` accepts optional `:path` metadata for HCL string diagnostics.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the validator together.
 - CLI verbs are `condukt run PATH [--input JSON]` and

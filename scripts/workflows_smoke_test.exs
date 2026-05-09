@@ -33,7 +33,7 @@ workflow "hello" {
 
 :ok = Condukt.Workflows.check(path)
 {:ok, workflow} = Condukt.Workflows.load(path)
-{:ok, output} = Condukt.Workflows.run(path, %{"name" => "world"})
+{:ok, output} = Condukt.Workflows.run(workflow, %{"name" => "world"})
 
 IO.puts("workflow: #{path}")
 IO.puts("loaded: #{workflow.name}")

@@ -5,7 +5,7 @@ defmodule Condukt.Workflows.ExsWorkflowTest do
 
   @moduletag :tmp_dir
 
-  describe "Workflows.run/3 with a .exs path" do
+  describe "Workflows.load/1 with a .exs path and Workflows.run/3" do
     test "evaluates and runs the workflow end to end", %{tmp_dir: dir} do
       path = Path.join(dir, "echo.exs")
 
@@ -19,7 +19,8 @@ defmodule Condukt.Workflows.ExsWorkflowTest do
       }
       """)
 
-      assert {:ok, "hello\n"} = Workflows.run(path, %{"msg" => "hello"})
+      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, "hello\n"} = Workflows.run(workflow, %{"msg" => "hello"})
     end
   end
 
