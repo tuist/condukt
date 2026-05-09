@@ -5,7 +5,9 @@ defmodule Condukt.Workflows do
   A workflow is a typed document describing a directed acyclic
   graph of steps. The document is the source of truth: it is what the
   engine executes, what `check/1` validates, and what editors and
-  agents read and write. The basename of the file is the run name.
+  agents read and write. HCL workflows use the `workflow "name"` label
+  as the run name. `.exs` workflow maps may set `name`; if they omit it,
+  Condukt falls back to the file basename.
 
   HCL and `.exs` files are normalized to a workflow document at load
   time and arrive here as already-decoded maps via `run_document/3`.

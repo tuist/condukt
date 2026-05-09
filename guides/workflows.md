@@ -5,9 +5,9 @@ and Condukt normalizes it to the canonical workflow document that the
 engine executes, `condukt check` validates, and visual tools can read.
 
 There is no project layout, manifest, or lockfile. To run a workflow
-you point the engine at a `.hcl` or `.exs` path. The basename of the
-file is the run name unless the normalized document carries an explicit
-`name`.
+you point the engine at a `.hcl` or `.exs` path. HCL workflows use the
+`workflow "name"` label as the run name. `.exs` workflow maps may set
+`name`; if they omit it, Condukt falls back to the file basename.
 
 ## A first workflow
 
@@ -105,7 +105,7 @@ The normalized document shape is:
 
 ```jsonc
 {
-  "name": "review-pr",            // optional, defaults to file basename
+  "name": "review-pr",            // from workflow label or optional .exs field
   "inputs": { ... },              // typed input map
   "runtime": { ... },             // optional runtime defaults
   "steps": { "<id>": { ... } },   // map of step id to step definition

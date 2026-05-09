@@ -4,8 +4,8 @@ defmodule Condukt.Workflows.Document do
 
   A document is the canonical form executed by `Condukt.Workflows`. It
   is produced by loading an HCL workflow or `.exs` workflow generator,
-  validating the normalized map, and filling in defaults like `name`
-  from the file basename.
+  validating the normalized map, and filling in a default `name` from
+  the file basename when the normalized document omits one.
   """
 
   alias Condukt.Workflows.{Compiler, HCLCompiler, Validator}

@@ -58,8 +58,10 @@
 - A workflow is a typed DAG of steps authored in HCL and normalized to the
   canonical workflow document internally. That document is what the engine
   executes, what `condukt check` validates, and what editors and agents can
-  read and write. There is no project layout, manifest, or lockfile; the
-  basename of the file is the run name.
+  read and write. There is no project layout, manifest, or lockfile. HCL
+  workflows use the `workflow "name"` label as the run name. `.exs`
+  workflow maps may set `name`; if they omit it, Condukt falls back to the
+  file basename.
 - Workflows are validated by `Condukt.Workflows.Validator`. Top level:
   `name`, `inputs`, optional `runtime`, `steps`, `output`.
   `runtime` carries workflow-level defaults such as `model`, `sandbox`
