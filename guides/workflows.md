@@ -333,8 +333,16 @@ execution: `:model`, `:sandbox`, `:cwd`, `:tools`, `:secrets`,
 workflow's `runtime` block, so applications can keep portable workflow
 files while choosing the model, sandbox, and working directory at the
 library boundary. If the workflow lives in a file, read the file first
-and pass the content to `Condukt.Workflows.run/3`, or use
-`Condukt.Workflows.load/1` when you want a loaded document.
+and pass the content to `Condukt.Workflows.run/3`:
+
+```elixir
+workflow_source = File.read!("release_notes.hcl")
+{:ok, output} = Condukt.Workflows.run(workflow_source, %{})
+```
+
+`Condukt.Workflows.load/1` is only needed when you explicitly want a
+reusable `Condukt.Workflows.Document`, or when loading a `.exs` workflow
+generator file.
 
 ## Validating a workflow
 

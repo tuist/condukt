@@ -92,9 +92,11 @@
   pure Elixir; there is no native NIF for workflows.
 - `Condukt.Workflows.run/3` accepts either an HCL source string or a loaded
   `Condukt.Workflows.Document`. A binary passed to `run/3` is HCL content,
-  not a file path. File callers should `File.read!/1` first or use
-  `Condukt.Workflows.load/1` to load and validate a file without executing
-  it. `run/3` accepts optional `:path` metadata for HCL string diagnostics.
+  not a file path. HCL file callers should `File.read!/1` first and pass
+  the content to `run/3`. `Condukt.Workflows.load/1` is for callers that
+  explicitly need a reusable `Condukt.Workflows.Document` or need to load a
+  `.exs` workflow generator file. `run/3` accepts optional `:path` metadata
+  for HCL string diagnostics.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the validator together.
 - CLI verbs are `condukt run PATH [--input JSON]` and

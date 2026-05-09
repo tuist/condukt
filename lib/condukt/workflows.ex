@@ -29,9 +29,8 @@ defmodule Condukt.Workflows do
   on normalization, validation, or execution failure.
 
   When passing a string, the string is interpreted as HCL source
-  content, not as a file path. Callers that keep workflows on disk can
-  `File.read!/1` the file first, or use `load/1` and pass the returned
-  `Condukt.Workflows.Document`.
+  content, not as a file path. Callers that keep HCL workflows on disk
+  should read the file first and pass the content to this function.
   """
   @spec run(hcl_source(), input(), opts()) :: {:ok, result()} | {:error, term()}
   @spec run(Document.t(), input(), opts()) :: {:ok, result()} | {:error, term()}
@@ -41,7 +40,7 @@ defmodule Condukt.Workflows do
     load_opts = Keyword.take(opts, [:path])
     runtime_opts = Keyword.delete(opts, :path)
 
-    with {:ok, doc} <- document_from_hcl(source, load_opts) do
+    with {:ok, doc} <- document_from_source(source, load_opts) do
       run(doc, inputs, runtime_opts)
     end
   end
@@ -54,6 +53,11 @@ defmodule Condukt.Workflows do
 
   @doc """
   Loads and validates a workflow file without executing it.
+
+  Use this when you explicitly need a reusable
+  `Condukt.Workflows.Document`, or when loading `.exs` workflow
+  generator files. HCL callers that only need to execute a workflow can
+  read the file content and pass it directly to `run/3`.
   """
   @spec load(Path.t()) :: {:ok, Document.t()} | {:error, term()}
   def load(path) when is_binary(path), do: Document.load(path)
@@ -71,7 +75,7 @@ defmodule Condukt.Workflows do
     end
   end
 
-  defp document_from_hcl(source, opts) do
+  defp document_from_source(source, opts) do
     path = Keyword.get(opts, :path)
     diagnostic_path = path || "<hcl>"
 

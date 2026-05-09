@@ -5,8 +5,8 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
 
   @moduletag :tmp_dir
 
-  describe "Workflows.load/1 with an .hcl path and Workflows.run/3" do
-    test "loads and runs the workflow end to end", %{tmp_dir: dir} do
+  describe "Workflows.run/3 with .hcl file content" do
+    test "runs HCL content read from a file end to end", %{tmp_dir: dir} do
       path = Path.join(dir, "echo.hcl")
 
       File.write!(path, """
@@ -23,8 +23,8 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
       }
       """)
 
-      assert {:ok, workflow} = Workflows.load(path)
-      assert {:ok, "hello\n"} = Workflows.run(workflow, %{"msg" => "hello"})
+      source = File.read!(path)
+      assert {:ok, "hello\n"} = Workflows.run(source, %{"msg" => "hello"}, path: path)
     end
   end
 
