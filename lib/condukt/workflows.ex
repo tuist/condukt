@@ -15,11 +15,6 @@ defmodule Condukt.Workflows do
 
   alias Condukt.Workflows.{Document, Executor, HCLCompiler}
 
-  @type input :: map()
-  @type result :: term()
-  @type opts :: keyword()
-  @type hcl_source :: String.t()
-
   @doc """
   Runs an HCL workflow source string or an already-loaded workflow
   document.
@@ -32,8 +27,6 @@ defmodule Condukt.Workflows do
   content, not as a file path. Callers that keep HCL workflows on disk
   should read the file first and pass the content to this function.
   """
-  @spec run(hcl_source(), input(), opts()) :: {:ok, result()} | {:error, term()}
-  @spec run(Document.t(), input(), opts()) :: {:ok, result()} | {:error, term()}
   def run(source_or_doc, inputs \\ %{}, opts \\ [])
 
   def run(source, inputs, opts) when is_binary(source) and is_map(inputs) do
@@ -59,7 +52,6 @@ defmodule Condukt.Workflows do
   generator files. HCL callers that only need to execute a workflow can
   read the file content and pass it directly to `run/3`.
   """
-  @spec load(Path.t()) :: {:ok, Document.t()} | {:error, term()}
   def load(path) when is_binary(path), do: Document.load(path)
 
   @doc """
@@ -67,7 +59,6 @@ defmodule Condukt.Workflows do
   the workflow document shape before execution. Used by callers that
   produce documents in memory.
   """
-  @spec run_document(map(), input(), opts()) :: {:ok, result()} | {:error, term()}
   def run_document(decoded, inputs \\ %{}, opts \\ []) when is_map(decoded) do
     with {:ok, doc} <- Document.from_map(decoded, Keyword.take(opts, [:path])),
          {:ok, %{output: output}} <- Executor.run(doc, inputs, opts) do
@@ -92,7 +83,6 @@ defmodule Condukt.Workflows do
   read, normalize, or match the workflow document shape. Accepts
   `.hcl` and `.exs` paths.
   """
-  @spec check(Path.t()) :: :ok | {:error, term()}
   def check(path) when is_binary(path) do
     case Document.load(path) do
       {:ok, _doc} -> :ok

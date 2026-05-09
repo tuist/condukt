@@ -21,25 +21,6 @@ defmodule Condukt.Workflows.Document do
     steps: %{}
   ]
 
-  @type input_spec :: %{required(String.t()) => term()}
-  @type step :: %{required(String.t()) => term()}
-
-  @type t :: %__MODULE__{
-          name: String.t(),
-          path: nil | Path.t(),
-          inputs: %{optional(String.t()) => input_spec()},
-          runtime: map(),
-          steps: %{optional(String.t()) => step()},
-          output: term(),
-          raw: map()
-        }
-
-  @type load_error ::
-          {:read_failed, Path.t(), File.posix()}
-          | {:compile_failed, Path.t(), term()}
-          | {:unsupported_extension, Path.t()}
-          | {:invalid_workflow, term()}
-
   @doc """
   Loads, normalizes, and validates a workflow document at `path`.
 
@@ -47,7 +28,6 @@ defmodule Condukt.Workflows.Document do
   the file parses and matches the workflow document shape. Otherwise
   returns a tagged error suitable for reporting from the CLI.
   """
-  @spec load(Path.t()) :: {:ok, t()} | {:error, load_error()}
   def load(path) when is_binary(path) do
     with {:ok, decoded} <- decode_file(path),
          {:ok, validated} <- validate(decoded) do
@@ -59,7 +39,6 @@ defmodule Condukt.Workflows.Document do
   Validates a decoded document map without touching the filesystem.
   Useful when the document is produced in memory.
   """
-  @spec from_map(map(), keyword()) :: {:ok, t()} | {:error, load_error()}
   def from_map(decoded, opts \\ []) when is_map(decoded) do
     path = Keyword.get(opts, :path)
 
@@ -73,7 +52,6 @@ defmodule Condukt.Workflows.Document do
   Validates a user-provided inputs map against the document's declared
   inputs. Inputs without a `default` are required.
   """
-  @spec validate_inputs(t(), map()) :: {:ok, map()} | {:error, JSV.ValidationError.t()}
   def validate_inputs(%__MODULE__{inputs: declared}, provided) when is_map(declared) and is_map(provided) do
     schema = inputs_schema(declared)
     root = JSV.build!(schema)

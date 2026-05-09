@@ -21,22 +21,6 @@ defmodule Condukt.Workflows.Executor do
   alias Condukt.Sandbox
   alias Condukt.Workflows.{Document, Expr, ToolRegistry}
 
-  @type state :: %{
-          doc: Document.t(),
-          inputs: map(),
-          steps: map(),
-          skipped: MapSet.t(),
-          opts: keyword(),
-          bindings: map()
-        }
-
-  @type result :: %{
-          output: term(),
-          steps: map(),
-          skipped: [String.t()]
-        }
-
-  @spec run(Document.t(), map(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(%Document{} = doc, inputs \\ %{}, opts \\ []) when is_map(inputs) do
     with {:ok, normalized_inputs} <- Document.validate_inputs(doc, inputs),
          {:ok, order} <- topological_sort(doc.steps),
@@ -176,7 +160,6 @@ defmodule Condukt.Workflows.Executor do
     end
   end
 
-  @spec run_step(String.t(), map(), state()) :: {:ok, state()} | {:error, term()}
   defp run_step(step_id, step, state) do
     deps = Map.get(step, "needs", []) ++ Expr.references(step)
 

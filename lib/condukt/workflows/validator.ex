@@ -20,7 +20,6 @@ defmodule Condukt.Workflows.Validator do
     "map" => @common_step_keys ++ ~w(over as do concurrency)
   }
 
-  @spec validate(map()) :: {:ok, map()} | {:error, term()}
   def validate(%{} = doc) do
     with :ok <- known_keys(doc, @top_level_keys, [:workflow]),
          :ok <- optional_string(doc, "name", [:workflow, "name"]),

@@ -31,7 +31,6 @@ defmodule Condukt.Workflows.Compiler do
   Returns `{:ok, decoded_map}` where the map is ready for workflow
   document validation.
   """
-  @spec compile(Path.t()) :: {:ok, map()} | {:error, term()}
   def compile(path) when is_binary(path) do
     with {:ok, source} <- read(path) do
       compile_string(source, path)
@@ -42,7 +41,6 @@ defmodule Condukt.Workflows.Compiler do
   Evaluates an `.exs` workflow source string. `path` is used only for
   error reporting.
   """
-  @spec compile_string(String.t(), Path.t()) :: {:ok, map()} | {:error, term()}
   def compile_string(source, path) do
     case eval(source, path) do
       {:ok, value} when is_map(value) -> {:ok, normalize(value)}
@@ -60,11 +58,36 @@ defmodule Condukt.Workflows.Compiler do
   end
 
   defp eval(source, path) do
-    {value, _bindings} = Code.eval_string(source, [], file: path)
-    {:ok, value}
-  rescue
-    error -> {:error, {:eval_failed, path, Exception.message(error)}}
+    parent = self()
+    token = make_ref()
+
+    {pid, monitor_ref} =
+      spawn_monitor(fn ->
+        {value, _bindings} = Code.eval_string(source, [], file: path)
+        send(parent, {token, {:ok, value}})
+
+        receive do
+          {^token, :ack} -> :ok
+        after
+          5_000 -> :ok
+        end
+      end)
+
+    receive do
+      {^token, result} ->
+        send(pid, {token, :ack})
+        Process.demonitor(monitor_ref, [:flush])
+        result
+
+      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
+        {:error, {:eval_failed, path, format_eval_failure(reason)}}
+    end
   end
+
+  defp format_eval_failure({%{__exception__: true} = exception, _stacktrace}), do: Exception.message(exception)
+
+  defp format_eval_failure(%{__exception__: true} = exception), do: Exception.message(exception)
+  defp format_eval_failure(reason), do: inspect(reason)
 
   defp normalize_keyword(list, path) do
     if Keyword.keyword?(list) do

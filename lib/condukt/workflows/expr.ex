@@ -19,21 +19,6 @@ defmodule Condukt.Workflows.Expr do
   coerced to a string and concatenated with the surrounding text.
   """
 
-  @type context :: %{
-          optional(:inputs) => map(),
-          optional(:steps) => map(),
-          optional(:bindings) => map()
-        }
-
-  @type ast ::
-          {:literal, term()}
-          | {:identifier, String.t()}
-          | {:member, ast(), String.t()}
-          | {:index, ast(), ast()}
-          | {:not, ast()}
-          | {:bin_op, atom(), ast(), ast()}
-          | {:format, ast(), :json | :csv}
-
   ## Public API
 
   @doc """
@@ -41,13 +26,11 @@ defmodule Condukt.Workflows.Expr do
   value: strings, lists, and maps. Non-string leaves are passed
   through unchanged.
   """
-  @spec interpolate_value(term(), context()) :: {:ok, term()} | {:error, term()}
   def interpolate_value(value, ctx) when is_binary(value), do: interpolate(value, ctx)
   def interpolate_value(values, ctx) when is_list(values), do: list_map(values, &interpolate_value(&1, ctx))
   def interpolate_value(%_{} = struct, _ctx), do: {:ok, struct}
 
-  def interpolate_value(map, ctx) when is_map(map),
-    do: map_values(map, &interpolate_value(&1, ctx))
+  def interpolate_value(map, ctx) when is_map(map), do: map_values(map, &interpolate_value(&1, ctx))
 
   def interpolate_value(other, _ctx), do: {:ok, other}
 
@@ -55,7 +38,6 @@ defmodule Condukt.Workflows.Expr do
   Interpolates a single string. See module docs for the
   type-preservation rule.
   """
-  @spec interpolate(String.t(), context()) :: {:ok, term()} | {:error, term()}
   def interpolate(string, ctx) when is_binary(string) do
     case scan(string, []) do
       {:ok, segments} -> emit(segments, ctx)
@@ -67,7 +49,6 @@ defmodule Condukt.Workflows.Expr do
   Parses an expression string (the contents of a `${...}` placeholder)
   into an AST.
   """
-  @spec parse(String.t()) :: {:ok, ast()} | {:error, term()}
   def parse(expression_text) when is_binary(expression_text) do
     with {:ok, tokens} <- tokenize(expression_text, []),
          {:ok, ast, []} <- parse_top_level(tokens) do
@@ -79,7 +60,6 @@ defmodule Condukt.Workflows.Expr do
   end
 
   @doc "Evaluates an expression AST against `ctx`."
-  @spec eval(ast(), context()) :: {:ok, term()} | {:error, term()}
   def eval(ast, ctx), do: do_eval(ast, ctx)
 
   @doc """
@@ -87,7 +67,6 @@ defmodule Condukt.Workflows.Expr do
   placeholder anywhere in `value`. Used by the executor to infer
   implicit dependencies between steps.
   """
-  @spec references(term()) :: [String.t()]
   def references(value) do
     value
     |> collect_strings([])
@@ -123,27 +102,22 @@ defmodule Condukt.Workflows.Expr do
     end
   end
 
-  defp find_closing_brace("{" <> rest, acc, depth),
-    do: find_closing_brace(rest, acc <> "{", depth + 1)
+  defp find_closing_brace("{" <> rest, acc, depth), do: find_closing_brace(rest, acc <> "{", depth + 1)
 
   defp find_closing_brace("}" <> rest, acc, 0), do: {:ok, acc, rest}
 
-  defp find_closing_brace("}" <> rest, acc, depth),
-    do: find_closing_brace(rest, acc <> "}", depth - 1)
+  defp find_closing_brace("}" <> rest, acc, depth), do: find_closing_brace(rest, acc <> "}", depth - 1)
 
   defp find_closing_brace(<<c::utf8, rest::binary>>, acc, depth),
     do: find_closing_brace(rest, acc <> <<c::utf8>>, depth)
 
   defp skip_string("", _acc), do: {:error, :unterminated_string}
 
-  defp skip_string("\\" <> <<c::utf8, rest::binary>>, acc),
-    do: skip_string(rest, [acc, "\\", <<c::utf8>>])
+  defp skip_string("\\" <> <<c::utf8, rest::binary>>, acc), do: skip_string(rest, [acc, "\\", <<c::utf8>>])
 
-  defp skip_string("\"" <> rest, acc),
-    do: {:ok, IO.iodata_to_binary([acc, "\""]), rest}
+  defp skip_string("\"" <> rest, acc), do: {:ok, IO.iodata_to_binary([acc, "\""]), rest}
 
-  defp skip_string(<<c::utf8, rest::binary>>, acc),
-    do: skip_string(rest, [acc, <<c::utf8>>])
+  defp skip_string(<<c::utf8, rest::binary>>, acc), do: skip_string(rest, [acc, <<c::utf8>>])
 
   defp emit([{:text, text}], _ctx), do: {:ok, text}
 
@@ -181,8 +155,7 @@ defmodule Condukt.Workflows.Expr do
 
   defp tokenize("", acc), do: {:ok, Enum.reverse([{:eof} | acc])}
 
-  defp tokenize(<<c::utf8, rest::binary>>, acc) when c in [?\s, ?\t, ?\n, ?\r],
-    do: tokenize(rest, acc)
+  defp tokenize(<<c::utf8, rest::binary>>, acc) when c in [?\s, ?\t, ?\n, ?\r], do: tokenize(rest, acc)
 
   defp tokenize("==" <> rest, acc), do: tokenize(rest, [{:op, :eq} | acc])
   defp tokenize("!=" <> rest, acc), do: tokenize(rest, [{:op, :neq} | acc])
@@ -215,8 +188,7 @@ defmodule Condukt.Workflows.Expr do
     end
   end
 
-  defp tokenize(<<c, _::binary>> = source, acc)
-       when c in ?a..?z or c in ?A..?Z or c == ?_ do
+  defp tokenize(<<c, _::binary>> = source, acc) when c in ?a..?z or c in ?A..?Z or c == ?_ do
     {ident, rest} = parse_ident_chars(source, [])
 
     token =
@@ -230,37 +202,27 @@ defmodule Condukt.Workflows.Expr do
     tokenize(rest, [token | acc])
   end
 
-  defp tokenize(<<c::utf8, _::binary>>, _acc),
-    do: {:error, {:unexpected_char, <<c::utf8>>}}
+  defp tokenize(<<c::utf8, _::binary>>, _acc), do: {:error, {:unexpected_char, <<c::utf8>>}}
 
   defp parse_string_literal("", _acc), do: {:error, :unterminated_string}
 
-  defp parse_string_literal("\"" <> rest, acc),
-    do: {:ok, IO.iodata_to_binary(Enum.reverse(acc)), rest}
+  defp parse_string_literal("\"" <> rest, acc), do: {:ok, IO.iodata_to_binary(Enum.reverse(acc)), rest}
 
-  defp parse_string_literal("\\\"" <> rest, acc),
-    do: parse_string_literal(rest, ["\"" | acc])
+  defp parse_string_literal("\\\"" <> rest, acc), do: parse_string_literal(rest, ["\"" | acc])
 
-  defp parse_string_literal("\\\\" <> rest, acc),
-    do: parse_string_literal(rest, ["\\" | acc])
+  defp parse_string_literal("\\\\" <> rest, acc), do: parse_string_literal(rest, ["\\" | acc])
 
-  defp parse_string_literal("\\n" <> rest, acc),
-    do: parse_string_literal(rest, ["\n" | acc])
+  defp parse_string_literal("\\n" <> rest, acc), do: parse_string_literal(rest, ["\n" | acc])
 
-  defp parse_string_literal("\\t" <> rest, acc),
-    do: parse_string_literal(rest, ["\t" | acc])
+  defp parse_string_literal("\\t" <> rest, acc), do: parse_string_literal(rest, ["\t" | acc])
 
-  defp parse_string_literal("\\r" <> rest, acc),
-    do: parse_string_literal(rest, ["\r" | acc])
+  defp parse_string_literal("\\r" <> rest, acc), do: parse_string_literal(rest, ["\r" | acc])
 
-  defp parse_string_literal(<<c::utf8, rest::binary>>, acc),
-    do: parse_string_literal(rest, [<<c::utf8>> | acc])
+  defp parse_string_literal(<<c::utf8, rest::binary>>, acc), do: parse_string_literal(rest, [<<c::utf8>> | acc])
 
-  defp parse_number_literal(<<c, rest::binary>>, acc) when c in ?0..?9,
-    do: parse_number_literal(rest, [c | acc])
+  defp parse_number_literal(<<c, rest::binary>>, acc) when c in ?0..?9, do: parse_number_literal(rest, [c | acc])
 
-  defp parse_number_literal(<<?., c, rest::binary>>, acc) when c in ?0..?9,
-    do: parse_number_float(rest, [c, ?. | acc])
+  defp parse_number_literal(<<?., c, rest::binary>>, acc) when c in ?0..?9, do: parse_number_float(rest, [c, ?. | acc])
 
   defp parse_number_literal(rest, acc) do
     case Integer.parse(IO.iodata_to_binary(Enum.reverse(acc))) do
@@ -269,8 +231,7 @@ defmodule Condukt.Workflows.Expr do
     end
   end
 
-  defp parse_number_float(<<c, rest::binary>>, acc) when c in ?0..?9,
-    do: parse_number_float(rest, [c | acc])
+  defp parse_number_float(<<c, rest::binary>>, acc) when c in ?0..?9, do: parse_number_float(rest, [c | acc])
 
   defp parse_number_float(rest, acc) do
     case Float.parse(IO.iodata_to_binary(Enum.reverse(acc))) do
@@ -279,12 +240,10 @@ defmodule Condukt.Workflows.Expr do
     end
   end
 
-  defp parse_ident_chars(<<c, rest::binary>>, acc)
-       when c in ?a..?z or c in ?A..?Z or c == ?_ or c in ?0..?9,
-       do: parse_ident_chars(rest, [c | acc])
+  defp parse_ident_chars(<<c, rest::binary>>, acc) when c in ?a..?z or c in ?A..?Z or c == ?_ or c in ?0..?9,
+    do: parse_ident_chars(rest, [c | acc])
 
-  defp parse_ident_chars(rest, acc),
-    do: {IO.iodata_to_binary(Enum.reverse(acc)), rest}
+  defp parse_ident_chars(rest, acc), do: {IO.iodata_to_binary(Enum.reverse(acc)), rest}
 
   ## Parser: recursive descent.
 
@@ -349,8 +308,7 @@ defmodule Condukt.Workflows.Expr do
     with {:ok, ast, rest} <- parse_primary(tokens), do: parse_postfix_tail(ast, rest)
   end
 
-  defp parse_postfix_tail(ast, [{:dot}, {:ident, name} | rest]),
-    do: parse_postfix_tail({:member, ast, name}, rest)
+  defp parse_postfix_tail(ast, [{:dot}, {:ident, name} | rest]), do: parse_postfix_tail({:member, ast, name}, rest)
 
   defp parse_postfix_tail(ast, [{:lbracket} | rest]) do
     with {:ok, index, rest2} <- parse_or(rest) do
@@ -486,7 +444,7 @@ defmodule Condukt.Workflows.Expr do
     with {:ok, v} <- do_eval(ast, ctx) do
       case v do
         list when is_list(list) ->
-          {:ok, list |> Enum.map(&csv_field/1) |> Enum.join(",")}
+          {:ok, list |> Enum.map_join(",", &csv_field/1)}
 
         _ ->
           {:error, {:csv_requires_list, v}}
@@ -582,11 +540,9 @@ defmodule Condukt.Workflows.Expr do
 
   defp collect_strings(s, acc) when is_binary(s), do: [s | acc]
 
-  defp collect_strings(list, acc) when is_list(list),
-    do: Enum.reduce(list, acc, &collect_strings/2)
+  defp collect_strings(list, acc) when is_list(list), do: Enum.reduce(list, acc, &collect_strings/2)
 
-  defp collect_strings(map, acc) when is_map(map),
-    do: Enum.reduce(map, acc, fn {_k, v}, a -> collect_strings(v, a) end)
+  defp collect_strings(map, acc) when is_map(map), do: Enum.reduce(map, acc, fn {_k, v}, a -> collect_strings(v, a) end)
 
   defp collect_strings(_, acc), do: acc
 

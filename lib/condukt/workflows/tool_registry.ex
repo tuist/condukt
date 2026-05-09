@@ -21,20 +21,15 @@ defmodule Condukt.Workflows.ToolRegistry do
     "Bash" => Condukt.Tools.Bash
   }
 
-  @type tool_spec :: module() | {module(), keyword()}
-
   @doc """
   Returns the built-in tool registry as a map of id to tool spec.
   """
-  @spec builtin() :: %{String.t() => tool_spec()}
   def builtin, do: @builtin
 
   @doc """
   Resolves `id` against the merged registry. `extra` overrides the
   built-ins.
   """
-  @spec resolve(String.t(), %{String.t() => tool_spec()}) ::
-          {:ok, tool_spec()} | {:error, {:unknown_tool, String.t()}}
   def resolve(id, extra \\ %{}) when is_binary(id) do
     merged = Map.merge(@builtin, extra)
 

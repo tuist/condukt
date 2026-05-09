@@ -40,7 +40,6 @@ defmodule Condukt.Workflows.HCLCompiler do
   @doc """
   Reads, parses, and normalizes an HCL workflow file.
   """
-  @spec compile(Path.t()) :: {:ok, map()} | {:error, term()}
   def compile(path) when is_binary(path) do
     with {:ok, source} <- read(path) do
       compile_string(source, path)
@@ -51,7 +50,6 @@ defmodule Condukt.Workflows.HCLCompiler do
   Normalizes HCL source into a workflow document. `path` is used only for
   diagnostics.
   """
-  @spec compile_string(String.t(), Path.t()) :: {:ok, map()} | {:error, term()}
   def compile_string(source, path \\ "<hcl>") when is_binary(source) do
     with {:ok, ast} <- parse(source, path),
          {:ok, doc} <- compile_body(ast, path),
