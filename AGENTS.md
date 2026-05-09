@@ -94,6 +94,9 @@
   executing it. `Condukt.Workflows.run/3` accepts either a path or a loaded
   `Condukt.Workflows.Document`, so library callers can load once and evaluate
   many times with different inputs or runtime options.
+- `Condukt.Workflows.load_hcl/2` loads and validates an HCL source string
+  without touching the filesystem. `Condukt.Workflows.run_hcl/3` is the
+  one-shot form. Both accept optional `:path` metadata for diagnostics.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
   the Elixir side. Add new kinds there and in the validator together.
 - CLI verbs are `condukt run PATH [--input JSON]` and

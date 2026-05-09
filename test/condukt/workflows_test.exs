@@ -80,11 +80,9 @@ defmodule Condukt.WorkflowsTest do
     end
   end
 
-  describe "load/1 and run/3 with a loaded document" do
-    test "loads once and evaluates as a library", %{tmp_dir: dir} do
-      path = Path.join(dir, "hello.hcl")
-
-      File.write!(path, """
+  describe "load_hcl/2, run_hcl/3, and run/3 with a loaded document" do
+    test "loads an HCL string once and evaluates it as a library" do
+      source = """
       workflow "hello" {
         input "name" {
           type = "string"
@@ -96,10 +94,41 @@ defmodule Condukt.WorkflowsTest do
 
         output = task.greet.stdout
       }
-      """)
+      """
 
-      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, workflow} = Workflows.load_hcl(source)
       assert {:ok, "hi world\n"} = Workflows.run(workflow, %{"name" => "world"})
+    end
+
+    test "runs an HCL string in one call" do
+      source = """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
+
+        cmd "greet" {
+          argv = ["echo", "hi ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """
+
+      assert {:ok, "hi world\n"} = Workflows.run_hcl(source, %{"name" => "world"})
+    end
+
+    test "reports compile errors for HCL strings with the optional diagnostic path" do
+      source = """
+      workflow "hello" {
+        cmd "a" {
+          argv = ["echo", task.missing.stdout]
+        }
+      }
+      """
+
+      assert {:error, {:compile_failed, "inline.hcl", {:missing_needs, "a", ["missing"]}}} =
+               Workflows.load_hcl(source, path: "inline.hcl")
     end
 
     test "library options override workflow runtime defaults", %{tmp_dir: dir} do

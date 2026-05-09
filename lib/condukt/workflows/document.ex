@@ -70,6 +70,23 @@ defmodule Condukt.Workflows.Document do
   end
 
   @doc """
+  Loads, normalizes, and validates an HCL workflow source string.
+
+  The optional `:path` is used for parser diagnostics and stored on the
+  returned document. When omitted, the document path is `nil`.
+  """
+  @spec from_hcl(String.t(), keyword()) :: {:ok, t()} | {:error, load_error()}
+  def from_hcl(source, opts \\ []) when is_binary(source) do
+    path = Keyword.get(opts, :path)
+    diagnostic_path = path || "<hcl>"
+
+    with {:ok, decoded} <- compile_hcl_source(source, diagnostic_path),
+         {:ok, validated} <- validate(decoded) do
+      {:ok, build(path, validated)}
+    end
+  end
+
+  @doc """
   Validates a user-provided inputs map against the document's declared
   inputs. Inputs without a `default` are required.
   """
@@ -88,11 +105,7 @@ defmodule Condukt.Workflows.Document do
   defp decode_file(path) do
     case Path.extname(path) do
       ".hcl" ->
-        case HCLCompiler.compile(path) do
-          {:ok, decoded} -> {:ok, decoded}
-          {:error, {:read_failed, _path, _reason} = reason} -> {:error, reason}
-          {:error, reason} -> {:error, {:compile_failed, path, reason}}
-        end
+        compile_hcl_file(path)
 
       ".exs" ->
         case Compiler.compile(path) do
@@ -103,6 +116,21 @@ defmodule Condukt.Workflows.Document do
 
       _ ->
         {:error, {:unsupported_extension, path}}
+    end
+  end
+
+  defp compile_hcl_file(path) do
+    case HCLCompiler.compile(path) do
+      {:ok, decoded} -> {:ok, decoded}
+      {:error, {:read_failed, _path, _reason} = reason} -> {:error, reason}
+      {:error, reason} -> {:error, {:compile_failed, path, reason}}
+    end
+  end
+
+  defp compile_hcl_source(source, diagnostic_path) do
+    case HCLCompiler.compile_string(source, diagnostic_path) do
+      {:ok, decoded} -> {:ok, decoded}
+      {:error, reason} -> {:error, {:compile_failed, diagnostic_path, reason}}
     end
   end
 

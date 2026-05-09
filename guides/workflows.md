@@ -297,10 +297,30 @@ execution.
 
 ## Evaluating as a library
 
-Elixir callers can load a workflow once and run it multiple times:
+Elixir callers can load HCL content once and run it multiple times:
 
 ```elixir
-{:ok, workflow} = Condukt.Workflows.load("release_notes.hcl")
+workflow_source = """
+workflow "release_notes" {
+  runtime {
+    model = "openai:gpt-4.1-mini"
+    sandbox = "local"
+  }
+
+  cmd "version" {
+    argv = ["sh", "-c", "git describe --tags --always"]
+  }
+
+  agent "draft" {
+    needs = ["version"]
+    input = "Draft release notes for ${task.version.stdout}"
+  }
+
+  output = task.draft.output
+}
+"""
+
+{:ok, workflow} = Condukt.Workflows.load_hcl(workflow_source)
 
 {:ok, output} =
   Condukt.Workflows.run(workflow, %{},
@@ -314,7 +334,8 @@ execution: `:model`, `:sandbox`, `:cwd`, `:tools`, `:secrets`,
 `:req_options`, and `:agent_options`. These options override the
 workflow's `runtime` block, so applications can keep portable workflow
 files while choosing the model, sandbox, and working directory at the
-library boundary.
+library boundary. For one-shot evaluation, use
+`Condukt.Workflows.run_hcl/3`.
 
 ## Validating a workflow
 
@@ -332,8 +353,7 @@ fix, repeat.
 
 These are planned but not yet implemented:
 
-- Versioned helper packages for generating repeated HCL or JSON
-  fragments.
+- Versioned helper packages for generating repeated HCL fragments.
 - Optional `--lock` mode that records SHA-256 per fetched URL and
   verifies on later runs.
 - Triggers (`condukt.trigger.webhook`, `condukt.schedule.cron`) and
