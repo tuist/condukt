@@ -114,7 +114,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [condukt_bashkit, condukt_workflows]
+        crate: [condukt_bashkit]
         nif: ["2.16", "2.17"]
         job:
           - { target: aarch64-apple-darwin,        os: macos-14 }
@@ -216,19 +216,11 @@ jobs:
           pattern: "*condukt_bashkit-*.tar.gz"
           merge-multiple: true
 
-      - name: Download workflows NIF artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: nif-artifacts/condukt_workflows
-          pattern: "*condukt_workflows-*.tar.gz"
-          merge-multiple: true
-
       - name: Generate checksum files
         run: |
           set -euo pipefail
           find nif-artifacts -maxdepth 2 -type f -name '*.tar.gz' -print | sort
           elixir scripts/generate_nif_checksum.exs nif-artifacts/condukt_bashkit Elixir.Condukt.Bashkit.NIF
-          elixir scripts/generate_nif_checksum.exs nif-artifacts/condukt_workflows Elixir.Condukt.Workflows.NIF
 
       - name: Update version and changelog
         run: |
@@ -253,8 +245,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add mix.exs CHANGELOG.md \
-            "checksum-Elixir.Condukt.Bashkit.NIF.exs" \
-            "checksum-Elixir.Condukt.Workflows.NIF.exs"
+            "checksum-Elixir.Condukt.Bashkit.NIF.exs"
           git commit -m "[Release] Condukt ${{ needs.plan.outputs.next_version }}"
           git tag -a "${{ needs.plan.outputs.next_version }}" -m "${{ needs.plan.outputs.next_version }}"
 
@@ -270,7 +261,6 @@ jobs:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
           MIX_ENV: dev
           CONDUKT_BASHKIT_DISABLE: "1"
-          CONDUKT_WORKFLOWS_DISABLE: "1"
         run: |
           set -euo pipefail
           : "${HEX_API_KEY:?HEX_API_KEY secret is required}"
@@ -382,7 +372,6 @@ jobs:
         env:
           BURRITO_TARGET: ${{ matrix.burrito_target }}
           CONDUKT_BASHKIT_PRECOMPILED: "1"
-          CONDUKT_WORKFLOWS_PRECOMPILED: "1"
           TARGET_ARCH_VALUE: ${{ matrix.target_arch }}
           TARGET_VENDOR_VALUE: ${{ matrix.target_vendor }}
           TARGET_OS_VALUE: ${{ matrix.target_os }}

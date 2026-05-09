@@ -2,73 +2,182 @@ defmodule Condukt.WorkflowsTest do
   use ExUnit.Case, async: true
 
   alias Condukt.Workflows
-  alias Condukt.Workflows.{Lockfile, Manifest, Project, Resolver, Store, Workflow}
 
-  test "public facade exposes the pinned entry points" do
-    assert Code.ensure_loaded?(Workflows)
-    assert function_exported?(Workflows, :load_project, 1)
-    assert function_exported?(Workflows, :list, 1)
-    assert function_exported?(Workflows, :get, 2)
-    assert function_exported?(Workflows, :run, 3)
-    assert function_exported?(Workflows, :serve, 1)
-    assert function_exported?(Workflows, :serve, 2)
+  @moduletag :tmp_dir
+
+  describe "run/3" do
+    test "runs an HCL source string with a cmd step and returns the resolved output" do
+      source = """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
+
+        cmd "greet" {
+          argv = ["echo", "hello, ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """
+
+      assert {:ok, "hello, world\n"} = Workflows.run(source, %{"name" => "world"})
+    end
+
+    test "branches with when:" do
+      source = """
+      workflow "branch" {
+        input "mode" {
+          type = "string"
+        }
+
+        cmd "approve" {
+          argv = ["echo", "approved"]
+          when = input.mode == "approve"
+        }
+
+        cmd "deny" {
+          argv = ["echo", "rejected"]
+          when = input.mode != "approve"
+        }
+
+        output = {
+          approved = task.approve.stdout,
+          denied = task.deny.stdout
+        }
+      }
+      """
+
+      assert {:ok, %{"approved" => "approved\n", "denied" => nil}} =
+               Workflows.run(source, %{"mode" => "approve"})
+
+      assert {:ok, %{"approved" => nil, "denied" => "rejected\n"}} =
+               Workflows.run(source, %{"mode" => "deny"})
+    end
+
+    test "load/1 errors when the file is missing" do
+      assert {:error, {:read_failed, "/nope/missing.hcl", :enoent}} =
+               Workflows.load("/nope/missing.hcl")
+    end
+
+    test "errors when the document fails validation" do
+      source = """
+      workflow "invalid" {
+        cmd "a" {
+          argv = []
+        }
+      }
+      """
+
+      assert {:error, {:invalid_workflow, {:empty_list, [:workflow, "steps", "a", "argv"]}}} =
+               Workflows.run(source, %{})
+    end
   end
 
-  test "project struct has the documented fields" do
-    assert %Project{} = project = struct(Project)
+  describe "run/3 with HCL source and loaded documents" do
+    test "runs an HCL string as a library" do
+      source = """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
 
-    assert Map.take(Map.from_struct(project), [:root, :manifest, :lockfile, :workflows, :warnings]) == %{
-             root: nil,
-             manifest: nil,
-             lockfile: nil,
-             workflows: %{},
-             warnings: []
-           }
+        cmd "greet" {
+          argv = ["echo", "hi ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """
+
+      assert {:ok, "hi world\n"} = Workflows.run(source, %{"name" => "world"})
+    end
+
+    test "reports compile errors for HCL strings with the optional diagnostic path" do
+      source = """
+      workflow "hello" {
+        cmd "a" {
+          argv = ["echo", task.missing.stdout]
+        }
+      }
+      """
+
+      assert {:error, {:compile_failed, "inline.hcl", {:missing_needs, "a", ["missing"]}}} =
+               Workflows.run(source, %{}, path: "inline.hcl")
+    end
+
+    test "library options override workflow runtime defaults", %{tmp_dir: dir} do
+      configured_cwd = Path.join(dir, "configured")
+      override_cwd = Path.join(dir, "override")
+      File.mkdir_p!(configured_cwd)
+      File.mkdir_p!(override_cwd)
+
+      path = Path.join(dir, "runtime.hcl")
+
+      File.write!(path, """
+      workflow "runtime" {
+        runtime {
+          sandbox = "local"
+          cwd = "#{configured_cwd}"
+        }
+
+        cmd "pwd" {
+          argv = ["pwd"]
+        }
+
+        output = task.pwd.stdout
+      }
+      """)
+
+      assert {:ok, workflow} = Workflows.load(path)
+      assert {:ok, output} = Workflows.run(workflow, %{}, cwd: override_cwd)
+      assert String.trim(output) == override_cwd
+    end
   end
 
-  test "workflow struct has the documented fields" do
-    assert %Workflow{} = workflow = struct(Workflow)
+  describe "run_document/3" do
+    test "runs an in-memory document" do
+      decoded = %{
+        "steps" => %{"hi" => %{"kind" => "cmd", "argv" => ["echo", "hi"]}},
+        "output" => "${steps.hi.stdout}"
+      }
 
-    assert Map.take(Map.from_struct(workflow), [
-             :name,
-             :source_path,
-             :agent,
-             :tools,
-             :sandbox,
-             :triggers,
-             :inputs_schema,
-             :system_prompt,
-             :model
-           ]) == %{
-             name: nil,
-             source_path: nil,
-             agent: nil,
-             tools: [],
-             sandbox: nil,
-             triggers: [],
-             inputs_schema: nil,
-             system_prompt: nil,
-             model: nil
-           }
+      assert {:ok, "hi\n"} = Workflows.run_document(decoded)
+    end
+
+    test "rejects an invalid document" do
+      decoded = %{"steps" => %{"x" => %{"kind" => "magic"}}}
+      assert {:error, {:invalid_workflow, _}} = Workflows.run_document(decoded)
+    end
   end
 
-  test "manifest and lockfile structs have the documented fields" do
-    assert %Manifest{} = manifest = struct(Manifest)
-    assert %Lockfile{} = lockfile = struct(Lockfile)
+  describe "check/1" do
+    test "returns :ok for a valid file", %{tmp_dir: dir} do
+      path = Path.join(dir, "ok.hcl")
 
-    assert Map.take(Map.from_struct(manifest), [:name, :version, :exports, :requires_native, :signatures]) == %{
-             name: nil,
-             version: nil,
-             exports: [],
-             requires_native: [],
-             signatures: %{}
-           }
+      File.write!(path, """
+      workflow "ok" {
+        cmd "a" {
+          argv = ["true"]
+        }
+      }
+      """)
 
-    assert Map.take(Map.from_struct(lockfile), [:version, :packages]) == %{version: 1, packages: %{}}
-  end
+      assert :ok = Workflows.check(path)
+    end
 
-  test "store and resolver requirement structs have the documented fields" do
-    assert %Store{root: "/tmp/store"} = Store.new("/tmp/store")
-    assert %Resolver.Requirement{url: "github.com/tuist/tools", version_spec: "^1.0.0"}
+    test "returns an error when validation rejects the document", %{tmp_dir: dir} do
+      path = Path.join(dir, "bad.hcl")
+
+      File.write!(path, """
+      workflow "bad" {
+        cmd "a" {
+          argv = []
+        }
+      }
+      """)
+
+      assert {:error, {:invalid_workflow, _}} = Workflows.check(path)
+    end
   end
 end

@@ -55,31 +55,71 @@
 
 ## Workflows
 
-- `Condukt.Workflows` loads Starlark workflow declarations from a project root,
-  resolves package loads through a TOML lockfile, materializes Elixir structs,
-  and starts caller-owned runtimes for manual, cron, and webhook-triggered
-  runs.
-- The workflows NIF lives in `native/condukt_workflows/`. It evaluates
-  Starlark, runs PubGrub resolution, and computes deterministic SHA-256 tree
-  hashes. It must return materialized Elixir maps and lists, not pointers into
-  Starlark heap state.
-- Workflow package identity uses versioned load strings:
-  `<host>/<path>@<version>`. Non-relative loads require a version. Relative
-  loads stay inside the workspace.
-- Shared packages are stored under `~/.condukt/store/<sha256>/`. Store writes
-  must verify `Condukt.Workflows.NIF.sha256_tree/1` before the atomic rename.
-- `condukt.lock` is TOML, committed, deterministic, and offline-first. Use
-  `mix condukt.workflows.lock` to update it.
-- Workflow runtimes are not auto-started by `Condukt.Application`. Callers use
-  `Condukt.Workflows.serve/2` or `mix condukt.workflows.serve`.
-- `mix condukt.workflows.check` is the validation gate for workflow graphs,
-  tool refs, sandbox kinds, and model identifiers.
+- A workflow is a typed DAG of steps authored in HCL and normalized to the
+  canonical workflow document internally. That document is what the engine
+  executes, what `condukt check` validates, and what editors and agents can
+  read and write. There is no project layout, manifest, or lockfile. HCL
+  workflows use the `workflow "name"` label as the run name. `.exs`
+  workflow maps may set `name`; if they omit it, Condukt falls back to the
+  file basename.
+- Workflows are validated by `Condukt.Workflows.Validator`. Top level:
+  `name`, `inputs`, optional `runtime`, `steps`, `output`.
+  `runtime` carries workflow-level defaults such as `model`, `sandbox`
+  (`local`/`virtual`), and `cwd`; library options passed to
+  `Condukt.Workflows.run/3` override those defaults. Each step has a `kind`
+  (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional `when`,
+  and kind-specific fields. Agent steps may omit `model` when a workflow or
+  caller model is configured. HCL requires every `task.X` reference inside
+  a step to be declared in that step's `needs` list so the DAG is visible
+  in the authored file.
+- The expression sub-language is intentionally small: `${...}`
+  interpolation with member access, indexing, comparisons, boolean ops,
+  literals, unary minus, and `:json`/`:csv` formatters. No arbitrary
+  function calls or arithmetic beyond comparisons. Anything more
+  substantial belongs in a `cmd`/`agent`/`tool` step. Member access on
+  `null` returns `null` so a reference to a skipped step degrades
+  gracefully; missing keys against a real value still error.
+- The authored workflow format is `.hcl`. Use `workflow "name" { ... }`
+  with `input`, `cmd`, `http`, `agent`, `tool`, and `map` blocks. HCL
+  references use `input.name` and `task.step.output`; the compiler rewrites
+  them to canonical `${inputs.name}` and `${steps.step.output}` strings.
+  Direct map-returning `.exs` files remain supported only for lower-level
+  generation. Atom keys and atom values are normalized to strings by
+  `Condukt.Workflows.Compiler` before document validation.
+- `Condukt.Workflows.HCLCompiler.compile/1` reads, parses with `hxl`, and
+  normalizes an `.hcl` file. `Condukt.Workflows.Compiler.compile/1` reads,
+  evaluates, and normalizes an `.exs` file. Validation and execution are
+  pure Elixir; there is no native NIF for workflows.
+- `Condukt.Workflows.run/3` accepts either an HCL source string or a loaded
+  `Condukt.Workflows.Document`. A binary passed to `run/3` is HCL content,
+  not a file path. HCL file callers should `File.read!/1` first and pass
+  the content to `run/3`. `Condukt.Workflows.load/1` is for callers that
+  explicitly need a reusable `Condukt.Workflows.Document` or need to load a
+  `.exs` workflow generator file. `run/3` accepts optional `:path` metadata
+  for HCL string diagnostics.
+- `Condukt.Workflows.Executor` is the dispatch point for step kinds on
+  the Elixir side. Add new kinds there and in the validator together.
+- CLI verbs are `condukt run PATH [--input JSON]` and
+  `condukt check PATH`, mirrored by `mix condukt.run` and
+  `mix condukt.check`. `run` and `check` accept `.hcl` and `.exs`
+  paths; both are loaded and normalized internally. JSON and YAML are not
+  supported workflow file formats.
+- Tool ids on `tool` steps are resolved through
+  `Condukt.Workflows.ToolRegistry`. Built-ins
+  (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of
+  the box; callers extend the registry by passing
+  `tools: %{id => spec}` as an option to `Condukt.Workflows.run/3`.
+- Future slices will add: remote `load(...)` of versioned helpers from
+  GitHub URLs (with normalized documents cached locally), an opt-in `--lock`
+  integrity file, triggers (`condukt.trigger.webhook`,
+  `condukt.schedule.cron`) declared at the top of the workflow document,
+  and a visual editor that reads and writes the same document shape.
 
 ## Engine releases
 
 - Condukt has two distribution modes. Library mode is the Hex package consumed
   by Elixir applications. Engine mode is the standalone `condukt` executable
-  built with Burrito for running workflow projects without a local Elixir or
+  built with Burrito for running workflow files without a local Elixir or
   Erlang install.
 - Burrito targets are configured in `mix.exs` under `releases/0`. Release CI
   builds Linux x64, macOS x64, macOS arm64, and Windows x64 archives and
@@ -93,9 +133,9 @@
 - Burrito requires Zig, XZ, and 7z at build time. Zig is pinned in `mise.toml`.
   Erlang is pinned to an exact OTP 28 patch version so Burrito can fetch the
   matching precompiled ERTS from the Beam Machine cache.
-- Engine builds set `CONDUKT_BASHKIT_PRECOMPILED=1` and
-  `CONDUKT_WORKFLOWS_PRECOMPILED=1` so the release bytecode points at the
-  target-specific NIF artifacts already attached to the GitHub release.
+- Engine builds set `CONDUKT_BASHKIT_PRECOMPILED=1` so the release
+  bytecode points at the target-specific NIF artifacts already
+  attached to the GitHub release.
 
 ## Workflow
 

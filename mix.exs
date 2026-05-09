@@ -46,6 +46,7 @@ defmodule Condukt.MixProject do
 
       # Workflows manifests, lockfiles, triggers, and optional HTTP serving
       {:toml, "~> 0.7.0"},
+      {:hxl, "~> 0.2.1"},
       {:crontab, "~> 1.1"},
       {:plug, "~> 1.16", optional: true},
       {:bandit, "~> 1.5", optional: true},
@@ -88,7 +89,6 @@ defmodule Condukt.MixProject do
         "guides/tools.md": [title: "Tools"],
         "guides/subagents.md": [title: "Sub-agents"],
         "guides/workflows.md": [title: "Workflows"],
-        "guides/workflow_starlark_api.md": [title: "Workflow Starlark API"],
         "guides/sandbox.md": [title: "Sandbox"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
@@ -113,8 +113,7 @@ defmodule Condukt.MixProject do
           "guides/subagents.md"
         ],
         Workflows: [
-          "guides/workflows.md",
-          "guides/workflow_starlark_api.md"
+          "guides/workflows.md"
         ],
         Guides: [
           "guides/sandbox.md",
@@ -163,24 +162,13 @@ defmodule Condukt.MixProject do
         ],
         Workflows: [
           Condukt.Workflows,
-          Condukt.Workflows.AgentShim,
-          Condukt.Workflows.Project,
-          Condukt.Workflows.Workflow,
-          Condukt.Workflows.Manifest,
-          Condukt.Workflows.Lockfile,
-          Condukt.Workflows.Store,
-          Condukt.Workflows.Resolver,
-          Condukt.Workflows.Resolver.Requirement,
-          Condukt.Workflows.Fetcher,
-          Condukt.Workflows.Fetcher.Git,
-          Condukt.Workflows.Eval,
-          Condukt.Workflows.Error,
-          Condukt.Workflows.ToolRegistry,
-          Condukt.Workflows.Runtime,
-          Condukt.Workflows.Runtime.Worker,
-          Condukt.Workflows.Runtime.Cron,
-          Condukt.Workflows.Runtime.WebhookListener,
-          Condukt.Workflows.Runtime.WebhookRouter
+          Condukt.Workflows.Compiler,
+          Condukt.Workflows.Document,
+          Condukt.Workflows.Executor,
+          Condukt.Workflows.Expr,
+          Condukt.Workflows.HCLCompiler,
+          Condukt.Workflows.Validator,
+          Condukt.Workflows.ToolRegistry
         ],
         Sandbox: [
           Condukt.Sandbox,
@@ -225,7 +213,7 @@ defmodule Condukt.MixProject do
         "GitHub" => @source_url
       },
       files:
-        ~w(lib guides native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs native/condukt_workflows/Cargo.toml native/condukt_workflows/Cargo.lock native/condukt_workflows/src native/condukt_workflows/rust-toolchain.toml native/condukt_workflows/README.md checksum-Elixir.Condukt.Workflows.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
+        ~w(lib priv guides native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
     ]
   end
 

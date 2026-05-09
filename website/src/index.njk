@@ -12,7 +12,7 @@ description: A framework for building AI agents in Elixir, with OTP-native primi
     <p class="lede">
       {{ site.name }} treats agents as first-class OTP processes: supervised,
       observable, and built for production. Embed it as a library, or install
-      the standalone engine to run workflow projects without a local Elixir
+      the standalone engine to run workflow files without a local Elixir
       toolchain.
     </p>
     <div class="cta-row">
@@ -60,8 +60,9 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="m8 8 4 4-4 4"/></svg>
         </span>
         <h3>Workflow engine</h3>
-        <p>A Burrito-built <code>condukt</code> executable runs Starlark
-        workflow projects on Linux, macOS, and Windows through mise.</p>
+        <p>A Burrito-built <code>condukt</code> executable runs HCL, JSON,
+        YAML, and <code>.exs</code> workflow files on Linux, macOS, and
+        Windows through mise.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
@@ -108,7 +109,7 @@ end{% endhighlight %}</div>
         <p>Use mise when you want the standalone workflow runner with Erlang
         and Condukt bundled into one executable.</p>
         <div class="code-block">{% highlight "bash" %}mise use -g github:tuist/condukt
-condukt workflows check --root .{% endhighlight %}</div>
+condukt check hello.hcl{% endhighlight %}</div>
       </article>
     </div>
 

@@ -20,8 +20,9 @@ defmodule Condukt.Engine.CLITest do
         assert CLI.main(["help"]) == 0
       end)
 
-    assert output =~ "condukt workflows check"
-    assert output =~ "condukt workflows serve"
+    assert output =~ "condukt run"
+    assert output =~ "condukt check"
+    refute output =~ "condukt compile"
   end
 
   test "returns an error for an unknown command" do
@@ -31,5 +32,14 @@ defmodule Condukt.Engine.CLITest do
       end)
 
     assert output =~ "Unknown command: unknown"
+  end
+
+  test "does not expose a compile command" do
+    output =
+      capture_io(:stderr, fn ->
+        assert CLI.main(["compile", "hello.hcl"]) == 1
+      end)
+
+    assert output =~ "Unknown command: compile"
   end
 end
