@@ -123,8 +123,8 @@ A step has the shape:
 }
 ```
 
-The normalized document is internal. JSON and YAML are not supported
-workflow file formats.
+The normalized document is internal. There is no published workflow
+JSON Schema, and JSON and YAML are not supported workflow file formats.
 
 ## HCL syntax
 
