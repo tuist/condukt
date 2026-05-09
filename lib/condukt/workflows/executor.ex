@@ -261,7 +261,7 @@ defmodule Condukt.Workflows.Executor do
         sandbox_exec(sandbox, [program | args], cwd, env)
 
       _ ->
-        host_exec(program, args, cwd || File.cwd!(), env)
+        exec_with_local_sandbox([program | args], cwd || File.cwd!(), env)
     end
   end
 
@@ -277,25 +277,13 @@ defmodule Condukt.Workflows.Executor do
     end
   end
 
-  defp host_exec(program, args, cwd, env) do
-    case System.find_executable(program) do
-      nil -> {:error, {:not_found, program}}
-      _ -> run_host_command(program, args, cwd, env)
+  defp exec_with_local_sandbox(argv, cwd, env) do
+    with {:ok, sandbox} <- Sandbox.resolve({Condukt.Sandbox.Local, cwd: cwd}) do
+      output = sandbox_exec(sandbox, argv, nil, env)
+      Sandbox.shutdown(sandbox)
+      output
     end
   end
-
-  defp run_host_command(program, args, cwd, env) do
-    {output, exit_code} = MuonTrap.cmd(program, Enum.map(args, &to_string/1), host_exec_opts(cwd, env))
-    {:ok, output, exit_code}
-  end
-
-  defp host_exec_opts(cwd, env) do
-    [cd: cwd, stderr_to_stdout: true, parallelism: false]
-    |> maybe_put(:env, empty_to_nil(env))
-  end
-
-  defp empty_to_nil([]), do: nil
-  defp empty_to_nil(value), do: value
 
   defp shell_join(argv), do: Enum.map_join(argv, " ", &shell_escape/1)
 

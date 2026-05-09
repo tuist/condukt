@@ -114,7 +114,7 @@ defmodule Condukt.Workflows.ExecutorTest do
           "output" => "${steps.second.stdout}"
         })
 
-      assert {:ok, %{output: "one\n\n"}} = Executor.run(doc)
+      assert {:ok, %{output: "one\n"}} = Executor.run(doc)
     end
 
     test "rejects an unknown dependency" do
