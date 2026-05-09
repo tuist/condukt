@@ -7,41 +7,50 @@ defmodule Condukt.WorkflowsTest do
 
   describe "run/3" do
     test "runs a workflow with a cmd step and returns the resolved output", %{tmp_dir: dir} do
-      path = Path.join(dir, "hello.json")
+      path = Path.join(dir, "hello.hcl")
 
-      File.write!(path, ~s({
-        "inputs": {"name": {"type": "string"}},
-        "steps": {
-          "greet": {"kind": "cmd", "argv": ["echo", "hello, ${inputs.name}"]}
-        },
-        "output": "${steps.greet.stdout}"
-      }))
+      File.write!(path, """
+      workflow "hello" {
+        input "name" {
+          type = "string"
+        }
+
+        cmd "greet" {
+          argv = ["echo", "hello, ${input.name}"]
+        }
+
+        output = task.greet.stdout
+      }
+      """)
 
       assert {:ok, "hello, world\n"} = Workflows.run(path, %{"name" => "world"})
     end
 
     test "branches with when:", %{tmp_dir: dir} do
-      path = Path.join(dir, "branch.json")
+      path = Path.join(dir, "branch.hcl")
 
-      File.write!(path, ~s({
-        "inputs": {"mode": {"type": "string"}},
-        "steps": {
-          "approve": {
-            "kind": "cmd",
-            "argv": ["echo", "approved"],
-            "when": "${inputs.mode == \\"approve\\"}"
-          },
-          "deny": {
-            "kind": "cmd",
-            "argv": ["echo", "rejected"],
-            "when": "${inputs.mode != \\"approve\\"}"
-          }
-        },
-        "output": {
-          "approved": "${steps.approve.stdout}",
-          "denied": "${steps.deny.stdout}"
+      File.write!(path, """
+      workflow "branch" {
+        input "mode" {
+          type = "string"
         }
-      }))
+
+        cmd "approve" {
+          argv = ["echo", "approved"]
+          when = input.mode == "approve"
+        }
+
+        cmd "deny" {
+          argv = ["echo", "rejected"]
+          when = input.mode != "approve"
+        }
+
+        output = {
+          approved = task.approve.stdout,
+          denied = task.deny.stdout
+        }
+      }
+      """)
 
       assert {:ok, %{"approved" => "approved\n", "denied" => nil}} =
                Workflows.run(path, %{"mode" => "approve"})
@@ -51,21 +60,22 @@ defmodule Condukt.WorkflowsTest do
     end
 
     test "errors when the file is missing" do
-      assert {:error, {:read_failed, "/nope/missing.json", :enoent}} =
-               Workflows.run("/nope/missing.json", %{})
+      assert {:error, {:read_failed, "/nope/missing.hcl", :enoent}} =
+               Workflows.run("/nope/missing.hcl", %{})
     end
 
-    test "errors when the JSON is malformed", %{tmp_dir: dir} do
-      path = Path.join(dir, "bad.json")
-      File.write!(path, "{ not json")
-      assert {:error, {:decode_failed, ^path, _reason}} = Workflows.run(path, %{})
-    end
+    test "errors when the document fails validation", %{tmp_dir: dir} do
+      path = Path.join(dir, "invalid.hcl")
 
-    test "errors when the document fails schema validation", %{tmp_dir: dir} do
-      path = Path.join(dir, "invalid.json")
-      File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))
+      File.write!(path, """
+      workflow "invalid" {
+        cmd "a" {
+          argv = []
+        }
+      }
+      """)
 
-      assert {:error, {:invalid_workflow, %JSV.ValidationError{}}} =
+      assert {:error, {:invalid_workflow, {:empty_list, [:workflow, "steps", "a", "argv"]}}} =
                Workflows.run(path, %{})
     end
   end
@@ -139,14 +149,30 @@ defmodule Condukt.WorkflowsTest do
 
   describe "check/1" do
     test "returns :ok for a valid file", %{tmp_dir: dir} do
-      path = Path.join(dir, "ok.json")
-      File.write!(path, ~s({"steps": {"a": {"kind": "cmd", "argv": ["true"]}}}))
+      path = Path.join(dir, "ok.hcl")
+
+      File.write!(path, """
+      workflow "ok" {
+        cmd "a" {
+          argv = ["true"]
+        }
+      }
+      """)
+
       assert :ok = Workflows.check(path)
     end
 
-    test "returns an error when the schema rejects the document", %{tmp_dir: dir} do
-      path = Path.join(dir, "bad.json")
-      File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))
+    test "returns an error when validation rejects the document", %{tmp_dir: dir} do
+      path = Path.join(dir, "bad.hcl")
+
+      File.write!(path, """
+      workflow "bad" {
+        cmd "a" {
+          argv = []
+        }
+      }
+      """)
+
       assert {:error, {:invalid_workflow, _}} = Workflows.check(path)
     end
   end

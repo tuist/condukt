@@ -6,82 +6,7 @@ defmodule Condukt.Workflows.DocumentTest do
   @moduletag :tmp_dir
 
   describe "load/1" do
-    test "loads, decodes, and validates a JSON workflow", %{tmp_dir: dir} do
-      path = Path.join(dir, "hello.json")
-
-      File.write!(path, ~s({
-        "inputs": {"name": {"type": "string"}},
-        "steps": {
-          "greet": {"kind": "cmd", "argv": ["echo", "hi"]}
-        },
-        "output": "${steps.greet.stdout}"
-      }))
-
-      assert {:ok, %Document{} = doc} = Document.load(path)
-      assert doc.name == "hello"
-      assert doc.path == path
-      assert doc.inputs == %{"name" => %{"type" => "string"}}
-      assert is_map(doc.steps)
-      assert Map.has_key?(doc.steps, "greet")
-      assert doc.output == "${steps.greet.stdout}"
-    end
-
-    test "uses the explicit name when provided", %{tmp_dir: dir} do
-      path = Path.join(dir, "anon.json")
-
-      File.write!(path, ~s({
-        "name": "named-thing",
-        "steps": {"a": {"kind": "cmd", "argv": ["true"]}}
-      }))
-
-      assert {:ok, %Document{name: "named-thing"}} = Document.load(path)
-    end
-
-    test "returns :read_failed when the file is missing", %{tmp_dir: dir} do
-      path = Path.join(dir, "ghost.json")
-      assert {:error, {:read_failed, ^path, :enoent}} = Document.load(path)
-    end
-
-    test "returns :decode_failed for invalid JSON", %{tmp_dir: dir} do
-      path = Path.join(dir, "broken.json")
-      File.write!(path, "{not json")
-      assert {:error, {:decode_failed, ^path, _}} = Document.load(path)
-    end
-
-    test "returns :decode_failed for non-object JSON", %{tmp_dir: dir} do
-      path = Path.join(dir, "list.json")
-      File.write!(path, "[1, 2, 3]")
-      assert {:error, {:decode_failed, ^path, :not_an_object}} = Document.load(path)
-    end
-
-    test "returns :unsupported_extension for unknown suffixes", %{tmp_dir: dir} do
-      path = Path.join(dir, "weird.txt")
-      File.write!(path, "{}")
-      assert {:error, {:unsupported_extension, ^path}} = Document.load(path)
-    end
-
-    test "loads a YAML workflow document", %{tmp_dir: dir} do
-      path = Path.join(dir, "hello.yaml")
-
-      File.write!(path, """
-      inputs:
-        name:
-          type: string
-      steps:
-        greet:
-          kind: cmd
-          argv:
-            - echo
-            - "hi ${inputs.name}"
-      output: "${steps.greet.stdout}"
-      """)
-
-      assert {:ok, %Document{} = doc} = Document.load(path)
-      assert doc.name == "hello"
-      assert doc.steps["greet"]["kind"] == "cmd"
-    end
-
-    test "loads an HCL workflow document", %{tmp_dir: dir} do
+    test "loads and validates an HCL workflow", %{tmp_dir: dir} do
       path = Path.join(dir, "hello.hcl")
 
       File.write!(path, """
@@ -100,20 +25,68 @@ defmodule Condukt.Workflows.DocumentTest do
 
       assert {:ok, %Document{} = doc} = Document.load(path)
       assert doc.name == "hello"
-      assert doc.steps["greet"]["argv"] == ["echo", "hi ${inputs.name}"]
+      assert doc.path == path
+      assert doc.inputs == %{"name" => %{"type" => "string"}}
+      assert is_map(doc.steps)
+      assert Map.has_key?(doc.steps, "greet")
+      assert doc.output == "${steps.greet.stdout}"
     end
 
-    test "returns :invalid_workflow when the schema rejects the document", %{tmp_dir: dir} do
-      path = Path.join(dir, "bad.json")
-      File.write!(path, ~s({"steps": {"a": {"kind": "magic"}}}))
-      assert {:error, {:invalid_workflow, %JSV.ValidationError{}}} = Document.load(path)
+    test "uses the explicit name when provided", %{tmp_dir: dir} do
+      path = Path.join(dir, "anon.hcl")
+
+      File.write!(path, """
+      workflow "named-thing" {
+        cmd "a" {
+          argv = ["true"]
+        }
+      }
+      """)
+
+      assert {:ok, %Document{name: "named-thing"}} = Document.load(path)
+    end
+
+    test "returns :read_failed when the file is missing", %{tmp_dir: dir} do
+      path = Path.join(dir, "ghost.hcl")
+      assert {:error, {:read_failed, ^path, :enoent}} = Document.load(path)
+    end
+
+    test "returns :unsupported_extension for unknown suffixes", %{tmp_dir: dir} do
+      path = Path.join(dir, "weird.txt")
+      File.write!(path, "{}")
+      assert {:error, {:unsupported_extension, ^path}} = Document.load(path)
+    end
+
+    test "does not accept JSON or YAML workflow files", %{tmp_dir: dir} do
+      json = Path.join(dir, "hello.json")
+      yaml = Path.join(dir, "hello.yaml")
+      File.write!(json, "{}")
+      File.write!(yaml, "{}")
+
+      assert {:error, {:unsupported_extension, ^json}} = Document.load(json)
+      assert {:error, {:unsupported_extension, ^yaml}} = Document.load(yaml)
+    end
+
+    test "returns :invalid_workflow when the validator rejects the document", %{tmp_dir: dir} do
+      path = Path.join(dir, "bad.hcl")
+
+      File.write!(path, """
+      workflow "bad" {
+        cmd "a" {
+          argv = []
+        }
+      }
+      """)
+
+      assert {:error, {:invalid_workflow, {:empty_list, [:workflow, "steps", "a", "argv"]}}} =
+               Document.load(path)
     end
   end
 
   describe "from_map/2" do
     test "validates an in-memory document and uses the optional path for naming" do
       decoded = %{"steps" => %{"a" => %{"kind" => "cmd", "argv" => ["true"]}}}
-      assert {:ok, %Document{name: "scratch"}} = Document.from_map(decoded, path: "scratch.json")
+      assert {:ok, %Document{name: "scratch"}} = Document.from_map(decoded, path: "scratch.hcl")
     end
 
     test "falls back to a default name when no path is given" do

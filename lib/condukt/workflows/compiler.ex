@@ -10,7 +10,7 @@ defmodule Condukt.Workflows.Compiler do
 
   Atom keys and atom values (other than `nil`, `true`, `false`) are
   normalized to strings; the rest of the data must already match the
-  schema.
+  workflow document shape.
 
   Standard Elixir features (`def` inside a `defmodule`, anonymous
   functions, `for`, `if`, comprehensions, `Enum`, etc.) are available
@@ -28,8 +28,8 @@ defmodule Condukt.Workflows.Compiler do
   @doc """
   Reads, evaluates, and normalizes an `.exs` workflow file.
 
-  Returns `{:ok, decoded_map}` where the map is ready to be validated
-  against the workflow schema.
+  Returns `{:ok, decoded_map}` where the map is ready for workflow
+  document validation.
   """
   @spec compile(Path.t()) :: {:ok, map()} | {:error, term()}
   def compile(path) when is_binary(path) do

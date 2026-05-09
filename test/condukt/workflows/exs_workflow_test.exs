@@ -24,7 +24,7 @@ defmodule Condukt.Workflows.ExsWorkflowTest do
   end
 
   describe "Workflows.check/1 with a .exs path" do
-    test "returns :ok when the evaluated map matches the schema", %{tmp_dir: dir} do
+    test "returns :ok when the evaluated map is valid", %{tmp_dir: dir} do
       path = Path.join(dir, "ok.exs")
 
       File.write!(path, """
@@ -34,7 +34,7 @@ defmodule Condukt.Workflows.ExsWorkflowTest do
       assert :ok = Workflows.check(path)
     end
 
-    test "returns an error when the evaluated map fails the schema", %{tmp_dir: dir} do
+    test "returns an error when the evaluated map fails validation", %{tmp_dir: dir} do
       path = Path.join(dir, "bad.exs")
 
       File.write!(path, """

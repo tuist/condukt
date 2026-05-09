@@ -5,7 +5,7 @@ defmodule Condukt.Workflows.HCLCompiler do
   HCL is the human-authored workflow format. It keeps the DAG visible by
   requiring every `task.<id>` reference inside a step to also appear in
   that step's `needs` list. The normalized document is still the same
-  shape used by the executor, schema validator, and visual tooling.
+  shape used by the executor, validator, and visual tooling.
   """
 
   alias Condukt.Workflows.Expr

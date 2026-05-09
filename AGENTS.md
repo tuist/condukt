@@ -58,22 +58,18 @@
 - A workflow is a typed DAG of steps authored in HCL and normalized to the
   canonical workflow document internally. That document is what the engine
   executes, what `condukt check` validates, and what editors and agents can
-  read and write. YAML is accepted on input as a JSON superset and converted
-  at load time. There is no project layout, manifest, or lockfile; the
+  read and write. There is no project layout, manifest, or lockfile; the
   basename of the file is the run name.
-- The schema lives at `priv/schemas/condukt.workflow.schema.json` and
-  is referenced from workflow files via its raw GitHub URL,
-  `https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json`.
-  Top level: `name`, `inputs`, optional `runtime`, `steps`, `output`.
+- Workflows are validated by `Condukt.Workflows.Validator`. Top level:
+  `name`, `inputs`, optional `runtime`, `steps`, `output`.
   `runtime` carries workflow-level defaults such as `model`, `sandbox`
   (`local`/`virtual`), and `cwd`; library options passed to
   `Condukt.Workflows.run/3` override those defaults. Each step has a `kind`
   (`cmd`/`agent`/`http`/`tool`/`map`), optional `needs`, optional `when`,
   and kind-specific fields. Agent steps may omit `model` when a workflow or
-  caller model is configured. Implicit dependencies are inferred from
-  `${steps.X.*}` references in JSON, YAML, and `.exs`. HCL requires every
-  `task.X` reference inside a step to be declared in that step's `needs`
-  list so the DAG is visible in the authored file.
+  caller model is configured. HCL requires every `task.X` reference inside
+  a step to be declared in that step's `needs` list so the DAG is visible
+  in the authored file.
 - The expression sub-language is intentionally small: `${...}`
   interpolation with member access, indexing, comparisons, boolean ops,
   literals, unary minus, and `:json`/`:csv` formatters. No arbitrary
@@ -87,7 +83,7 @@
   them to canonical `${inputs.name}` and `${steps.step.output}` strings.
   Direct map-returning `.exs` files remain supported only for lower-level
   generation. Atom keys and atom values are normalized to strings by
-  `Condukt.Workflows.Compiler` before schema validation.
+  `Condukt.Workflows.Compiler` before document validation.
 - `Condukt.Workflows.HCLCompiler.compile/1` reads, parses with `hxl`, and
   normalizes an `.hcl` file. `Condukt.Workflows.Compiler.compile/1` reads,
   evaluates, and normalizes an `.exs` file. Validation and execution are
@@ -97,12 +93,12 @@
   `Condukt.Workflows.Document`, so library callers can load once and evaluate
   many times with different inputs or runtime options.
 - `Condukt.Workflows.Executor` is the dispatch point for step kinds on
-  the Elixir side. Add new kinds there and in the schema together.
+  the Elixir side. Add new kinds there and in the validator together.
 - CLI verbs are `condukt run PATH [--input JSON]` and
   `condukt check PATH`, mirrored by `mix condukt.run` and
-  `mix condukt.check`. `run` and `check` accept `.hcl`, `.json`,
-  `.yaml`, `.yml`, and `.exs` paths; `.hcl` and `.exs` are loaded and
-  normalized internally.
+  `mix condukt.check`. `run` and `check` accept `.hcl` and `.exs`
+  paths; both are loaded and normalized internally. JSON and YAML are not
+  supported workflow file formats.
 - Tool ids on `tool` steps are resolved through
   `Condukt.Workflows.ToolRegistry`. Built-ins
   (`Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`) are registered out of

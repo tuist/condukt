@@ -1,16 +1,16 @@
 defmodule Mix.Tasks.Condukt.Check do
+  @shortdoc "Validates a Condukt workflow file"
+
   @moduledoc """
   Validates a Condukt workflow file without executing it.
 
-      mix condukt.check path/to/workflow.json
+      mix condukt.check path/to/workflow.hcl
 
-  Validates the document against `condukt.workflow.schema.json` and
-  reports any problems. Exits with status 1 when validation fails.
+  Validates the workflow and reports any problems. Exits with status 1
+  when validation fails.
   """
 
   use Mix.Task
-
-  @shortdoc "Validates a Condukt workflow file"
 
   @impl Mix.Task
   def run(argv) do
@@ -28,10 +28,6 @@ defmodule Mix.Tasks.Condukt.Check do
     case Condukt.Workflows.check(path) do
       :ok ->
         Mix.shell().info("ok: #{path}")
-
-      {:error, {:invalid_workflow, %JSV.ValidationError{} = err}} ->
-        Mix.shell().error("invalid workflow: " <> Exception.message(err))
-        exit({:shutdown, 1})
 
       {:error, reason} ->
         Mix.shell().error("check failed: #{inspect(reason)}")

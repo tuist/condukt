@@ -28,7 +28,7 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
   end
 
   describe "Workflows.check/1 with an .hcl path" do
-    test "returns :ok when the normalized document matches the schema", %{tmp_dir: dir} do
+    test "returns :ok when the normalized document is valid", %{tmp_dir: dir} do
       path = Path.join(dir, "ok.hcl")
 
       File.write!(path, """
@@ -42,7 +42,7 @@ defmodule Condukt.Workflows.HCLWorkflowTest do
       assert :ok = Workflows.check(path)
     end
 
-    test "returns an error when the normalized document fails the schema", %{tmp_dir: dir} do
+    test "returns an error when the normalized document fails validation", %{tmp_dir: dir} do
       path = Path.join(dir, "bad.hcl")
 
       File.write!(path, """

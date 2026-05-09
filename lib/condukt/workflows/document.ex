@@ -3,15 +3,12 @@ defmodule Condukt.Workflows.Document do
   Loaded representation of a workflow document.
 
   A document is the canonical form executed by `Condukt.Workflows`. It
-  is produced by reading a `.json` file from disk, validating it
-  against the published schema (`Condukt.Workflows.Schema`), and
-  filling in defaults like `name` from the file basename.
-
-  HCL, YAML, and `.exs` files are decoded to a JSON document upstream
-  of validation.
+  is produced by loading an HCL workflow or `.exs` workflow generator,
+  validating the normalized map, and filling in defaults like `name`
+  from the file basename.
   """
 
-  alias Condukt.Workflows.{Compiler, HCLCompiler, Schema}
+  alias Condukt.Workflows.{Compiler, HCLCompiler, Validator}
 
   @enforce_keys [:name, :steps]
   defstruct [
@@ -39,18 +36,16 @@ defmodule Condukt.Workflows.Document do
 
   @type load_error ::
           {:read_failed, Path.t(), File.posix()}
-          | {:decode_failed, Path.t(), term()}
           | {:compile_failed, Path.t(), term()}
           | {:unsupported_extension, Path.t()}
-          | {:invalid_workflow, JSV.ValidationError.t()}
+          | {:invalid_workflow, term()}
 
   @doc """
-  Loads, decodes, and validates a workflow document at `path`.
+  Loads, normalizes, and validates a workflow document at `path`.
 
-  Accepts `.json`, `.yaml`/`.yml`, `.hcl`, and `.exs` paths. Returns
-  `{:ok, %Document{}}` when the file parses, decodes, and matches the
-  schema. Otherwise returns a tagged error suitable for reporting
-  from the CLI.
+  Accepts `.hcl` and `.exs` paths. Returns `{:ok, %Document{}}` when
+  the file parses and matches the workflow document shape. Otherwise
+  returns a tagged error suitable for reporting from the CLI.
   """
   @spec load(Path.t()) :: {:ok, t()} | {:error, load_error()}
   def load(path) when is_binary(path) do
@@ -61,8 +56,8 @@ defmodule Condukt.Workflows.Document do
   end
 
   @doc """
-  Validates a decoded document map against the schema without touching
-  the filesystem. Useful when the document is produced in memory.
+  Validates a decoded document map without touching the filesystem.
+  Useful when the document is produced in memory.
   """
   @spec from_map(map(), keyword()) :: {:ok, t()} | {:error, load_error()}
   def from_map(decoded, opts \\ []) when is_map(decoded) do
@@ -92,21 +87,17 @@ defmodule Condukt.Workflows.Document do
 
   defp decode_file(path) do
     case Path.extname(path) do
-      ext when ext in [".json", ""] ->
-        with {:ok, source} <- read(path), do: decode_json(path, source)
-
-      ext when ext in [".yaml", ".yml"] ->
-        with {:ok, source} <- read(path), do: decode_yaml(path, source)
-
       ".hcl" ->
         case HCLCompiler.compile(path) do
           {:ok, decoded} -> {:ok, decoded}
+          {:error, {:read_failed, _path, _reason} = reason} -> {:error, reason}
           {:error, reason} -> {:error, {:compile_failed, path, reason}}
         end
 
       ".exs" ->
         case Compiler.compile(path) do
           {:ok, decoded} -> {:ok, decoded}
+          {:error, {:read_failed, _path, _reason} = reason} -> {:error, reason}
           {:error, reason} -> {:error, {:compile_failed, path, reason}}
         end
 
@@ -115,33 +106,10 @@ defmodule Condukt.Workflows.Document do
     end
   end
 
-  defp read(path) do
-    case File.read(path) do
-      {:ok, source} -> {:ok, source}
-      {:error, reason} -> {:error, {:read_failed, path, reason}}
-    end
-  end
-
-  defp decode_json(path, source) do
-    case JSON.decode(source) do
-      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
-      {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
-      {:error, reason} -> {:error, {:decode_failed, path, reason}}
-    end
-  end
-
-  defp decode_yaml(path, source) do
-    case YamlElixir.read_from_string(source) do
-      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
-      {:ok, _other} -> {:error, {:decode_failed, path, :not_an_object}}
-      {:error, reason} -> {:error, {:decode_failed, path, reason}}
-    end
-  end
-
   defp validate(decoded) do
-    case JSV.validate(decoded, Schema.root()) do
+    case Validator.validate(decoded) do
       {:ok, value} -> {:ok, value}
-      {:error, %JSV.ValidationError{} = err} -> {:error, {:invalid_workflow, err}}
+      {:error, reason} -> {:error, {:invalid_workflow, reason}}
     end
   end
 

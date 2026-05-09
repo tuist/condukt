@@ -1,24 +1,9 @@
-defmodule Condukt.Workflows.SchemaTest do
+defmodule Condukt.Workflows.ValidatorTest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Workflows.Schema
+  alias Condukt.Workflows.Validator
 
-  describe "schema/0" do
-    test "exposes the decoded schema map" do
-      schema = Schema.schema()
-      assert schema["title"] == "Condukt Workflow"
-      assert schema["$id"] =~ "condukt.workflow.schema.json"
-    end
-  end
-
-  describe "url/0" do
-    test "returns the canonical raw GitHub url" do
-      assert Schema.url() ==
-               "https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json"
-    end
-  end
-
-  describe "validation against the schema" do
+  describe "validate/1" do
     test "accepts a minimal cmd workflow" do
       doc = %{
         "name" => "hello",
@@ -32,7 +17,7 @@ defmodule Condukt.Workflows.SchemaTest do
         "output" => "${steps.greet.stdout}"
       }
 
-      assert {:ok, _} = JSV.validate(doc, Schema.root())
+      assert {:ok, ^doc} = Validator.validate(doc)
     end
 
     test "accepts agent, http, tool, and map step kinds" do
@@ -69,7 +54,7 @@ defmodule Condukt.Workflows.SchemaTest do
         }
       }
 
-      assert {:ok, _} = JSV.validate(doc, Schema.root())
+      assert {:ok, ^doc} = Validator.validate(doc)
     end
 
     test "rejects an unknown runtime sandbox" do
@@ -78,7 +63,8 @@ defmodule Condukt.Workflows.SchemaTest do
         "steps" => %{"a" => %{"kind" => "cmd", "argv" => ["true"]}}
       }
 
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:invalid_value, [:workflow, "runtime", "sandbox"], "docker", ["local", "virtual"]}} =
+               Validator.validate(doc)
     end
 
     test "accepts an object runtime model spec" do
@@ -87,27 +73,27 @@ defmodule Condukt.Workflows.SchemaTest do
         "steps" => %{"a" => %{"kind" => "agent", "input" => "hello"}}
       }
 
-      assert {:ok, _} = JSV.validate(doc, Schema.root())
+      assert {:ok, ^doc} = Validator.validate(doc)
     end
 
     test "rejects a step with an unknown kind" do
       doc = %{"steps" => %{"oops" => %{"kind" => "magic"}}}
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:invalid_value, [:workflow, "steps", "oops", "kind"], "magic", _}} = Validator.validate(doc)
     end
 
     test "rejects a cmd step without argv" do
       doc = %{"steps" => %{"oops" => %{"kind" => "cmd"}}}
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:missing_key, [:workflow, "steps", "oops", "argv"]}} = Validator.validate(doc)
     end
 
     test "rejects a cmd step with an empty argv list" do
       doc = %{"steps" => %{"oops" => %{"kind" => "cmd", "argv" => []}}}
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:empty_list, [:workflow, "steps", "oops", "argv"]}} = Validator.validate(doc)
     end
 
     test "rejects a workflow with no steps" do
       doc = %{"steps" => %{}}
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:empty_steps, [:workflow, "steps"]}} = Validator.validate(doc)
     end
 
     test "rejects unknown top-level keys" do
@@ -116,7 +102,7 @@ defmodule Condukt.Workflows.SchemaTest do
         "extras" => true
       }
 
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:unknown_keys, [:workflow], ["extras"]}} = Validator.validate(doc)
     end
 
     test "rejects an invalid name" do
@@ -125,7 +111,7 @@ defmodule Condukt.Workflows.SchemaTest do
         "steps" => %{"a" => %{"kind" => "cmd", "argv" => ["true"]}}
       }
 
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:invalid_name, [:workflow, "name"], "1bad"}} = Validator.validate(doc)
     end
 
     test "accepts an http step with expect_status as integer or list" do
@@ -142,8 +128,8 @@ defmodule Condukt.Workflows.SchemaTest do
 
       ok_list = put_in(ok_int, ["steps", "a", "expect_status"], [200, 204])
 
-      assert {:ok, _} = JSV.validate(ok_int, Schema.root())
-      assert {:ok, _} = JSV.validate(ok_list, Schema.root())
+      assert {:ok, ^ok_int} = Validator.validate(ok_int)
+      assert {:ok, ^ok_list} = Validator.validate(ok_list)
     end
 
     test "rejects unknown fields inside a step" do
@@ -153,7 +139,7 @@ defmodule Condukt.Workflows.SchemaTest do
         }
       }
 
-      assert {:error, %JSV.ValidationError{}} = JSV.validate(doc, Schema.root())
+      assert {:error, {:unknown_keys, [:workflow, "steps", "a"], ["bogus"]}} = Validator.validate(doc)
     end
   end
 end

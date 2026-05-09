@@ -36,7 +36,7 @@ using idiomatic Elixir patterns.
 * Compile-time typed operations with JSON Schema input and output validation
 * Anonymous one-off runs with inline tools and optional structured output
 * Sub-agents for delegated child sessions with optional structured contracts
-* HCL-authored workflow DAGs that compile to typed JSON documents, runnable from Mix tasks or the standalone engine
+* HCL-authored workflow DAGs, runnable from Mix tasks or the standalone engine
 * Multi-provider LLM support through ReqLLM
 * Pluggable redaction, session secrets, compaction, persistence, and telemetry
 

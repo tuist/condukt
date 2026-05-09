@@ -5,9 +5,9 @@ and Condukt normalizes it to the canonical workflow document that the
 engine executes, `condukt check` validates, and visual tools can read.
 
 There is no project layout, manifest, or lockfile. To run a workflow
-you point the engine at a `.hcl`, `.json`, `.yaml`, `.yml`, or `.exs`
-path. The basename of the file is the run name unless the normalized
-document carries an explicit `name`.
+you point the engine at a `.hcl` or `.exs` path. The basename of the
+file is the run name unless the normalized document carries an explicit
+`name`.
 
 ## A first workflow
 
@@ -76,9 +76,8 @@ flowchart LR
   test --> package
 ```
 
-HCL intentionally makes dependencies stricter than raw JSON. When an
-HCL step reads `task.<id>`, that step must also declare `<id>` in
-`needs`. This keeps execution order and data dependencies visible in
+When an HCL step reads `task.<id>`, that step must also declare `<id>`
+in `needs`. This keeps execution order and data dependencies visible in
 the authored file:
 
 ```hcl
@@ -100,16 +99,7 @@ workflow "release_notes" {
 }
 ```
 
-## The schema
-
-The workflow document is validated against a published JSON Schema.
-The canonical source lives in this repository at
-`priv/schemas/condukt.workflow.schema.json` and is reachable on GitHub
-at:
-
-```text
-https://raw.githubusercontent.com/tuist/condukt/main/priv/schemas/condukt.workflow.schema.json
-```
+## Document Shape
 
 The normalized document shape is:
 
@@ -133,9 +123,8 @@ A step has the shape:
 }
 ```
 
-JSON and YAML continue to accept implicit dependencies inferred from
-`${steps.X.*}` references. HCL requires those dependencies to be
-declared in `needs` as well.
+The normalized document is internal. JSON and YAML are not supported
+workflow file formats.
 
 ## HCL syntax
 
@@ -280,46 +269,28 @@ downstream step whose declared or inferred dependencies include a
 skipped step is also skipped. The step's slot in `steps.<id>` is set
 to `null`.
 
-## JSON, YAML, and EXS
+## EXS
 
-HCL is the authored workflow format. It loads to this canonical
-document shape internally:
+HCL is the authored workflow format. For lower-level generation, an
+`.exs` file may return a workflow map directly:
 
-```json
-{
-  "name": "hello",
-  "inputs": {
-    "name": { "type": "string" }
-  },
-  "steps": {
-    "greet": {
-      "kind": "cmd",
-      "argv": ["echo", "Hello, ${inputs.name}"]
+```elixir
+%{
+  name: "hello",
+  inputs: %{name: %{type: :string}},
+  steps: %{
+    greet: %{
+      kind: :cmd,
+      argv: ["echo", "Hello, ${inputs.name}"]
     }
   },
-  "output": "${steps.greet.stdout}"
+  output: "${steps.greet.stdout}"
 }
 ```
 
-JSON files (`.json`) are accepted as canonical workflow documents.
-YAML files (`.yaml`, `.yml`) are accepted and converted to the same
-document at load time:
-
-```yaml
-inputs:
-  name:
-    type: string
-steps:
-  greet:
-    kind: cmd
-    argv: ["echo", "Hello, ${inputs.name}"]
-output: "${steps.greet.stdout}"
-```
-
-For lower-level generation, an `.exs` file may return a workflow map
-directly. Atom keys and atom values, other than `nil`, `true`, and
-`false`, are normalized to strings before validation. Use this only
-when you need Elixir to generate the document programmatically.
+Atom keys and atom values, other than `nil`, `true`, and `false`, are
+normalized to strings before validation. Use this only when you need
+Elixir to generate the document programmatically.
 
 `condukt run hello.hcl` loads and validates the workflow before
 execution.
@@ -347,13 +318,11 @@ library boundary.
 
 ## Validating a workflow
 
-`condukt check PATH` parses and validates the document against the
-schema and reports problems without executing it. It accepts `.hcl`,
-`.json`, `.yaml`, `.yml`, and `.exs` paths.
+`condukt check PATH` parses and validates the workflow without
+executing it. It accepts `.hcl` and `.exs` paths.
 
 ```sh
 condukt check review-pr.hcl
-condukt check review-pr.json
 ```
 
 Use it in CI or as part of an LLM authoring loop: generate, check,
