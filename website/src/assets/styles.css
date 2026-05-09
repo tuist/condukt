@@ -349,11 +349,12 @@ pre, code {
 }
 
 .post-body code {
-  background: var(--code-bg);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 0.3rem;
-  padding: 0.05rem 0.35rem;
-  font-size: 0.9em;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.88em;
+  color: var(--accent-2);
 }
 
 .post-body pre {
@@ -370,6 +371,7 @@ pre, code {
   border: none;
   padding: 0;
   background: transparent;
+  color: inherit;
 }
 
 .post-body blockquote {
