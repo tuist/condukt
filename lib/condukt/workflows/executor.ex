@@ -123,16 +123,24 @@ defmodule Condukt.Workflows.Executor do
   defp do_kahn([id | rest], incoming, deps_map, order) do
     {new_ready, new_incoming} =
       Enum.reduce(deps_map, {rest, Map.put(incoming, id, 0)}, fn {dep_id, deps}, {ready_acc, incoming_acc} ->
-        if MapSet.member?(deps, id) and dep_id != id do
-          new_count = Map.fetch!(incoming_acc, dep_id) - 1
-          ready_acc = if new_count == 0, do: ready_acc ++ [dep_id], else: ready_acc
-          {ready_acc, Map.put(incoming_acc, dep_id, new_count)}
-        else
-          {ready_acc, incoming_acc}
-        end
+        release_dependent(dep_id, deps, id, ready_acc, incoming_acc)
       end)
 
     do_kahn(new_ready, new_incoming, deps_map, [id | order])
+  end
+
+  defp release_dependent(dep_id, deps, id, ready, incoming) do
+    if MapSet.member?(deps, id) and dep_id != id do
+      decrement_incoming(dep_id, ready, incoming)
+    else
+      {ready, incoming}
+    end
+  end
+
+  defp decrement_incoming(dep_id, ready, incoming) do
+    new_count = Map.fetch!(incoming, dep_id) - 1
+    ready = if new_count == 0, do: ready ++ [dep_id], else: ready
+    {ready, Map.put(incoming, dep_id, new_count)}
   end
 
   ## Execution.
@@ -147,16 +155,18 @@ defmodule Condukt.Workflows.Executor do
       bindings: %{}
     }
 
-    case Enum.reduce_while(order, {:ok, state}, fn step_id, {:ok, state} ->
-           step = Map.fetch!(state.doc.steps, step_id)
-
-           case run_step(step_id, step, state) do
-             {:ok, new_state} -> {:cont, {:ok, new_state}}
-             {:error, _} = err -> {:halt, err}
-           end
-         end) do
+    case Enum.reduce_while(order, {:ok, state}, &execute_step/2) do
       {:ok, final} -> finalize(final)
       {:error, _} = err -> err
+    end
+  end
+
+  defp execute_step(step_id, {:ok, state}) do
+    step = Map.fetch!(state.doc.steps, step_id)
+
+    case run_step(step_id, step, state) do
+      {:ok, new_state} -> {:cont, {:ok, new_state}}
+      {:error, _} = err -> {:halt, err}
     end
   end
 
@@ -269,18 +279,23 @@ defmodule Condukt.Workflows.Executor do
 
   defp host_exec(program, args, cwd, env) do
     case System.find_executable(program) do
-      nil ->
-        {:error, {:not_found, program}}
-
-      _ ->
-        muon_opts =
-          [cd: cwd, stderr_to_stdout: true]
-          |> then(fn o -> if env == [], do: o, else: o ++ [env: env] end)
-
-        {output, exit_code} = MuonTrap.cmd(program, Enum.map(args, &to_string/1), muon_opts)
-        {:ok, output, exit_code}
+      nil -> {:error, {:not_found, program}}
+      _ -> run_host_command(program, args, cwd, env)
     end
   end
+
+  defp run_host_command(program, args, cwd, env) do
+    {output, exit_code} = MuonTrap.cmd(program, Enum.map(args, &to_string/1), host_exec_opts(cwd, env))
+    {:ok, output, exit_code}
+  end
+
+  defp host_exec_opts(cwd, env) do
+    [cd: cwd, stderr_to_stdout: true, parallelism: false]
+    |> maybe_put(:env, empty_to_nil(env))
+  end
+
+  defp empty_to_nil([]), do: nil
+  defp empty_to_nil(value), do: value
 
   defp shell_join(argv), do: Enum.map_join(argv, " ", &shell_escape/1)
 
@@ -305,35 +320,43 @@ defmodule Condukt.Workflows.Executor do
 
     case interpolate(fields, state) do
       {:ok, resolved} ->
-        method = resolved |> Map.fetch!("method") |> String.downcase() |> String.to_atom()
-        url = Map.fetch!(resolved, "url")
-        headers = resolved |> Map.get("headers", %{}) |> Enum.map(&header_pair/1)
-        body = Map.get(resolved, "body")
-
-        req_opts =
-          [method: method, url: url, headers: headers, retry: false]
-          |> maybe_put_body(body)
-          |> Keyword.merge(Keyword.get(state.opts, :req_options, []))
-
-        case Req.request(req_opts) do
-          {:ok, %Req.Response{} = response} ->
-            output = %{
-              "status" => response.status,
-              "headers" => Map.new(response.headers, fn {k, v} -> {k, normalize_header_value(v)} end),
-              "body" => response.body
-            }
-
-            case enforce_expect_status(resolved, output) do
-              :ok -> record(state, step_id, output)
-              {:error, reason} -> {:error, {:http_unexpected_status, step_id, reason}}
-            end
-
-          {:error, reason} ->
-            {:error, {:http_failed, step_id, reason}}
-        end
+        request_http(step_id, resolved, state)
 
       {:error, reason} ->
         {:error, {:interpolate_failed, step_id, reason}}
+    end
+  end
+
+  defp request_http(step_id, resolved, state) do
+    req_opts =
+      resolved
+      |> http_request_opts()
+      |> Keyword.merge(Keyword.get(state.opts, :req_options, []))
+
+    case Req.request(req_opts) do
+      {:ok, %Req.Response{} = response} -> handle_http_response(step_id, resolved, response, state)
+      {:error, reason} -> {:error, {:http_failed, step_id, reason}}
+    end
+  end
+
+  defp http_request_opts(resolved) do
+    method = resolved |> Map.fetch!("method") |> String.downcase() |> String.to_atom()
+    headers = resolved |> Map.get("headers", %{}) |> Enum.map(&header_pair/1)
+
+    [method: method, url: Map.fetch!(resolved, "url"), headers: headers, retry: false]
+    |> maybe_put_body(Map.get(resolved, "body"))
+  end
+
+  defp handle_http_response(step_id, resolved, response, state) do
+    output = %{
+      "status" => response.status,
+      "headers" => Map.new(response.headers, fn {k, v} -> {k, normalize_header_value(v)} end),
+      "body" => response.body
+    }
+
+    case enforce_expect_status(resolved, output) do
+      :ok -> record(state, step_id, output)
+      {:error, reason} -> {:error, {:http_unexpected_status, step_id, reason}}
     end
   end
 
@@ -463,33 +486,40 @@ defmodule Condukt.Workflows.Executor do
 
     case interpolate(fields, state) do
       {:ok, %{"input" => input} = resolved} ->
-        prompt = stringify_input(input)
-        extra = Keyword.get(state.opts, :tools, %{})
-
-        with {:ok, model} <- agent_model(resolved, state),
-             {:ok, tool_specs} <- resolve_tool_specs(Map.get(resolved, "tools", []), extra) do
-          run_opts =
-            [model: model, tools: tool_specs]
-            |> maybe_put(:system_prompt, Map.get(resolved, "system"))
-            |> maybe_put(:output, Map.get(resolved, "output_schema"))
-            |> maybe_put(:sandbox, Keyword.get(state.opts, :sandbox))
-            |> maybe_put(:cwd, Keyword.get(state.opts, :cwd))
-            |> maybe_put(:secrets, Keyword.get(state.opts, :secrets))
-            |> Keyword.merge(Keyword.get(state.opts, :agent_options, []))
-
-          case Condukt.run(prompt, run_opts) do
-            {:ok, output} -> record(state, step_id, %{"ok" => true, "output" => output})
-            {:error, reason} -> {:error, {:agent_failed, step_id, reason}}
-          end
-        else
-          {:error, reason} -> {:error, {:agent_failed, step_id, reason}}
-        end
+        run_agent_prompt(step_id, stringify_input(input), resolved, state)
 
       {:ok, _} ->
         {:error, {:invalid_agent_step, step_id}}
 
       {:error, reason} ->
         {:error, {:interpolate_failed, step_id, reason}}
+    end
+  end
+
+  defp run_agent_prompt(step_id, prompt, resolved, state) do
+    with {:ok, run_opts} <- agent_run_opts(resolved, state),
+         {:ok, output} <- Condukt.run(prompt, run_opts) do
+      record(state, step_id, %{"ok" => true, "output" => output})
+    else
+      {:error, reason} -> {:error, {:agent_failed, step_id, reason}}
+    end
+  end
+
+  defp agent_run_opts(resolved, state) do
+    extra = Keyword.get(state.opts, :tools, %{})
+
+    with {:ok, model} <- agent_model(resolved, state),
+         {:ok, tool_specs} <- resolve_tool_specs(Map.get(resolved, "tools", []), extra) do
+      opts =
+        [model: model, tools: tool_specs]
+        |> maybe_put(:system_prompt, Map.get(resolved, "system"))
+        |> maybe_put(:output, Map.get(resolved, "output_schema"))
+        |> maybe_put(:sandbox, Keyword.get(state.opts, :sandbox))
+        |> maybe_put(:cwd, Keyword.get(state.opts, :cwd))
+        |> maybe_put(:secrets, Keyword.get(state.opts, :secrets))
+        |> Keyword.merge(Keyword.get(state.opts, :agent_options, []))
+
+      {:ok, opts}
     end
   end
 

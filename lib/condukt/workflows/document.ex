@@ -128,10 +128,15 @@ defmodule Condukt.Workflows.Document do
 
   defp apply_defaults(declared, provided) do
     Enum.reduce(declared, provided, fn {id, spec}, acc ->
-      case Map.has_key?(acc, id) do
-        true -> acc
-        false -> if Map.has_key?(spec, "default"), do: Map.put(acc, id, spec["default"]), else: acc
-      end
+      apply_default(id, spec, acc)
     end)
+  end
+
+  defp apply_default(id, spec, acc) do
+    if Map.has_key?(acc, id) or not Map.has_key?(spec, "default") do
+      acc
+    else
+      Map.put(acc, id, spec["default"])
+    end
   end
 end

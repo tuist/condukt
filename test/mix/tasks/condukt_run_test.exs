@@ -3,6 +3,8 @@ defmodule Mix.Tasks.Condukt.RunTest do
 
   import ExUnit.CaptureIO
 
+  alias Mix.Tasks.Condukt.Run
+
   @moduletag :tmp_dir
 
   test "runs a workflow file and prints the resolved output", %{tmp_dir: dir} do
@@ -24,7 +26,7 @@ defmodule Mix.Tasks.Condukt.RunTest do
 
     output =
       capture_io(fn ->
-        Mix.Tasks.Condukt.Run.run([path, "--input", ~s({"msg": "ok"})])
+        Run.run([path, "--input", ~s({"msg": "ok"})])
       end)
 
     assert String.trim(output) == "ok"
@@ -33,7 +35,7 @@ defmodule Mix.Tasks.Condukt.RunTest do
   test "exits with an error when the file is missing" do
     assert catch_exit(
              capture_io(:stderr, fn ->
-               Mix.Tasks.Condukt.Run.run(["/nope/missing.hcl"])
+               Run.run(["/nope/missing.hcl"])
              end)
            ) == {:shutdown, 1}
   end

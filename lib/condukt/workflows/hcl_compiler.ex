@@ -106,49 +106,52 @@ defmodule Condukt.Workflows.HCLCompiler do
 
     body
     |> statements()
-    |> Enum.reduce_while({:ok, base}, fn
-      %Block{type: "input", labels: [id]} = block, {:ok, doc} ->
-        with {:ok, input} <- compile_input(block, path),
-             {:ok, inputs} <- put_unique(Map.get(doc, "inputs", %{}), id, input, {:duplicate_input, path, id}) do
-          {:cont, {:ok, Map.put(doc, "inputs", inputs)}}
-        else
-          {:error, _} = err -> {:halt, err}
-        end
-
-      %Block{type: "runtime", labels: []} = block, {:ok, doc} ->
-        if Map.has_key?(doc, "runtime") do
-          {:halt, {:error, {:duplicate_runtime, path}}}
-        else
-          case compile_runtime(block, path) do
-            {:ok, runtime} -> {:cont, {:ok, Map.put(doc, "runtime", runtime)}}
-            {:error, _} = err -> {:halt, err}
-          end
-        end
-
-      %Block{type: type, labels: [id]} = block, {:ok, doc} when type in @step_types ->
-        with {:ok, step} <- compile_step(block, path, :named),
-             {:ok, steps} <- put_unique(doc["steps"], id, step, {:duplicate_step, path, id}) do
-          {:cont, {:ok, Map.put(doc, "steps", steps)}}
-        else
-          {:error, _} = err -> {:halt, err}
-        end
-
-      %Attr{name: "output", expr: expr}, {:ok, doc} ->
-        if Map.has_key?(doc, "output") do
-          {:halt, {:error, {:duplicate_attr, path, "output"}}}
-        else
-          case value(expr) do
-            {:ok, output} -> {:cont, {:ok, Map.put(doc, "output", output)}}
-            {:error, _} = err -> {:halt, err}
-          end
-        end
-
-      statement, {:ok, _doc} ->
-        {:halt, {:error, {:unsupported_workflow_statement, path, statement}}}
-    end)
+    |> Enum.reduce_while({:ok, base}, &compile_workflow_statement(&1, &2, path))
   end
 
   defp compile_workflow(%Block{labels: labels}, path), do: {:error, {:invalid_workflow_labels, path, labels}}
+
+  defp compile_workflow_statement(%Block{type: "input", labels: [id]} = block, {:ok, doc}, path) do
+    with {:ok, input} <- compile_input(block, path),
+         {:ok, inputs} <- put_unique(Map.get(doc, "inputs", %{}), id, input, {:duplicate_input, path, id}) do
+      {:cont, {:ok, Map.put(doc, "inputs", inputs)}}
+    else
+      {:error, _} = err -> {:halt, err}
+    end
+  end
+
+  defp compile_workflow_statement(%Block{type: "runtime", labels: []} = block, {:ok, doc}, path) do
+    if Map.has_key?(doc, "runtime") do
+      {:halt, {:error, {:duplicate_runtime, path}}}
+    else
+      continue_with_attr(doc, "runtime", compile_runtime(block, path))
+    end
+  end
+
+  defp compile_workflow_statement(%Block{type: type, labels: [id]} = block, {:ok, doc}, path)
+       when type in @step_types do
+    with {:ok, step} <- compile_step(block, path, :named),
+         {:ok, steps} <- put_unique(doc["steps"], id, step, {:duplicate_step, path, id}) do
+      {:cont, {:ok, Map.put(doc, "steps", steps)}}
+    else
+      {:error, _} = err -> {:halt, err}
+    end
+  end
+
+  defp compile_workflow_statement(%Attr{name: "output", expr: expr}, {:ok, doc}, path) do
+    if Map.has_key?(doc, "output") do
+      {:halt, {:error, {:duplicate_attr, path, "output"}}}
+    else
+      continue_with_attr(doc, "output", value(expr))
+    end
+  end
+
+  defp compile_workflow_statement(statement, {:ok, _doc}, path) do
+    {:halt, {:error, {:unsupported_workflow_statement, path, statement}}}
+  end
+
+  defp continue_with_attr(doc, key, {:ok, value}), do: {:cont, {:ok, Map.put(doc, key, value)}}
+  defp continue_with_attr(_doc, _key, {:error, _} = err), do: {:halt, err}
 
   defp compile_runtime(%Block{type: "runtime", body: body}, path) do
     with {:ok, attrs, blocks} <- split_body(body, path),

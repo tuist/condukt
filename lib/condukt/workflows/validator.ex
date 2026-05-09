@@ -69,21 +69,17 @@ defmodule Condukt.Workflows.Validator do
   end
 
   defp validate_steps(steps) when map_size(steps) > 0 do
-    Enum.reduce_while(steps, :ok, fn {id, step}, :ok ->
-      case validate_step_id(id, [:workflow, "steps"]) do
-        :ok ->
-          case validate_step(step, [:workflow, "steps", id]) do
-            :ok -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, reason}}
-          end
-
-        {:error, reason} ->
-          {:halt, {:error, reason}}
-      end
-    end)
+    Enum.reduce_while(steps, :ok, &validate_step_entry/2)
   end
 
   defp validate_steps(%{}), do: {:error, {:empty_steps, [:workflow, "steps"]}}
+
+  defp validate_step_entry({id, step}, :ok) do
+    case validate_step_id(id, [:workflow, "steps"]) do
+      :ok -> continue_or_halt(validate_step(step, [:workflow, "steps", id]))
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
 
   defp validate_step(step, path) when is_map(step) do
     with :ok <- required_string(step, "kind", path ++ ["kind"]),
@@ -107,16 +103,17 @@ defmodule Condukt.Workflows.Validator do
 
   defp validate_needs(needs, path) when is_list(needs) do
     with :ok <- unique_list(needs, path) do
-      Enum.reduce_while(needs, :ok, fn id, :ok ->
-        case validate_step_id(id, path) do
-          :ok -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
+      validate_step_ids(needs, path)
     end
   end
 
   defp validate_needs(other, path), do: {:error, {:expected_list, path, other}}
+
+  defp validate_step_ids(ids, path) do
+    Enum.reduce_while(ids, :ok, fn id, :ok ->
+      continue_or_halt(validate_step_id(id, path))
+    end)
+  end
 
   defp validate_specific_step("cmd", step, path) do
     with :ok <- required_list(step, "argv", path ++ ["argv"]),
@@ -261,17 +258,17 @@ defmodule Condukt.Workflows.Validator do
 
   defp optional_unique_string_list(map, key, path) do
     with :ok <- optional_list(map, key, path) do
-      case Map.fetch(map, key) do
-        {:ok, list} ->
-          with :ok <- unique_list(list, path) do
-            list_of_strings(list, path)
-          end
-
-        :error ->
-          :ok
-      end
+      validate_optional_string_list(Map.fetch(map, key), path)
     end
   end
+
+  defp validate_optional_string_list({:ok, list}, path) do
+    with :ok <- unique_list(list, path) do
+      list_of_strings(list, path)
+    end
+  end
+
+  defp validate_optional_string_list(:error, _path), do: :ok
 
   defp optional_string_map(map, key, path) do
     with :ok <- optional_map(map, key, path) do
@@ -298,21 +295,20 @@ defmodule Condukt.Workflows.Validator do
 
   defp optional_expect_status(map, key, path) do
     case Map.fetch(map, key) do
-      {:ok, value} when is_integer(value) ->
-        :ok
-
-      {:ok, value} when is_list(value) ->
-        Enum.reduce_while(value, :ok, fn status, :ok ->
-          if is_integer(status), do: {:cont, :ok}, else: {:halt, {:error, {:expected_integer, path, status}}}
-        end)
-
-      {:ok, value} ->
-        {:error, {:expected_integer_or_integer_list, path, value}}
-
-      :error ->
-        :ok
+      {:ok, value} -> validate_expect_status(value, path)
+      :error -> :ok
     end
   end
+
+  defp validate_expect_status(value, _path) when is_integer(value), do: :ok
+
+  defp validate_expect_status(value, path) when is_list(value) do
+    Enum.reduce_while(value, :ok, fn status, :ok ->
+      if is_integer(status), do: {:cont, :ok}, else: {:halt, {:error, {:expected_integer, path, status}}}
+    end)
+  end
+
+  defp validate_expect_status(value, path), do: {:error, {:expected_integer_or_integer_list, path, value}}
 
   defp optional_positive_integer(map, key, path) do
     case Map.fetch(map, key) do
@@ -321,4 +317,7 @@ defmodule Condukt.Workflows.Validator do
       :error -> :ok
     end
   end
+
+  defp continue_or_halt(:ok), do: {:cont, :ok}
+  defp continue_or_halt({:error, reason}), do: {:halt, {:error, reason}}
 end

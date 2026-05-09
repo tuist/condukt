@@ -3,6 +3,8 @@ defmodule Mix.Tasks.Condukt.CheckTest do
 
   import ExUnit.CaptureIO
 
+  alias Mix.Tasks.Condukt.Check
+
   @moduletag :tmp_dir
 
   test "prints ok for a valid workflow", %{tmp_dir: dir} do
@@ -18,7 +20,7 @@ defmodule Mix.Tasks.Condukt.CheckTest do
 
     output =
       capture_io(fn ->
-        Mix.Tasks.Condukt.Check.run([path])
+        Check.run([path])
       end)
 
     assert String.trim(output) == "ok: #{path}"
@@ -37,7 +39,7 @@ defmodule Mix.Tasks.Condukt.CheckTest do
 
     assert catch_exit(
              capture_io(:stderr, fn ->
-               capture_io(fn -> Mix.Tasks.Condukt.Check.run([path]) end)
+               capture_io(fn -> Check.run([path]) end)
              end)
            ) == {:shutdown, 1}
   end

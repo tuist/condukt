@@ -293,16 +293,16 @@ defmodule Condukt.Workflows.Expr do
 
   defp parse_comparison(tokens) do
     with {:ok, left, rest} <- parse_postfix(tokens) do
-      case rest do
-        [{:op, op} | rest2] when op in [:eq, :neq, :lt, :le, :gt, :ge] ->
-          with {:ok, right, rest3} <- parse_postfix(rest2),
-               do: {:ok, {:bin_op, op, left, right}, rest3}
-
-        _ ->
-          {:ok, left, rest}
-      end
+      parse_comparison_tail(left, rest)
     end
   end
+
+  defp parse_comparison_tail(left, [{:op, op} | rest]) when op in [:eq, :neq, :lt, :le, :gt, :ge] do
+    with {:ok, right, rest2} <- parse_postfix(rest),
+         do: {:ok, {:bin_op, op, left, right}, rest2}
+  end
+
+  defp parse_comparison_tail(left, rest), do: {:ok, left, rest}
 
   defp parse_postfix(tokens) do
     with {:ok, ast, rest} <- parse_primary(tokens), do: parse_postfix_tail(ast, rest)
@@ -356,44 +356,14 @@ defmodule Condukt.Workflows.Expr do
 
   defp do_eval({:member, target_ast, name}, ctx) do
     with {:ok, target} <- do_eval(target_ast, ctx) do
-      case target do
-        m when is_map(m) ->
-          case Map.fetch(m, name) do
-            {:ok, value} -> {:ok, value}
-            :error -> {:error, {:undefined_member, name}}
-          end
-
-        nil ->
-          {:ok, nil}
-
-        _ ->
-          {:error, {:not_an_object, name}}
-      end
+      eval_member(target, name)
     end
   end
 
   defp do_eval({:index, target_ast, index_ast}, ctx) do
     with {:ok, target} <- do_eval(target_ast, ctx),
          {:ok, index} <- do_eval(index_ast, ctx) do
-      case {target, index} do
-        {nil, _} ->
-          {:ok, nil}
-
-        {list, i} when is_list(list) and is_integer(i) ->
-          case fetch_at(list, i) do
-            {:ok, v} -> {:ok, v}
-            :error -> {:error, {:index_out_of_range, i}}
-          end
-
-        {map, key} when is_map(map) and is_binary(key) ->
-          case Map.fetch(map, key) do
-            {:ok, value} -> {:ok, value}
-            :error -> {:error, {:undefined_key, key}}
-          end
-
-        _ ->
-          {:error, {:invalid_index, index}}
-      end
+      eval_index(target, index)
     end
   end
 
@@ -412,21 +382,13 @@ defmodule Condukt.Workflows.Expr do
 
   defp do_eval({:bin_op, :and, l, r}, ctx) do
     with {:ok, lv} <- do_eval(l, ctx) do
-      if truthy?(lv) do
-        with {:ok, rv} <- do_eval(r, ctx), do: {:ok, truthy?(rv)}
-      else
-        {:ok, false}
-      end
+      eval_and(lv, r, ctx)
     end
   end
 
   defp do_eval({:bin_op, :or, l, r}, ctx) do
     with {:ok, lv} <- do_eval(l, ctx) do
-      if truthy?(lv) do
-        {:ok, true}
-      else
-        with {:ok, rv} <- do_eval(r, ctx), do: {:ok, truthy?(rv)}
-      end
+      eval_or(lv, r, ctx)
     end
   end
 
@@ -442,15 +404,56 @@ defmodule Condukt.Workflows.Expr do
 
   defp do_eval({:format, ast, :csv}, ctx) do
     with {:ok, v} <- do_eval(ast, ctx) do
-      case v do
-        list when is_list(list) ->
-          {:ok, list |> Enum.map_join(",", &csv_field/1)}
-
-        _ ->
-          {:error, {:csv_requires_list, v}}
-      end
+      eval_csv(v)
     end
   end
+
+  defp eval_member(map, name) when is_map(map) do
+    case Map.fetch(map, name) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:undefined_member, name}}
+    end
+  end
+
+  defp eval_member(nil, _name), do: {:ok, nil}
+  defp eval_member(_target, name), do: {:error, {:not_an_object, name}}
+
+  defp eval_index(nil, _index), do: {:ok, nil}
+
+  defp eval_index(list, index) when is_list(list) and is_integer(index) do
+    case fetch_at(list, index) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:index_out_of_range, index}}
+    end
+  end
+
+  defp eval_index(map, key) when is_map(map) and is_binary(key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:undefined_key, key}}
+    end
+  end
+
+  defp eval_index(_target, index), do: {:error, {:invalid_index, index}}
+
+  defp eval_and(value, right, ctx) do
+    if truthy?(value) do
+      with {:ok, rv} <- do_eval(right, ctx), do: {:ok, truthy?(rv)}
+    else
+      {:ok, false}
+    end
+  end
+
+  defp eval_or(value, right, ctx) do
+    if truthy?(value) do
+      {:ok, true}
+    else
+      with {:ok, rv} <- do_eval(right, ctx), do: {:ok, truthy?(rv)}
+    end
+  end
+
+  defp eval_csv(list) when is_list(list), do: {:ok, Enum.map_join(list, ",", &csv_field/1)}
+  defp eval_csv(value), do: {:error, {:csv_requires_list, value}}
 
   defp truthy?(nil), do: false
   defp truthy?(false), do: false
@@ -549,21 +552,21 @@ defmodule Condukt.Workflows.Expr do
   defp extract_step_refs(string) do
     case scan(string, []) do
       {:ok, segments} ->
-        Enum.flat_map(segments, fn
-          {:placeholder, expr_text} ->
-            case parse(expr_text) do
-              {:ok, ast} -> ast_step_refs(ast)
-              _ -> []
-            end
-
-          _ ->
-            []
-        end)
+        Enum.flat_map(segments, &segment_step_refs/1)
 
       _ ->
         []
     end
   end
+
+  defp segment_step_refs({:placeholder, expr_text}) do
+    case parse(expr_text) do
+      {:ok, ast} -> ast_step_refs(ast)
+      _ -> []
+    end
+  end
+
+  defp segment_step_refs(_segment), do: []
 
   defp ast_step_refs({:member, {:identifier, "steps"}, step_id}), do: [step_id]
   defp ast_step_refs({:member, target, _}), do: ast_step_refs(target)
