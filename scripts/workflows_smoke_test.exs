@@ -2,7 +2,7 @@
 #
 # Usage:
 #
-#   CONDUKT_BASHKIT_DISABLE=1 mix run scripts/workflows_smoke_test.exs
+#   mix run scripts/workflows_smoke_test.exs
 #
 # What it does:
 #
