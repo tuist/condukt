@@ -2,7 +2,7 @@
 title: Secrets belong in the session
 date: 2026-05-03
 description: "Agents need to act against real systems. We added session secrets to Condukt so credentials become part of the execution boundary, not part of the conversation."
-author: The Condukt team
+author: The Tuist team
 ---
 
 I keep coming back to a very mundane moment in agentic workflows: the agent is finally about to do something useful, and then it needs a credential. It wants to review a pull request with `gh`, run a smoke test against a staging API, publish a package, deploy a preview, or talk to a private service that the rest of the development environment already knows how to reach. None of these are exotic tasks. They are the normal work around software, and they are exactly the kind of work agents need to take on if they are going to be more than a nicer autocomplete. The uncomfortable part is what happens next. A command fails because `GH_TOKEN` is missing, the agent asks what to do, and the fastest answer is to paste the token into the conversation. It works. That is why it is tempting, and also why it is the wrong shape.
