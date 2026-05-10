@@ -72,6 +72,21 @@ defmodule Condukt.MCP.ServerTest do
       assert {:ok, %Server{transport: {:streamable_http, _}}} =
                Server.normalize(%{"name" => "x", "transport" => "http", "url" => "https://example.com"})
     end
+
+    test "rejects unknown client_credentials keys without creating atoms" do
+      key = "review_unknown_#{System.unique_integer([:positive])}"
+      assert_raise ArgumentError, fn -> :erlang.binary_to_existing_atom(key, :utf8) end
+
+      assert {:error, {:unknown_client_credentials_key, ^key}} =
+               Server.normalize(%{
+                 "name" => "x",
+                 "transport" => "streamable_http",
+                 "url" => "https://example.com",
+                 "auth" => %{"type" => "client_credentials", key => "value"}
+               })
+
+      assert_raise ArgumentError, fn -> :erlang.binary_to_existing_atom(key, :utf8) end
+    end
   end
 
   describe "prefix/1" do

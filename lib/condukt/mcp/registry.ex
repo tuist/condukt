@@ -36,7 +36,7 @@ defmodule Condukt.MCP.Registry do
   Starts a `Condukt.MCP.Client` for each server in `servers`.
 
   Servers may be `%Condukt.MCP.Server{}` structs or plain maps that
-  `Condukt.MCP.Server.from_map/1` can normalize. On the first failure
+  `Condukt.MCP.Server.normalize/1` can normalize. On the first failure
   every already-started client is stopped before returning the error.
 
   Options are forwarded to `Condukt.MCP.Client.start_link/2` (and

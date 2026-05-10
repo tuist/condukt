@@ -30,6 +30,7 @@ defmodule Condukt.MCP.Client do
     next_id: 1,
     status: :starting,
     pending: %{},
+    timers: %{},
     tools: []
   ]
 
@@ -74,7 +75,7 @@ defmodule Condukt.MCP.Client do
   end
 
   defp stop_safely(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    GenServer.cast(pid, :stop)
     :ok
   end
 
@@ -148,9 +149,11 @@ defmodule Condukt.MCP.Client do
 
   def handle_call(:request_timeout, _from, state), do: {:reply, state.server.request_timeout, state}
 
-  def handle_call({:call_tool, name, args, _timeout}, from, %{status: :ready} = state) do
+  def handle_call({:call_tool, name, args, timeout}, from, %{status: :ready} = state) do
     params = %{"name" => name, "arguments" => args || %{}}
-    {state, _id} = send_request(state, "tools/call", params, {:call_tool, from})
+    {state, id} = send_request(state, "tools/call", params, {:call_tool, from})
+    timer = Process.send_after(self(), {:mcp_request_timeout, id}, timeout)
+    state = %{state | timers: Map.put(state.timers, id, timer)}
     {:noreply, state}
   end
 
@@ -159,13 +162,32 @@ defmodule Condukt.MCP.Client do
   end
 
   @impl true
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
+
+  @impl true
   def handle_info({:mcp_message, {:response, id, result}}, state) do
     case Map.pop(state.pending, id) do
       {nil, _} ->
         {:noreply, state}
 
       {kind, pending} ->
-        handle_response(kind, result, %{state | pending: pending})
+        {timer, timers} = Map.pop(state.timers, id)
+        if timer, do: Process.cancel_timer(timer)
+        handle_response(kind, result, %{state | pending: pending, timers: timers})
+    end
+  end
+
+  def handle_info({:mcp_request_timeout, id}, state) do
+    case Map.pop(state.pending, id) do
+      {nil, _pending} ->
+        {:noreply, state}
+
+      {{:call_tool, from}, pending} ->
+        GenServer.reply(from, {:error, :request_timeout})
+        {:noreply, %{state | pending: pending, timers: Map.delete(state.timers, id)}}
+
+      {_kind, pending} ->
+        {:noreply, %{state | pending: pending, timers: Map.delete(state.timers, id)}}
     end
   end
 
@@ -306,11 +328,13 @@ defmodule Condukt.MCP.Client do
   end
 
   defp fail_pending(state, reason) do
+    Enum.each(state.timers, fn {_id, timer} -> Process.cancel_timer(timer) end)
+
     Enum.each(state.pending, fn
       {_id, {:call_tool, from}} -> GenServer.reply(from, {:error, reason})
       _ -> :ok
     end)
 
-    %{state | pending: %{}}
+    %{state | pending: %{}, timers: %{}}
   end
 end

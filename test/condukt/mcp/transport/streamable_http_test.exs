@@ -157,4 +157,46 @@ defmodule Condukt.MCP.Transport.StreamableHttpTest do
 
     Client.stop(client)
   end
+
+  test "returns an error when a tool call exceeds its request timeout" do
+    http_request = fn _url, envelope, _headers ->
+      case envelope do
+        %{"id" => id, "method" => "initialize"} ->
+          response = json_response(id, initialize_result())
+          {:ok, response.status, response.headers, response.body}
+
+        %{"id" => id, "method" => "tools/list"} ->
+          response =
+            json_response(id, %{
+              "tools" => [
+                %{
+                  "name" => "slow",
+                  "description" => "Responds too slowly.",
+                  "inputSchema" => %{"type" => "object", "properties" => %{}}
+                }
+              ]
+            })
+
+          {:ok, response.status, response.headers, response.body}
+
+        %{"method" => "notifications/" <> _} ->
+          {:ok, 202, [], ""}
+
+        %{"method" => "tools/call"} ->
+          Process.sleep(200)
+          {:ok, 202, [], ""}
+      end
+    end
+
+    server = %Server{
+      name: "fake",
+      transport: {:streamable_http, url: "https://fake.example.com/mcp"}
+    }
+
+    {:ok, client} = Client.start_link(server, http_request: http_request)
+
+    assert {:error, :request_timeout} = Client.call_tool(client, "slow", %{}, timeout: 20)
+
+    Client.stop(client)
+  end
 end

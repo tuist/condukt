@@ -78,6 +78,18 @@ defmodule Condukt.MCP.Server do
         }
 
   @name_pattern ~r/^[A-Za-z][A-Za-z0-9_-]*$/
+  @client_credentials_keys %{
+    "token_url" => :token_url,
+    "token_url_env" => :token_url_env,
+    "token_url_static" => :token_url_static,
+    "client_id" => :client_id,
+    "client_id_env" => :client_id_env,
+    "client_id_static" => :client_id_static,
+    "client_secret" => :client_secret,
+    "client_secret_env" => :client_secret_env,
+    "client_secret_static" => :client_secret_static,
+    "scope" => :scope
+  }
 
   @doc """
   Returns the tool name prefix used for tools discovered on this server.
@@ -120,11 +132,12 @@ defmodule Condukt.MCP.Server do
         {:error, :missing_transport}
 
       true ->
-        with {:ok, transport} <- transport_from_map(transport, map) do
+        with {:ok, transport} <- transport_from_map(transport, map),
+             {:ok, auth} <- auth_from_map(fetch(map, "auth") || fetch(map, :auth)) do
           server = %__MODULE__{
             name: name,
             transport: transport,
-            auth: auth_from_map(fetch(map, "auth") || fetch(map, :auth)),
+            auth: auth,
             env: fetch(map, "env") || fetch(map, :env),
             prefix: fetch(map, "prefix") || fetch(map, :prefix),
             init_timeout: fetch(map, "init_timeout") || fetch(map, :init_timeout) || 10_000,
@@ -168,15 +181,19 @@ defmodule Condukt.MCP.Server do
     |> Enum.reject(fn {_, v} -> is_nil(v) end)
   end
 
-  defp auth_from_map(nil), do: nil
-  defp auth_from_map(%{"type" => "bearer"} = map), do: {:bearer, secret_ref_from_map(map)}
-  defp auth_from_map(%{type: "bearer"} = map), do: {:bearer, secret_ref_from_map(map)}
+  defp auth_from_map(nil), do: {:ok, nil}
+  defp auth_from_map(%{"type" => "bearer"} = map), do: {:ok, {:bearer, secret_ref_from_map(map)}}
+  defp auth_from_map(%{type: "bearer"} = map), do: {:ok, {:bearer, secret_ref_from_map(map)}}
 
-  defp auth_from_map(%{"type" => "client_credentials"} = map), do: {:client_credentials, client_credentials_opts(map)}
+  defp auth_from_map(%{"type" => "client_credentials"} = map) do
+    with {:ok, opts} <- client_credentials_opts(map), do: {:ok, {:client_credentials, opts}}
+  end
 
-  defp auth_from_map(%{type: "client_credentials"} = map), do: {:client_credentials, client_credentials_opts(map)}
+  defp auth_from_map(%{type: "client_credentials"} = map) do
+    with {:ok, opts} <- client_credentials_opts(map), do: {:ok, {:client_credentials, opts}}
+  end
 
-  defp auth_from_map(other), do: other
+  defp auth_from_map(other), do: {:ok, other}
 
   defp secret_ref_from_map(map) do
     cond do
@@ -189,15 +206,31 @@ defmodule Condukt.MCP.Server do
 
   defp client_credentials_opts(map) do
     map
-    |> Enum.flat_map(fn {k, v} ->
-      key =
-        case k do
-          atom when is_atom(atom) -> atom
-          binary when is_binary(binary) -> String.to_atom(binary)
-        end
+    |> Enum.reduce_while({:ok, []}, fn
+      {k, _v}, {:ok, acc} when k in ["type", :type] ->
+        {:cont, {:ok, acc}}
 
-      if key == :type, do: [], else: [{key, v}]
+      {k, v}, {:ok, acc} ->
+        case client_credentials_key(k) do
+          {:ok, key} -> {:cont, {:ok, [{key, v} | acc]}}
+          :error -> {:halt, {:error, {:unknown_client_credentials_key, to_string(k)}}}
+        end
     end)
+    |> case do
+      {:ok, opts} -> {:ok, Enum.reverse(opts)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp client_credentials_key(key) when is_atom(key) do
+    client_credentials_key(Atom.to_string(key))
+  end
+
+  defp client_credentials_key(key) when is_binary(key) do
+    case Map.fetch(@client_credentials_keys, key) do
+      {:ok, key} -> {:ok, key}
+      :error -> :error
+    end
   end
 
   defp validate_name(name) when is_binary(name) do

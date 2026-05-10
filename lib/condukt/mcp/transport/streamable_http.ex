@@ -41,7 +41,7 @@ defmodule Condukt.MCP.Transport.StreamableHttp do
 
   @impl Condukt.MCP.Transport
   def close(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    GenServer.cast(pid, :stop)
     :ok
   end
 
@@ -97,6 +97,9 @@ defmodule Condukt.MCP.Transport.StreamableHttp do
 
     {:reply, :ok, state}
   end
+
+  @impl GenServer
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
 
   @impl GenServer
   def handle_info({:streamable_response, status, headers, body}, state) do

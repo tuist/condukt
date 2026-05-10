@@ -21,6 +21,7 @@ defmodule Condukt.MCP.Transport.HttpSSE do
     :base_url,
     :auth_state,
     :static_headers,
+    :http_request,
     :sse_task,
     :post_url,
     sse_state: nil,
@@ -35,7 +36,7 @@ defmodule Condukt.MCP.Transport.HttpSSE do
 
   @impl Condukt.MCP.Transport
   def close(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    GenServer.cast(pid, :stop)
     :ok
   end
 
@@ -61,6 +62,7 @@ defmodule Condukt.MCP.Transport.HttpSSE do
           base_url: base_url,
           static_headers: static_headers,
           auth_state: auth_state,
+          http_request: Keyword.get(opts, :http_request, &default_post_request/3),
           sse_task: sse_task,
           sse_state: SSE.new()
         }
@@ -83,6 +85,9 @@ defmodule Condukt.MCP.Transport.HttpSSE do
       {:error, _} = err -> {:reply, err, state}
     end
   end
+
+  @impl GenServer
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
 
   @impl GenServer
   def handle_info({:sse_chunk, chunk}, state) do
@@ -177,16 +182,13 @@ defmodule Condukt.MCP.Transport.HttpSSE do
 
   defp post(state, envelope) do
     headers = state.static_headers ++ auth_headers(state.auth_state)
-    request_fn = Keyword.get(http_opts(), :post_request, &default_post_request/3)
 
-    case request_fn.(state.post_url, envelope, headers) do
+    case state.http_request.(state.post_url, envelope, headers) do
       {:ok, status} when status in 200..299 -> :ok
       {:ok, status} -> {:error, {:http_status, status}}
       {:error, reason} -> {:error, reason}
     end
   end
-
-  defp http_opts, do: []
 
   defp default_post_request(url, envelope, headers) do
     case Req.post(url, headers: headers, json: envelope, retry: false) do

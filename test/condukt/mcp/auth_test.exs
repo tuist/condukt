@@ -56,6 +56,11 @@ defmodule Condukt.MCP.AuthTest do
                  []
                )
     end
+
+    test "surfaces a missing token URL without raising" do
+      assert {:error, {:missing_credential, :token_url}} =
+               Auth.resolve({:client_credentials, client_id: "client", client_secret: "secret"}, [])
+    end
   end
 
   describe "resolve/2 with no auth" do

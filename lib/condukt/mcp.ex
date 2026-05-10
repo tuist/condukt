@@ -42,7 +42,7 @@ defmodule Condukt.MCP do
       end
 
   Servers can also be supplied per-call through the `:mcp_servers` option
-  on `Condukt.run/3` and `Condukt.start_link/1`.
+  on `Condukt.run/3` and through an agent module's `start_link/1`.
 
   ## Declaring servers in HCL workflows
 
@@ -117,7 +117,7 @@ defmodule Condukt.MCP do
 
   The return value is opaque; pass it to `Condukt.MCP.Registry.tools/1`
   to obtain the list of inline tool specs ready to be merged into an
-  agent or workflow tool list, and to `Condukt.MCP.Registry.stop/1` for
+  agent or workflow tool list, and to `Condukt.MCP.Registry.stop_all/1` for
   cleanup.
   """
   defdelegate start_all(servers, opts \\ []), to: Registry, as: :start_all

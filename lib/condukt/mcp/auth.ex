@@ -42,9 +42,10 @@ defmodule Condukt.MCP.Auth do
   end
 
   def resolve({:client_credentials, oauth_opts}, opts) do
-    with {:ok, client_id} <- resolve_credential(oauth_opts, :client_id, opts),
+    with {:ok, token_url} <- resolve_credential(oauth_opts, :token_url, opts),
+         {:ok, client_id} <- resolve_credential(oauth_opts, :client_id, opts),
          {:ok, client_secret} <- resolve_credential(oauth_opts, :client_secret, opts) do
-      fetch_token(oauth_opts, client_id, client_secret, opts)
+      fetch_token(token_url, oauth_opts, client_id, client_secret, opts)
     end
   end
 
@@ -60,7 +61,7 @@ defmodule Condukt.MCP.Auth do
   end
 
   def refresh(%{kind: :client_credentials} = state, opts) do
-    fetch_token(state.oauth_opts, state.client_id, state.client_secret, opts)
+    fetch_token(state.token_url, state.oauth_opts, state.client_id, state.client_secret, opts)
   end
 
   def refresh(state, _opts), do: {:ok, [], state}
@@ -89,8 +90,7 @@ defmodule Condukt.MCP.Auth do
     end
   end
 
-  defp fetch_token(oauth_opts, client_id, client_secret, opts) do
-    token_url = Keyword.fetch!(oauth_opts, :token_url)
+  defp fetch_token(token_url, oauth_opts, client_id, client_secret, opts) do
     scope = Keyword.get(oauth_opts, :scope)
     request_fn = Keyword.get(opts, :token_request, &default_token_request/4)
 
@@ -99,6 +99,7 @@ defmodule Condukt.MCP.Auth do
         state = %{
           kind: :client_credentials,
           value: token,
+          token_url: token_url,
           oauth_opts: oauth_opts,
           client_id: client_id,
           client_secret: client_secret,

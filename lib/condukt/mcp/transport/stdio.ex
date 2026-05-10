@@ -23,7 +23,7 @@ defmodule Condukt.MCP.Transport.Stdio do
 
   @impl Condukt.MCP.Transport
   def close(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    GenServer.cast(pid, :stop)
     :ok
   end
 
@@ -116,6 +116,9 @@ defmodule Condukt.MCP.Transport.Stdio do
   def handle_call({:send, _envelope}, _from, state) do
     {:reply, {:error, :no_port}, state}
   end
+
+  @impl GenServer
+  def handle_cast(:stop, state), do: {:stop, :normal, state}
 
   @impl GenServer
   def handle_info({port, {:data, chunk}}, %{port: port} = state) when is_binary(chunk) do

@@ -114,7 +114,7 @@ defmodule Condukt do
   Returns the default MCP server declarations for this agent.
 
   Each entry is a `Condukt.MCP.Server` struct (or a plain map normalizable
-  by `Condukt.MCP.Server.from_map/1`). The session opens one
+  by `Condukt.MCP.Server.normalize/1`). The session opens one
   `Condukt.MCP.Client` per server at startup, fetches each server's
   `tools/list`, and merges the discovered tools into the agent's tool
   list under their `<server>.<tool>` ids. Can be overridden at
