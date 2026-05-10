@@ -111,6 +111,21 @@ defmodule Condukt do
   @callback secrets() :: nil | keyword() | map() | struct()
 
   @doc """
+  Returns the default MCP server declarations for this agent.
+
+  Each entry is a `Condukt.MCP.Server` struct (or a plain map normalizable
+  by `Condukt.MCP.Server.from_map/1`). The session opens one
+  `Condukt.MCP.Client` per server at startup, fetches each server's
+  `tools/list`, and merges the discovered tools into the agent's tool
+  list under their `<server>.<tool>` ids. Can be overridden at
+  `start_link/1` via the `:mcp_servers` option.
+
+  See `Condukt.MCP` for the supported transports and authentication
+  shapes.
+  """
+  @callback mcp_servers() :: [Condukt.MCP.Server.t() | map()]
+
+  @doc """
   Initializes agent state from options.
   """
   @callback init(keyword()) :: {:ok, term()} | {:stop, term()}
@@ -128,6 +143,7 @@ defmodule Condukt do
     thinking_level: 0,
     sandbox: 0,
     secrets: 0,
+    mcp_servers: 0,
     init: 1,
     handle_event: 2
   ]
@@ -168,6 +184,9 @@ defmodule Condukt do
       def secrets, do: nil
 
       @impl Condukt
+      def mcp_servers, do: []
+
+      @impl Condukt
       def init(opts), do: {:ok, opts}
 
       @impl Condukt
@@ -180,6 +199,7 @@ defmodule Condukt do
                      thinking_level: 0,
                      sandbox: 0,
                      secrets: 0,
+                     mcp_servers: 0,
                      init: 1,
                      handle_event: 2
 
@@ -206,6 +226,10 @@ defmodule Condukt do
       - `:secrets` - Session secret declarations. Resolved at session start
         and exposed to command tools as environment variables without adding
         plaintext values to model context or snapshots.
+      - `:mcp_servers` - List of `Condukt.MCP.Server` declarations. Each
+        server is connected at session start, its `tools/list` is fetched,
+        and the discovered tools are merged into the agent's tool list
+        under their `<server>.<tool>` ids. See `Condukt.MCP`.
       - `:session_store` - Session store module or `{module, opts}` tuple
       - `:compactor` - Compactor module or `{module, opts}` tuple
         (see `Condukt.Compactor`)

@@ -28,6 +28,7 @@ defmodule Condukt.Workflows.HCLCompiler do
   @step_types ~w(cmd agent http tool map)
   @input_attrs ~w(type description default enum items)
   @runtime_attrs ~w(model sandbox cwd)
+  @mcp_server_attrs ~w(transport command args env url headers auth prefix init_timeout request_timeout)
   @common_step_attrs ~w(needs when)
   @step_attrs %{
     "agent" => @common_step_attrs ++ ~w(model input tools system output_schema),
@@ -102,14 +103,21 @@ defmodule Condukt.Workflows.HCLCompiler do
   end
 
   defp compile_workflow(%Block{labels: [name], body: body}, path) when is_binary(name) do
-    base = %{"name" => name, "steps" => %{}}
+    base = %{"name" => name, "steps" => %{}, "mcp_servers" => %{}}
 
     body
     |> statements()
     |> Enum.reduce_while({:ok, base}, &compile_workflow_statement(&1, &2, path))
+    |> drop_empty_mcp_servers()
   end
 
   defp compile_workflow(%Block{labels: labels}, path), do: {:error, {:invalid_workflow_labels, path, labels}}
+
+  defp drop_empty_mcp_servers({:ok, %{"mcp_servers" => mcp} = doc}) when map_size(mcp) == 0 do
+    {:ok, Map.delete(doc, "mcp_servers")}
+  end
+
+  defp drop_empty_mcp_servers(other), do: other
 
   defp compile_workflow_statement(%Block{type: "input", labels: [id]} = block, {:ok, doc}, path) do
     with {:ok, input} <- compile_input(block, path),
@@ -126,6 +134,20 @@ defmodule Condukt.Workflows.HCLCompiler do
     else
       continue_with_attr(doc, "runtime", compile_runtime(block, path))
     end
+  end
+
+  defp compile_workflow_statement(%Block{type: "mcp_server", labels: [id]} = block, {:ok, doc}, path) do
+    with {:ok, server} <- compile_mcp_server(block, path),
+         {:ok, servers} <-
+           put_unique(Map.get(doc, "mcp_servers", %{}), id, server, {:duplicate_mcp_server, path, id}) do
+      {:cont, {:ok, Map.put(doc, "mcp_servers", servers)}}
+    else
+      {:error, _} = err -> {:halt, err}
+    end
+  end
+
+  defp compile_workflow_statement(%Block{type: "mcp_server", labels: labels}, {:ok, _doc}, path) do
+    {:halt, {:error, {:invalid_mcp_server_labels, path, labels}}}
   end
 
   defp compile_workflow_statement(%Block{type: type, labels: [id]} = block, {:ok, doc}, path)
@@ -165,6 +187,14 @@ defmodule Condukt.Workflows.HCLCompiler do
     with {:ok, attrs, blocks} <- split_body(body, path),
          :ok <- reject_blocks(blocks, {:input_cannot_have_blocks, path, id}),
          :ok <- reject_unknown_attrs(attrs, @input_attrs, {:unknown_input_attr, path, id}) do
+      map_values(attrs, &value/1)
+    end
+  end
+
+  defp compile_mcp_server(%Block{type: "mcp_server", labels: [id], body: body}, path) do
+    with {:ok, attrs, blocks} <- split_body(body, path),
+         :ok <- reject_blocks(blocks, {:mcp_server_cannot_have_blocks, path, id}),
+         :ok <- reject_unknown_attrs(attrs, @mcp_server_attrs, {:unknown_mcp_server_attr, path, id}) do
       map_values(attrs, &value/1)
     end
   end

@@ -18,6 +18,7 @@ defmodule Condukt.Workflows.Document do
     :raw,
     inputs: %{},
     runtime: %{},
+    mcp_servers: %{},
     steps: %{}
   ]
 
@@ -103,6 +104,7 @@ defmodule Condukt.Workflows.Document do
       path: path,
       inputs: Map.get(validated, "inputs", %{}),
       runtime: Map.get(validated, "runtime", %{}),
+      mcp_servers: Map.get(validated, "mcp_servers", %{}),
       steps: Map.fetch!(validated, "steps"),
       output: Map.get(validated, "output"),
       raw: validated
