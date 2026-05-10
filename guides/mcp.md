@@ -215,14 +215,3 @@ A client that loses its connection mid-run does not restart in v1.
 Outstanding tool calls fail with `{:error, {:transport_down, _}}` and
 the session continues. Future iterations may add a per-server restart
 policy.
-
-## What is not supported in v1
-
-* The MCP server side (Condukt exposing its own tools so other
-  clients can use them).
-* Server-initiated requests over stdio (sampling, roots).
-* Browser-based OAuth flows for HTTP transports.
-* The optional `GET` channel of the Streamable HTTP transport for
-  server-pushed notifications.
-* HCL declarations for `env` map shapes with secret refs (use the
-  Elixir API for those; HCL `env` only accepts a list of names).
