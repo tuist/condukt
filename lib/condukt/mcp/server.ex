@@ -51,32 +51,6 @@ defmodule Condukt.MCP.Server do
     request_timeout: 60_000
   ]
 
-  @type transport ::
-          {:stdio, keyword()}
-          | {:http_sse, keyword()}
-          | {:streamable_http, keyword()}
-
-  @type secret_ref ::
-          {:env, String.t()}
-          | {:static, String.t()}
-          | {atom(), term()}
-          | {module(), keyword()}
-
-  @type auth ::
-          nil
-          | {:bearer, secret_ref()}
-          | {:client_credentials, keyword()}
-
-  @type t :: %__MODULE__{
-          name: String.t(),
-          transport: transport(),
-          auth: auth(),
-          env: nil | [String.t()] | %{String.t() => secret_ref() | String.t()},
-          prefix: nil | String.t(),
-          init_timeout: pos_integer(),
-          request_timeout: pos_integer()
-        }
-
   @name_pattern ~r/^[A-Za-z][A-Za-z0-9_-]*$/
   @client_credentials_keys %{
     "token_url" => :token_url,
@@ -121,35 +95,45 @@ defmodule Condukt.MCP.Server do
 
   @doc false
   def from_map(%{} = map) do
-    name = fetch_string(map, "name") || fetch_string(map, :name)
-    transport = fetch(map, "transport") || fetch(map, :transport)
-
-    cond do
-      is_nil(name) ->
-        {:error, :missing_name}
-
-      is_nil(transport) ->
-        {:error, :missing_transport}
-
-      true ->
-        with {:ok, transport} <- transport_from_map(transport, map),
-             {:ok, auth} <- auth_from_map(fetch(map, "auth") || fetch(map, :auth)) do
-          server = %__MODULE__{
-            name: name,
-            transport: transport,
-            auth: auth,
-            env: fetch(map, "env") || fetch(map, :env),
-            prefix: fetch(map, "prefix") || fetch(map, :prefix),
-            init_timeout: fetch(map, "init_timeout") || fetch(map, :init_timeout) || 10_000,
-            request_timeout: fetch(map, "request_timeout") || fetch(map, :request_timeout) || 60_000
-          }
-
-          {:ok, server}
-        end
+    with {:ok, name} <- required_string(map, ["name", :name], :missing_name),
+         {:ok, transport_spec} <- required_value(map, ["transport", :transport], :missing_transport),
+         {:ok, transport} <- transport_from_map(transport_spec, map),
+         {:ok, auth} <- auth_from_map(first_value(map, ["auth", :auth])) do
+      {:ok, server_from_map(map, name, transport, auth)}
     end
   end
 
   defp fetch(map, key), do: Map.get(map, key)
+
+  defp first_value(map, keys) do
+    Enum.find_value(keys, &fetch(map, &1))
+  end
+
+  defp required_value(map, keys, error) do
+    case first_value(map, keys) do
+      nil -> {:error, error}
+      value -> {:ok, value}
+    end
+  end
+
+  defp required_string(map, keys, error) do
+    case Enum.find_value(keys, &fetch_string(map, &1)) do
+      nil -> {:error, error}
+      value -> {:ok, value}
+    end
+  end
+
+  defp server_from_map(map, name, transport, auth) do
+    %__MODULE__{
+      name: name,
+      transport: transport,
+      auth: auth,
+      env: first_value(map, ["env", :env]),
+      prefix: first_value(map, ["prefix", :prefix]),
+      init_timeout: first_value(map, ["init_timeout", :init_timeout]) || 10_000,
+      request_timeout: first_value(map, ["request_timeout", :request_timeout]) || 60_000
+    }
+  end
 
   defp fetch_string(map, key) do
     case Map.get(map, key) do

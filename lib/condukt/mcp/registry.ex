@@ -17,16 +17,6 @@ defmodule Condukt.MCP.Registry do
 
   defstruct entries: []
 
-  @typedoc "Per-server entry in the registry."
-  @type entry :: %{
-          server: Server.t(),
-          client: pid(),
-          tools: [Condukt.Tool.Inline.t()]
-        }
-
-  @typedoc "Opaque registry handle."
-  @type t :: %__MODULE__{entries: [entry()]}
-
   @doc """
   Returns an empty registry.
   """
