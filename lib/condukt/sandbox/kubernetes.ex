@@ -55,6 +55,15 @@ defmodule Condukt.Sandbox.Kubernetes do
   * `:service_account` — Kubernetes ServiceAccount the pod runs as.
   * `:active_deadline_seconds` — K8s-side hard ceiling for the pod's lifetime
     (default 8 hours). Insurance against abandoned pods.
+  * `:heartbeat_interval` — milliseconds between pod heartbeat annotation
+    updates (default `60_000`). Pass `false` to disable. Use
+    `reap_stale/1` from a separate process to delete pods whose heartbeat is
+    too old.
+  * `:workspace_source` — git repository to clone into the workspace at init.
+    Accepts a git URL string or a keyword/map with `:git` and optional `:ref`.
+    The runtime image must include `git`.
+  * `:workspace_source_timeout` — milliseconds to wait for the workspace
+    clone or checkout command (default `300_000`).
   * `:ready_timeout` — milliseconds to wait for a created pod to reach
     Running phase (default `120_000`).
   * `:on_stale` — what to do when adopting a pod that is in an unexpected
@@ -76,8 +85,12 @@ defmodule Condukt.Sandbox.Kubernetes do
   The Kubernetes identity used by the Condukt process needs:
 
       apiGroups: [""]
-      resources: ["pods", "pods/exec"]
-      verbs: ["get", "create", "delete"]
+      resources: ["pods"]
+      verbs: ["get", "list", "create", "patch", "delete"]
+
+      apiGroups: [""]
+      resources: ["pods/exec"]
+      verbs: ["create"]
 
   See `guides/sandbox.md` for a full sample `Role` + `RoleBinding`.
 
@@ -88,9 +101,8 @@ defmodule Condukt.Sandbox.Kubernetes do
     PersistentVolumeClaim into the pod manifest if you need cross-node
     durability — currently requires a custom `:image` setup, not exposed
     as an init option in v1.
-  * Large files written via `write_file/3` are base64-embedded in the exec
-    command. There is a soft ceiling around ~100KB; large blobs should be
-    fetched into the pod via `exec/3` (e.g. `curl`, `git clone`).
+  * `:workspace_source` shells out to `git` inside the pod. Use an image that
+    includes `git` when enabling it.
   """
 
   @behaviour Condukt.Sandbox
@@ -104,6 +116,9 @@ defmodule Condukt.Sandbox.Kubernetes do
   @default_namespace "default"
   @default_active_deadline 8 * 3600
   @default_ready_timeout 120_000
+  @default_heartbeat_interval 60_000
+  @default_reap_stale_after 15 * 60_000
+  @default_workspace_source_timeout 300_000
   @ready_poll_interval 1_000
   @timeout_exit_code 124
   @timeout_grace_ms 5_000
@@ -111,6 +126,8 @@ defmodule Condukt.Sandbox.Kubernetes do
   @managed_by_label "app.kubernetes.io/managed-by"
   @managed_by_value "condukt"
   @id_label "condukt.io/id"
+  @created_annotation "condukt.io/created-at"
+  @heartbeat_annotation "condukt.io/heartbeat-at"
 
   # ============================================================================
   # Sandbox callbacks
@@ -119,16 +136,21 @@ defmodule Condukt.Sandbox.Kubernetes do
   @impl Sandbox
   def init(opts) do
     with {:ok, conn} <- resolve_conn(opts),
-         {:ok, config} <- build_config(opts) do
-      ensure_pod(conn, config)
+         {:ok, config} <- build_config(opts),
+         {:ok, state} <- ensure_pod(conn, config),
+         {:ok, state} <- prepare_workspace(state, config) do
+      start_heartbeat(state, config)
     end
   end
 
   @impl Sandbox
-  def shutdown(%State{delete_on_shutdown: false}), do: :ok
+  def shutdown(%State{} = state) do
+    stop_heartbeat(state)
 
-  def shutdown(%State{conn: conn, namespace: ns, pod_name: name}) do
-    delete_pod(conn, ns, name)
+    if state.delete_on_shutdown do
+      delete_pod(state.conn, state.namespace, state.pod_name)
+    end
+
     :ok
   end
 
@@ -148,15 +170,13 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   @impl Sandbox
   def write_file(state, path, content) do
-    encoded = Base.encode64(content)
-
     script = """
     set -e
     mkdir -p -- "$(dirname -- #{shell_quote(path)})"
-    printf '%s' #{shell_quote(encoded)} | base64 -d > #{shell_quote(path)}
+    cat > #{shell_quote(path)}
     """
 
-    case run_exec(state, ["bash", "-c", script]) do
+    case run_exec_with_stdin(state, ["bash", "-c", script], content) do
       {:ok, %{exit_code: 0}} -> :ok
       {:ok, %{output: output}} -> {:error, format_remote_error(output)}
       {:error, _} = err -> err
@@ -270,6 +290,41 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
+  @doc """
+  Updates the heartbeat annotation on a Kubernetes sandbox pod.
+
+  The sandbox starts a linked heartbeat worker by default. This helper is
+  exposed for callers that disable the worker and want to drive heartbeats
+  from their own supervision tree.
+  """
+  def heartbeat(%Sandbox{module: __MODULE__, state: %State{} = state}), do: heartbeat(state)
+
+  def heartbeat(%State{} = state), do: patch_heartbeat(state)
+
+  @doc """
+  Deletes Condukt-managed pods whose heartbeat annotation is older than
+  `:stale_after`.
+
+  Options:
+
+    * `:namespace` - namespace to scan, default `"default"`.
+    * `:stale_after` - heartbeat age in milliseconds, default 15 minutes.
+    * `:now` - `DateTime` used for tests, default `DateTime.utc_now()`.
+    * K8s connection options accepted by `init/1`, such as `:conn`,
+      `:kubeconfig`, `:context`, and `:in_cluster`.
+  """
+  def reap_stale(opts \\ []) do
+    namespace = Keyword.get(opts, :namespace, @default_namespace)
+    stale_after = Keyword.get(opts, :stale_after, @default_reap_stale_after)
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+
+    with {:ok, conn} <- resolve_conn(opts),
+         {:ok, pods} <- list_pods(conn, namespace) do
+      stale = Enum.filter(pods, &stale_pod?(&1, now, stale_after))
+      delete_stale_pods(conn, namespace, stale)
+    end
+  end
+
   # ============================================================================
   # Pod lifecycle
   # ============================================================================
@@ -332,6 +387,40 @@ defmodule Condukt.Sandbox.Kubernetes do
       {:error, %{message: "already exists" <> _}} -> wait_until_ready(conn, config)
       {:error, reason} -> {:error, format_api_error(reason)}
     end
+  end
+
+  defp prepare_workspace(state, %{workspace_source: nil}), do: {:ok, state}
+
+  defp prepare_workspace(state, config) do
+    source = config.workspace_source
+    ref_script = workspace_ref_script(source.ref)
+
+    script = """
+    set -e
+    cd #{shell_quote(config.cwd)}
+    if [ -d .git ]; then
+      #{ref_script}
+      exit 0
+    fi
+    if [ -n "$(find . -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+      echo "workspace #{config.cwd} is not empty and is not a git repository" >&2
+      exit 73
+    fi
+    git clone #{shell_quote(source.git)} .
+    #{ref_script}
+    """
+
+    case run_exec(state, ["bash", "-c", script], timeout: config.workspace_source_timeout) do
+      {:ok, %{exit_code: 0}} -> {:ok, state}
+      {:ok, %{output: output}} -> {:error, {:workspace_source, format_remote_error(output)}}
+      {:error, reason} -> {:error, {:workspace_source, reason}}
+    end
+  end
+
+  defp workspace_ref_script(nil), do: ":"
+
+  defp workspace_ref_script(ref) do
+    "git fetch --all --tags --prune && git -c advice.detachedHead=false checkout #{shell_quote(ref)}"
   end
 
   defp wait_until_ready(conn, config) do
@@ -408,6 +497,15 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
+  defp list_pods(conn, namespace) do
+    op = K8s.Client.list("v1", "Pod", namespace: namespace)
+
+    case K8s.Client.run(conn, op) do
+      {:ok, %{"items" => pods}} -> {:ok, pods}
+      {:error, reason} -> {:error, format_api_error(reason)}
+    end
+  end
+
   defp delete_pod(conn, namespace, name) do
     op = K8s.Client.delete("v1", "Pod", namespace: namespace, name: name)
 
@@ -419,23 +517,126 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
+  defp patch_heartbeat(%State{} = state) do
+    patch = %{
+      "metadata" => %{
+        "annotations" => %{
+          @heartbeat_annotation => timestamp()
+        }
+      }
+    }
+
+    op = K8s.Client.patch("v1", "Pod", [namespace: state.namespace, name: state.pod_name], patch)
+
+    case K8s.Client.run(state.conn, op) do
+      {:ok, _pod} -> :ok
+      {:error, reason} -> {:error, format_api_error(reason)}
+    end
+  end
+
+  defp delete_stale_pods(conn, namespace, pods) do
+    Enum.reduce_while(pods, {:ok, []}, fn pod, {:ok, deleted} ->
+      name = pod_name(pod)
+
+      case delete_pod(conn, namespace, name) do
+        :ok -> {:cont, {:ok, [name | deleted]}}
+        {:error, reason} -> {:halt, {:error, {:reap_failed, name, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, names} -> {:ok, Enum.reverse(names)}
+      {:error, _} = err -> err
+    end
+  end
+
   defp run_exec(state, command_list, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 120_000)
 
-    op =
-      K8s.Client.connect(
-        "v1",
-        "pods/exec",
-        [namespace: state.namespace, name: state.pod_name],
-        command: command_list,
-        container: state.container,
-        tty: false
-      )
-
-    op
+    state
+    |> exec_op(command_list)
     |> K8s.Client.put_conn(state.conn)
     |> K8s.Client.run(recv_timeout: timeout)
     |> normalize_exec_result()
+  end
+
+  defp run_exec_with_stdin(state, command_list, input, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 120_000)
+    parent = self()
+    ref = make_ref()
+    collector = spawn_link(fn -> exec_stream_collector(parent, ref, %{}) end)
+
+    result =
+      case K8s.Client.stream_to(state.conn, exec_op(state, command_list), [recv_timeout: timeout], collector) do
+        {:ok, send_to_websocket} ->
+          send_stdin(send_to_websocket, input)
+          send_to_websocket.(:close)
+          collect_exec_stream(ref, timeout)
+
+        {:error, reason} ->
+          {:error, format_api_error(reason)}
+      end
+
+    Process.unlink(collector)
+    Process.exit(collector, :shutdown)
+    result
+  end
+
+  defp exec_op(state, command_list) do
+    K8s.Client.connect(
+      "v1",
+      "pods/exec",
+      [namespace: state.namespace, name: state.pod_name],
+      command: command_list,
+      container: state.container,
+      tty: false
+    )
+  end
+
+  defp send_stdin(send_to_websocket, input) do
+    input
+    |> chunk_binary(32 * 1024)
+    |> Enum.each(fn chunk -> send_to_websocket.({:stdin, chunk}) end)
+  end
+
+  defp chunk_binary("", _size), do: []
+
+  defp chunk_binary(binary, size) when byte_size(binary) <= size, do: [binary]
+
+  defp chunk_binary(binary, size) do
+    <<chunk::binary-size(size), rest::binary>> = binary
+    [chunk | chunk_binary(rest, size)]
+  end
+
+  defp exec_stream_collector(parent, ref, acc) do
+    receive do
+      {:open, true} ->
+        exec_stream_collector(parent, ref, acc)
+
+      {:stdout, data} ->
+        exec_stream_collector(parent, ref, append_stream(acc, :stdout, data))
+
+      {:stderr, data} ->
+        exec_stream_collector(parent, ref, append_stream(acc, :stderr, data))
+
+      {:error, data} ->
+        exec_stream_collector(parent, ref, append_stream(acc, :error, data))
+
+      {:close, _reason} ->
+        send(parent, {ref, normalize_exec_result({:ok, acc})})
+
+      :done ->
+        send(parent, {ref, normalize_exec_result({:ok, acc})})
+    end
+  end
+
+  defp append_stream(acc, key, data), do: Map.update(acc, key, data, &(&1 <> data))
+
+  defp collect_exec_stream(ref, timeout) do
+    receive do
+      {^ref, result} -> result
+    after
+      timeout -> {:error, :timeout}
+    end
   end
 
   defp normalize_exec_result({:ok, response}) do
@@ -480,28 +681,34 @@ defmodule Condukt.Sandbox.Kubernetes do
     pod_name = pod_name_for(id)
     namespace = Keyword.get(opts, :namespace, @default_namespace)
     cwd = Keyword.get(opts, :cwd, @default_cwd)
+    now = timestamp()
 
     delete_on_shutdown =
       Keyword.get_lazy(opts, :delete_on_shutdown, fn -> generated? end)
 
-    {:ok,
-     %{
-       id: id,
-       generated_id?: generated?,
-       pod_name: pod_name,
-       namespace: namespace,
-       image: Keyword.get(opts, :image, @default_image),
-       cwd: cwd,
-       env: normalize_env(Keyword.get(opts, :env, %{})),
-       labels: build_labels(id, Keyword.get(opts, :labels, %{})),
-       annotations: stringify_map(Keyword.get(opts, :annotations, %{})),
-       resources: stringify_resources(Keyword.get(opts, :resources, %{})),
-       service_account: Keyword.get(opts, :service_account),
-       active_deadline_seconds: Keyword.get(opts, :active_deadline_seconds, @default_active_deadline),
-       ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
-       on_stale: Keyword.get(opts, :on_stale, :error),
-       delete_on_shutdown: delete_on_shutdown
-     }}
+    with {:ok, workspace_source} <- normalize_workspace_source(Keyword.get(opts, :workspace_source)) do
+      {:ok,
+       %{
+         id: id,
+         generated_id?: generated?,
+         pod_name: pod_name,
+         namespace: namespace,
+         image: Keyword.get(opts, :image, @default_image),
+         cwd: cwd,
+         env: normalize_env(Keyword.get(opts, :env, %{})),
+         labels: build_labels(id, Keyword.get(opts, :labels, %{})),
+         annotations: build_annotations(Keyword.get(opts, :annotations, %{}), now),
+         resources: stringify_resources(Keyword.get(opts, :resources, %{})),
+         service_account: Keyword.get(opts, :service_account),
+         active_deadline_seconds: Keyword.get(opts, :active_deadline_seconds, @default_active_deadline),
+         heartbeat_interval: Keyword.get(opts, :heartbeat_interval, @default_heartbeat_interval),
+         workspace_source: workspace_source,
+         workspace_source_timeout: Keyword.get(opts, :workspace_source_timeout, @default_workspace_source_timeout),
+         ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
+         on_stale: Keyword.get(opts, :on_stale, :error),
+         delete_on_shutdown: delete_on_shutdown
+       }}
+    end
   end
 
   defp state_from_config(conn, config) do
@@ -516,6 +723,32 @@ defmodule Condukt.Sandbox.Kubernetes do
     }
   end
 
+  defp start_heartbeat(state, %{heartbeat_interval: false}), do: {:ok, state}
+  defp start_heartbeat(state, %{heartbeat_interval: nil}), do: {:ok, state}
+
+  defp start_heartbeat(state, %{heartbeat_interval: interval}) when is_integer(interval) and interval > 0 do
+    pid = spawn_link(fn -> heartbeat_loop(state, interval) end)
+    {:ok, %{state | heartbeat_pid: pid}}
+  end
+
+  defp start_heartbeat(_state, %{heartbeat_interval: interval}) do
+    {:error, {:invalid_heartbeat_interval, interval}}
+  end
+
+  defp stop_heartbeat(%State{heartbeat_pid: nil}), do: :ok
+
+  defp stop_heartbeat(%State{heartbeat_pid: pid}) when is_pid(pid) do
+    Process.unlink(pid)
+    Process.exit(pid, :shutdown)
+    :ok
+  end
+
+  defp heartbeat_loop(state, interval) do
+    _ = patch_heartbeat(state)
+    Process.sleep(interval)
+    heartbeat_loop(state, interval)
+  end
+
   defp build_labels(id, extra) do
     base = %{
       @managed_by_label => @managed_by_value,
@@ -523,6 +756,15 @@ defmodule Condukt.Sandbox.Kubernetes do
     }
 
     Map.merge(base, stringify_map(extra))
+  end
+
+  defp build_annotations(extra, now) do
+    extra
+    |> stringify_map()
+    |> Map.merge(%{
+      @created_annotation => now,
+      @heartbeat_annotation => now
+    })
   end
 
   defp sanitize_label_value(id) do
@@ -553,6 +795,36 @@ defmodule Condukt.Sandbox.Kubernetes do
   end
 
   defp normalize_env(_), do: %{}
+
+  defp normalize_workspace_source(nil), do: {:ok, nil}
+
+  defp normalize_workspace_source(git) when is_binary(git), do: {:ok, %{git: git, ref: nil}}
+
+  defp normalize_workspace_source(source) when is_list(source) do
+    source
+    |> Map.new(fn {key, value} -> {key, value} end)
+    |> normalize_workspace_source()
+  end
+
+  defp normalize_workspace_source(source) when is_map(source) do
+    git = Map.get(source, :git) || Map.get(source, "git")
+    ref = Map.get(source, :ref) || Map.get(source, "ref")
+
+    cond do
+      not is_binary(git) ->
+        {:error, ":workspace_source requires a git URL string or a :git entry"}
+
+      not is_nil(ref) and not is_binary(ref) ->
+        {:error, ":workspace_source :ref must be a string when provided"}
+
+      true ->
+        {:ok, %{git: git, ref: ref}}
+    end
+  end
+
+  defp normalize_workspace_source(_other) do
+    {:error, ":workspace_source must be a git URL string or keyword/map options"}
+  end
 
   # ============================================================================
   # Connection resolution
@@ -621,6 +893,39 @@ defmodule Condukt.Sandbox.Kubernetes do
   # ============================================================================
 
   defp pod_phase(pod), do: get_in(pod, ["status", "phase"]) || ""
+
+  defp pod_name(pod), do: get_in(pod, ["metadata", "name"])
+
+  defp stale_pod?(pod, now, stale_after) do
+    managed_by_condukt?(pod) and stale_heartbeat?(pod, now, stale_after)
+  end
+
+  defp managed_by_condukt?(pod) do
+    get_in(pod, ["metadata", "labels", @managed_by_label]) == @managed_by_value
+  end
+
+  defp stale_heartbeat?(pod, now, stale_after) do
+    pod
+    |> heartbeat_timestamp()
+    |> stale_timestamp?(now, stale_after)
+  end
+
+  defp heartbeat_timestamp(pod) do
+    get_in(pod, ["metadata", "annotations", @heartbeat_annotation]) ||
+      get_in(pod, ["metadata", "annotations", @created_annotation])
+  end
+
+  defp stale_timestamp?(nil, _now, _stale_after), do: false
+
+  defp stale_timestamp?(value, now, stale_after) do
+    case DateTime.from_iso8601(value) do
+      {:ok, heartbeat_at, _offset} ->
+        DateTime.diff(now, heartbeat_at, :millisecond) >= stale_after
+
+      {:error, _reason} ->
+        false
+    end
+  end
 
   defp container_ready?(pod) do
     pod
@@ -729,6 +1034,8 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   defp format_remote_error(""), do: :remote_error
   defp format_remote_error(output) when is_binary(output), do: {:remote_error, output}
+
+  defp timestamp, do: DateTime.utc_now() |> DateTime.to_iso8601()
 
   defp format_api_error(%{message: message}), do: message
   defp format_api_error(reason) when is_binary(reason), do: reason

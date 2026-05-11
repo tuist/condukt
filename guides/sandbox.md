@@ -108,6 +108,8 @@ sandbox = {
     limits: %{cpu: "2", memory: "4Gi"}
   },
   active_deadline_seconds: 4 * 3600,
+  heartbeat_interval: 60_000,
+  workspace_source: [git: "https://github.com/myorg/repo.git", ref: "main"],
   labels: %{"tenant" => "acme"},
   cwd: "/workspace"
 }
@@ -160,6 +162,29 @@ in-progress file edits persist across container restarts within the same
 pod. The volume does not survive pod deletion or node loss; for cross-node
 durability, build an image that mounts a PersistentVolumeClaim.
 
+`write_file/3` streams file contents through the Kubernetes exec stdin
+channel. That keeps large writes out of the exec command line and avoids
+the old base64 command-size ceiling.
+
+Pass `:workspace_source` to clone a git repository into the workspace when
+the pod is initialized:
+
+```elixir
+sandbox = {
+  Condukt.Sandbox.Kubernetes,
+  image: "ghcr.io/myorg/agent-runtime-with-git:v1",
+  namespace: "agents",
+  workspace_source: [
+    git: "https://github.com/myorg/repo.git",
+    ref: "main"
+  ]
+}
+```
+
+The clone runs inside the pod, so the runtime image must include `git`.
+For stable `:id` sessions, an existing git checkout is reused and the
+configured ref is checked out again on reattach.
+
 ### Stale pod handling
 
 When `init/1` adopts an existing pod, it accepts `Running`, waits on
@@ -168,6 +193,23 @@ On `Succeeded` or `Failed` (which the keepalive container should not
 normally produce) it returns `{:error, {:stale_pod, phase}}` by default
 so the caller can decide what to do. Pass `on_stale: :recreate` to delete
 and recreate automatically.
+
+Each pod also carries a `condukt.io/heartbeat-at` annotation. By default,
+the sandbox starts a linked worker that refreshes it every 60 seconds. If
+the owning Condukt process crashes, the worker dies too, and a separate
+process can reap stale pods before `activeDeadlineSeconds` expires:
+
+```elixir
+{:ok, deleted_pods} =
+  Condukt.Sandbox.Kubernetes.reap_stale(
+    namespace: "agents",
+    stale_after: 15 * 60_000
+  )
+```
+
+Pass `heartbeat_interval: false` when you want to drive heartbeats from
+your own process. In that case call `Condukt.Sandbox.Kubernetes.heartbeat/1`
+with the sandbox handle or state.
 
 ### Hard ceiling on pod lifetime
 
@@ -189,7 +231,7 @@ Connection auth is resolved in this order:
 ### RBAC
 
 The identity Condukt runs as needs permission to create, get, exec into,
-and delete pods in the target namespace:
+patch, list, and delete pods in the target namespace:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -200,7 +242,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "create", "delete"]
+    verbs: ["get", "list", "create", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
@@ -225,9 +267,9 @@ roleRef:
 * `mount/3` is unsupported. K8s pods cannot accept new volumes once
   running. Mounts must be declared up front; in v1 that means baking a
   PVC into a custom image.
-* Writes are base64-embedded in the exec command line, so very large
-  payloads (tens of MB) should be fetched into the pod from inside it
-  (`git clone`, `curl`, etc) rather than written through `Sandbox.write/3`.
+* `:workspace_source` requires `git` inside the runtime image. The default
+  `debian:bookworm-slim` image is intentionally minimal and does not include
+  development tools.
 
 ## Picking a sandbox
 

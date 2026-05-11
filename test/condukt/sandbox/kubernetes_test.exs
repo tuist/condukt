@@ -74,6 +74,14 @@ defmodule Condukt.Sandbox.KubernetesTest do
     assert {:ok, ^payload} = Sandbox.read(sandbox, "/workspace/sample.bin")
   end
 
+  test "write_file streams a large payload through exec stdin", %{namespace: ns, id: id} do
+    {:ok, sandbox} = open_sandbox(id, ns)
+    payload = String.duplicate("0123456789abcdef", 16_384)
+
+    assert :ok = Sandbox.write(sandbox, "/workspace/large.txt", payload)
+    assert {:ok, ^payload} = Sandbox.read(sandbox, "/workspace/large.txt")
+  end
+
   test "write_file creates parent directories", %{namespace: ns, id: id} do
     {:ok, sandbox} = open_sandbox(id, ns)
 
@@ -164,18 +172,46 @@ defmodule Condukt.Sandbox.KubernetesTest do
     refute pod_exists?(conn, ns, pod_name)
   end
 
+  test "shutdown stops the heartbeat worker", %{namespace: ns, id: id} do
+    {:ok, sandbox} = open_sandbox(id, ns)
+    heartbeat_pid = sandbox.state.heartbeat_pid
+
+    assert is_pid(heartbeat_pid)
+    assert Process.alive?(heartbeat_pid)
+
+    assert :ok = Sandbox.shutdown(sandbox)
+    wait_until(fn -> not Process.alive?(heartbeat_pid) end, 5_000)
+    refute Process.alive?(heartbeat_pid)
+  end
+
+  test "reap_stale deletes pods with old heartbeat annotations", %{conn: conn, namespace: ns} do
+    id = "smoke-reap-#{System.unique_integer([:positive])}"
+    {:ok, _sandbox} = open_sandbox(id, ns, heartbeat_interval: false)
+
+    pod_name = Kubernetes.pod_name_for(id)
+    old_heartbeat = DateTime.utc_now() |> DateTime.add(-3_600, :second) |> DateTime.to_iso8601()
+
+    :ok = patch_pod_annotations(conn, ns, pod_name, %{"condukt.io/heartbeat-at" => old_heartbeat})
+
+    assert {:ok, [^pod_name]} = Kubernetes.reap_stale(conn: conn, namespace: ns, stale_after: 60_000)
+    wait_until(fn -> not pod_exists?(conn, ns, pod_name) end, 60_000)
+    refute pod_exists?(conn, ns, pod_name)
+  end
+
   # ============================================================================
   # Helpers
   # ============================================================================
 
-  defp open_sandbox(id, namespace) do
-    Sandbox.new(Kubernetes,
+  defp open_sandbox(id, namespace, opts \\ []) do
+    base_opts = [
       id: id,
       namespace: namespace,
       image: @image,
       ready_timeout: @ready_timeout,
       active_deadline_seconds: 3600
-    )
+    ]
+
+    Sandbox.new(Kubernetes, Keyword.merge(base_opts, opts))
   end
 
   defp resolve_conn do
@@ -216,6 +252,15 @@ defmodule Condukt.Sandbox.KubernetesTest do
     case K8s.Client.run(conn, K8s.Client.get("v1", "Pod", namespace: namespace, name: name)) do
       {:ok, _} -> true
       _ -> false
+    end
+  end
+
+  defp patch_pod_annotations(conn, namespace, name, annotations) do
+    patch = %{"metadata" => %{"annotations" => annotations}}
+
+    case K8s.Client.run(conn, K8s.Client.patch("v1", "Pod", [namespace: namespace, name: name], patch)) do
+      {:ok, _} -> :ok
+      {:error, reason} -> flunk("Failed to patch pod #{name}: #{inspect(reason)}")
     end
   end
 

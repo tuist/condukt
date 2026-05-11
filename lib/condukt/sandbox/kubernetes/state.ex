@@ -8,6 +8,7 @@ defmodule Condukt.Sandbox.Kubernetes.State do
     :container,
     :base_cwd,
     :id,
-    :delete_on_shutdown
+    :delete_on_shutdown,
+    :heartbeat_pid
   ]
 end
