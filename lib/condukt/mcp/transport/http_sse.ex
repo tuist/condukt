@@ -9,8 +9,6 @@ defmodule Condukt.MCP.Transport.HttpSSE do
   # JSON-RPC responses arrive as `event: message` events containing
   # JSON. The client posts requests to the published endpoint URL.
 
-  @behaviour Condukt.MCP.Transport
-
   use GenServer
 
   alias Condukt.MCP.{Auth, JSONRPC, SSE}
@@ -28,13 +26,10 @@ defmodule Condukt.MCP.Transport.HttpSSE do
     pending: []
   ]
 
-  @impl Condukt.MCP.Transport
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
-  @impl Condukt.MCP.Transport
   def send_message(pid, envelope), do: GenServer.call(pid, {:send, envelope})
 
-  @impl Condukt.MCP.Transport
   def close(pid) do
     GenServer.cast(pid, :stop)
     :ok

@@ -25,10 +25,6 @@ defmodule Condukt.MCP.Transport do
   # `send_message/2` returns `:ok` or `{:error, reason}`, and `close/1`
   # returns `:ok`.
 
-  @callback start_link(keyword()) :: term()
-  @callback send_message(pid(), map()) :: term()
-  @callback close(pid()) :: term()
-
   @doc """
   Returns the implementation module for the transport tag declared on
   the server.

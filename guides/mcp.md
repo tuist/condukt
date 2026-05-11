@@ -20,8 +20,8 @@ transports are supported:
 
 ## Declaring servers on an agent
 
-Add the optional `mcp_servers/0` callback to a module that uses
-`Condukt`. Each entry is a `Condukt.MCP.Server` struct:
+Add an optional `mcp_servers/0` function to a module that uses
+`Condukt`. Return a list of `Condukt.MCP.Server` structs or maps:
 
 ```elixir
 defmodule MyApp.Agent do
@@ -32,7 +32,6 @@ defmodule MyApp.Agent do
     [Condukt.Tools.Read, Condukt.Tools.Bash]
   end
 
-  @impl true
   def mcp_servers do
     [
       %Condukt.MCP.Server{

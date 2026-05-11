@@ -7,21 +7,16 @@ defmodule Condukt.MCP.Transport.Stdio do
   # port (or terminating this GenServer) closes the subprocess's stdin
   # and triggers its shutdown.
 
-  @behaviour Condukt.MCP.Transport
-
   use GenServer
 
   alias Condukt.MCP.JSONRPC
 
   defstruct [:owner, :port, :buffer, :command]
 
-  @impl Condukt.MCP.Transport
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
-  @impl Condukt.MCP.Transport
   def send_message(pid, envelope), do: GenServer.call(pid, {:send, envelope})
 
-  @impl Condukt.MCP.Transport
   def close(pid) do
     GenServer.cast(pid, :stop)
     :ok

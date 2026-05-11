@@ -12,9 +12,9 @@ defmodule Condukt.MCP do
 
   ## Declaring servers on an agent
 
-  Add the optional `mcp_servers/0` callback to a module that uses
-  `Condukt`. Each entry is a `Condukt.MCP.Server` struct describing the
-  transport and (for HTTP transports) authentication.
+  Add an optional `mcp_servers/0` function to a module that uses
+  `Condukt`. Return a list of `Condukt.MCP.Server` structs or maps
+  describing the transport and (for HTTP transports) authentication.
 
       defmodule MyApp.Agent do
         use Condukt
@@ -24,7 +24,6 @@ defmodule Condukt.MCP do
           [Condukt.Tools.Read, Condukt.Tools.Bash]
         end
 
-        @impl true
         def mcp_servers do
           [
             %Condukt.MCP.Server{

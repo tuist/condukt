@@ -17,8 +17,6 @@ defmodule Condukt.MCP.Transport.StreamableHttp do
   # `Mcp-Session-Id` header that the client must echo on every
   # subsequent request to keep the session alive.
 
-  @behaviour Condukt.MCP.Transport
-
   use GenServer
 
   alias Condukt.MCP.{Auth, JSONRPC, SSE}
@@ -33,13 +31,10 @@ defmodule Condukt.MCP.Transport.StreamableHttp do
     :session_id
   ]
 
-  @impl Condukt.MCP.Transport
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
-  @impl Condukt.MCP.Transport
   def send_message(pid, envelope), do: GenServer.call(pid, {:send, envelope})
 
-  @impl Condukt.MCP.Transport
   def close(pid) do
     GenServer.cast(pid, :stop)
     :ok
