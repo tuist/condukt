@@ -225,13 +225,24 @@ defmodule Condukt.Sandbox.Kubernetes do
     script = """
     cd #{shell_quote(base)} 2>/dev/null || exit 0
     shopt -s globstar nullglob dotglob
+    status=1
     for p in #{file_glob}; do
-      [ -f "$p" ] && printf '%s\\0' "$p"
-    done | xargs -0 -I{} grep -Hn #{case_flag} -e #{shell_quote(pattern)} -- {} 2>/dev/null | head -n #{limit}
+      [ -f "$p" ] || continue
+      grep -Hn #{case_flag} -e #{shell_quote(pattern)} -- "$p" 2>/dev/null
+      code=$?
+      case "$code" in
+        0) status=0 ;;
+        1) ;;
+        *) exit "$code" ;;
+      esac
+    done
+    exit "$status"
     """
 
     case run_exec(state, ["bash", "-c", script]) do
-      {:ok, %{output: output}} -> {:ok, parse_grep_output(output)}
+      {:ok, %{exit_code: 0, output: output}} -> {:ok, output |> parse_grep_output() |> apply_limit(limit)}
+      {:ok, %{exit_code: 1, output: ""}} -> {:ok, []}
+      {:ok, %{output: output}} -> {:error, format_remote_error(output)}
       {:error, _} = err -> err
     end
   end

@@ -181,7 +181,7 @@ jobs:
         run: mix deps.get
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc
         with:
           cluster_name: condukt-smoke
           wait: 60s

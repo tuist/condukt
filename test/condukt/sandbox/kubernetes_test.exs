@@ -125,6 +125,14 @@ defmodule Condukt.Sandbox.KubernetesTest do
     assert match.line =~ "NEEDLE"
   end
 
+  test "grep returns an empty list when there are no matches", %{namespace: ns, id: id} do
+    {:ok, sandbox} = open_sandbox(id, ns)
+
+    :ok = Sandbox.write(sandbox, "/workspace/notes.txt", "alpha\nbeta\n")
+
+    assert {:ok, []} = Sandbox.grep(sandbox, "NEEDLE", glob: "*.txt")
+  end
+
   test "init is idempotent for the same :id (reattaches to the same pod)", %{
     namespace: ns,
     id: id
