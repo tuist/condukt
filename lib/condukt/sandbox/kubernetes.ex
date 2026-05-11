@@ -105,6 +105,8 @@ defmodule Condukt.Sandbox.Kubernetes do
   @default_active_deadline 8 * 3600
   @default_ready_timeout 120_000
   @ready_poll_interval 1_000
+  @timeout_exit_code 124
+  @timeout_grace_ms 5_000
 
   @managed_by_label "app.kubernetes.io/managed-by"
   @managed_by_value "condukt"
@@ -178,8 +180,12 @@ defmodule Condukt.Sandbox.Kubernetes do
       command
       |> wrap_with_cwd(cwd)
       |> prepend_env_exports(env)
+      |> wrap_with_timeout(timeout)
 
-    run_exec(state, ["bash", "-c", script], timeout: timeout)
+    case run_exec(state, ["bash", "-c", script], timeout: timeout + @timeout_grace_ms) do
+      {:ok, %{exit_code: @timeout_exit_code}} -> {:error, :timeout}
+      result -> result
+    end
   end
 
   @impl Sandbox
@@ -656,6 +662,14 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   defp wrap_with_cwd(command, nil), do: command
   defp wrap_with_cwd(command, cwd), do: "cd #{shell_quote(cwd)} && #{command}"
+
+  defp wrap_with_timeout(script, timeout) when is_integer(timeout) and timeout > 0 do
+    seconds = timeout |> Kernel./(1_000) |> :erlang.float_to_binary(decimals: 3)
+
+    "timeout --kill-after=5s #{seconds}s bash -c #{shell_quote(script)}"
+  end
+
+  defp wrap_with_timeout(script, _timeout), do: script
 
   defp prepend_env_exports(script, env) do
     normalized = normalize_env(env)

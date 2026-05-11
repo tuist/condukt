@@ -1,14 +1,14 @@
 defmodule Condukt.Sandbox.KubernetesTest do
   # Smoke tests that hit a real Kubernetes API server (kind locally, kind
-  # in CI). Excluded by default — opt in with `mix test --only k8s_sandbox`.
+  # in CI). Excluded by default; opt in with `mix test --only k8s_sandbox`.
   # They share a single namespace created in `setup_all` and clean up pods
   # in `on_exit`.
   use ExUnit.Case, async: false
 
-  @moduletag :k8s_sandbox
-
   alias Condukt.Sandbox
   alias Condukt.Sandbox.Kubernetes
+
+  @moduletag :k8s_sandbox
 
   @image "debian:bookworm-slim"
   @ready_timeout 180_000
@@ -18,6 +18,7 @@ defmodule Condukt.Sandbox.KubernetesTest do
     namespace = "condukt-test-#{System.unique_integer([:positive])}"
 
     :ok = create_namespace(conn, namespace)
+    :ok = wait_for_service_account(conn, namespace, "default", 30_000)
 
     on_exit(fn -> delete_namespace(conn, namespace) end)
 
@@ -53,6 +54,16 @@ defmodule Condukt.Sandbox.KubernetesTest do
     {:ok, sandbox} = open_sandbox(id, ns)
     assert {:ok, %{exit_code: code}} = Sandbox.exec(sandbox, "exit 7")
     assert code != 0
+  end
+
+  test "exec enforces command timeout", %{namespace: ns, id: id} do
+    {:ok, sandbox} = open_sandbox(id, ns)
+
+    started_at = System.monotonic_time(:millisecond)
+    assert {:error, :timeout} = Sandbox.exec(sandbox, "sleep 2", timeout: 500)
+    elapsed = System.monotonic_time(:millisecond) - started_at
+
+    assert elapsed < 2_000
   end
 
   test "read_file / write_file round-trip a binary payload", %{namespace: ns, id: id} do
@@ -121,7 +132,7 @@ defmodule Condukt.Sandbox.KubernetesTest do
     {:ok, first} = open_sandbox(id, ns)
     :ok = Sandbox.write(first, "/workspace/keep.txt", "persisted")
 
-    # New sandbox handle, same id — should adopt the existing pod.
+    # New sandbox handle, same id; should adopt the existing pod.
     {:ok, second} = open_sandbox(id, ns)
     assert second.state.pod_name == first.state.pod_name
     assert {:ok, "persisted"} = Sandbox.read(second, "/workspace/keep.txt")
@@ -160,9 +171,10 @@ defmodule Condukt.Sandbox.KubernetesTest do
   end
 
   defp resolve_conn do
-    cond do
-      System.get_env("KUBERNETES_SERVICE_HOST") -> K8s.Conn.from_service_account()
-      true -> K8s.Conn.from_file(default_kubeconfig())
+    if System.get_env("KUBERNETES_SERVICE_HOST") do
+      K8s.Conn.from_service_account()
+    else
+      K8s.Conn.from_file(default_kubeconfig())
     end
   end
 
@@ -194,6 +206,17 @@ defmodule Condukt.Sandbox.KubernetesTest do
 
   defp pod_exists?(conn, namespace, name) do
     case K8s.Client.run(conn, K8s.Client.get("v1", "Pod", namespace: namespace, name: name)) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp wait_for_service_account(conn, namespace, name, timeout) do
+    wait_until(fn -> service_account_exists?(conn, namespace, name) end, timeout)
+  end
+
+  defp service_account_exists?(conn, namespace, name) do
+    case K8s.Client.run(conn, K8s.Client.get("v1", "ServiceAccount", namespace: namespace, name: name)) do
       {:ok, _} -> true
       _ -> false
     end

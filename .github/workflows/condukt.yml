@@ -186,6 +186,11 @@ jobs:
           cluster_name: condukt-smoke
           wait: 60s
 
+      - name: Wait for kind control plane
+        run: |
+          kubectl wait --for=condition=Ready node --all --timeout=120s
+          kubectl -n kube-system rollout status deployment/coredns --timeout=120s
+
       - name: Pre-pull pod image into the kind cluster
         run: |
           docker pull debian:bookworm-slim
@@ -193,4 +198,3 @@ jobs:
 
       - name: Run K8s sandbox smoke tests
         run: mix test --only k8s_sandbox test/condukt/sandbox/kubernetes_test.exs
-
