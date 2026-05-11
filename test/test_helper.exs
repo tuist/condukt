@@ -15,4 +15,4 @@ Code.require_file("support/llm_provider.ex", __DIR__)
 #
 #   mix test --only virtual_sandbox
 
-ExUnit.start(exclude: [virtual_sandbox: true])
+ExUnit.start(exclude: [virtual_sandbox: true, k8s_sandbox: true])
