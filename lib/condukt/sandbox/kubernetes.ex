@@ -108,8 +108,10 @@ defmodule Condukt.Sandbox.Kubernetes do
   @behaviour Condukt.Sandbox
 
   alias Condukt.Sandbox
+  alias Condukt.Sandbox.Kubernetes.Exec
   alias Condukt.Sandbox.Kubernetes.PodSpec
   alias Condukt.Sandbox.Kubernetes.State
+  alias Condukt.Sandbox.Kubernetes.WorkspaceSource
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -137,9 +139,8 @@ defmodule Condukt.Sandbox.Kubernetes do
   def init(opts) do
     with {:ok, conn} <- resolve_conn(opts),
          {:ok, config} <- build_config(opts),
-         {:ok, state} <- ensure_pod(conn, config),
-         {:ok, state} <- prepare_workspace(state, config) do
-      start_heartbeat(state, config)
+         {:ok, state} <- ensure_pod(conn, config) do
+      prepare_and_start(state, config)
     end
   end
 
@@ -156,12 +157,12 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   @impl Sandbox
   def read_file(state, path) do
-    case run_exec(state, ["cat", "--", path]) do
+    case Exec.run(state, ["cat", "--", path]) do
       {:ok, %{output: output, exit_code: 0}} ->
         {:ok, output}
 
       {:ok, %{exit_code: _, output: output}} ->
-        {:error, format_remote_error(output)}
+        {:error, Exec.format_remote_error(output)}
 
       {:error, _} = err ->
         err
@@ -172,13 +173,13 @@ defmodule Condukt.Sandbox.Kubernetes do
   def write_file(state, path, content) do
     script = """
     set -e
-    mkdir -p -- "$(dirname -- #{shell_quote(path)})"
-    cat > #{shell_quote(path)}
+    mkdir -p -- "$(dirname -- #{Exec.shell_quote(path)})"
+    cat > #{Exec.shell_quote(path)}
     """
 
-    case run_exec_with_stdin(state, ["bash", "-c", script], content) do
+    case Exec.run_with_stdin(state, ["bash", "-c", script], content) do
       {:ok, %{exit_code: 0}} -> :ok
-      {:ok, %{output: output}} -> {:error, format_remote_error(output)}
+      {:ok, %{output: output}} -> {:error, Exec.format_remote_error(output)}
       {:error, _} = err -> err
     end
   end
@@ -202,7 +203,7 @@ defmodule Condukt.Sandbox.Kubernetes do
       |> prepend_env_exports(env)
       |> wrap_with_timeout(timeout)
 
-    case run_exec(state, ["bash", "-c", script], timeout: timeout + @timeout_grace_ms) do
+    case Exec.run(state, ["bash", "-c", script], timeout: timeout + @timeout_grace_ms) do
       {:ok, %{exit_code: @timeout_exit_code}} -> {:error, :timeout}
       result -> result
     end
@@ -214,19 +215,19 @@ defmodule Condukt.Sandbox.Kubernetes do
     limit = opts[:limit]
 
     script = """
-    cd #{shell_quote(base)} 2>/dev/null || exit 0
+    cd #{Exec.shell_quote(base)} 2>/dev/null || exit 0
     shopt -s globstar nullglob dotglob
     for p in #{pattern}; do
       [ -e "$p" ] && printf '%s\\n' "$p"
     done
     """
 
-    case run_exec(state, ["bash", "-c", script]) do
+    case Exec.run(state, ["bash", "-c", script]) do
       {:ok, %{output: output, exit_code: 0}} ->
         {:ok, output |> split_lines() |> apply_limit(limit)}
 
       {:ok, %{output: output}} ->
-        {:error, format_remote_error(output)}
+        {:error, Exec.format_remote_error(output)}
 
       {:error, _} = err ->
         err
@@ -243,12 +244,12 @@ defmodule Condukt.Sandbox.Kubernetes do
     case_flag = if case_sensitive?, do: "", else: "-i"
 
     script = """
-    cd #{shell_quote(base)} 2>/dev/null || exit 0
+    cd #{Exec.shell_quote(base)} 2>/dev/null || exit 0
     shopt -s globstar nullglob dotglob
     status=1
     for p in #{file_glob}; do
       [ -f "$p" ] || continue
-      grep -Hn #{case_flag} -e #{shell_quote(pattern)} -- "$p" 2>/dev/null
+      grep -Hn #{case_flag} -e #{Exec.shell_quote(pattern)} -- "$p" 2>/dev/null
       code=$?
       case "$code" in
         0) status=0 ;;
@@ -259,10 +260,10 @@ defmodule Condukt.Sandbox.Kubernetes do
     exit "$status"
     """
 
-    case run_exec(state, ["bash", "-c", script]) do
+    case Exec.run(state, ["bash", "-c", script]) do
       {:ok, %{exit_code: 0, output: output}} -> {:ok, output |> parse_grep_output() |> apply_limit(limit)}
       {:ok, %{exit_code: 1, output: ""}} -> {:ok, []}
-      {:ok, %{output: output}} -> {:error, format_remote_error(output)}
+      {:ok, %{output: output}} -> {:error, Exec.format_remote_error(output)}
       {:error, _} = err -> err
     end
   end
@@ -293,9 +294,9 @@ defmodule Condukt.Sandbox.Kubernetes do
   @doc """
   Updates the heartbeat annotation on a Kubernetes sandbox pod.
 
-  The sandbox starts a linked heartbeat worker by default. This helper is
-  exposed for callers that disable the worker and want to drive heartbeats
-  from their own supervision tree.
+  The sandbox starts a worker tied to the owner process by default. This
+  helper is exposed for callers that disable the worker and want to drive
+  heartbeats from their own supervision tree.
   """
   def heartbeat(%Sandbox{module: __MODULE__, state: %State{} = state}), do: heartbeat(state)
 
@@ -389,39 +390,22 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
-  defp prepare_workspace(state, %{workspace_source: nil}), do: {:ok, state}
-
-  defp prepare_workspace(state, config) do
-    source = config.workspace_source
-    ref_script = workspace_ref_script(source.ref)
-
-    script = """
-    set -e
-    cd #{shell_quote(config.cwd)}
-    if [ -d .git ]; then
-      #{ref_script}
-      exit 0
-    fi
-    if [ -n "$(find . -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-      echo "workspace #{config.cwd} is not empty and is not a git repository" >&2
-      exit 73
-    fi
-    git clone #{shell_quote(source.git)} .
-    #{ref_script}
-    """
-
-    case run_exec(state, ["bash", "-c", script], timeout: config.workspace_source_timeout) do
-      {:ok, %{exit_code: 0}} -> {:ok, state}
-      {:ok, %{output: output}} -> {:error, {:workspace_source, format_remote_error(output)}}
-      {:error, reason} -> {:error, {:workspace_source, reason}}
+  defp prepare_and_start(state, config) do
+    with {:ok, state} <- WorkspaceSource.prepare(state, config),
+         {:ok, state} <- start_heartbeat(state, config) do
+      {:ok, state}
+    else
+      {:error, reason} ->
+        cleanup_failed_init(state)
+        {:error, reason}
     end
   end
 
-  defp workspace_ref_script(nil), do: ":"
-
-  defp workspace_ref_script(ref) do
-    "git fetch --all --tags --prune && git -c advice.detachedHead=false checkout #{shell_quote(ref)}"
+  defp cleanup_failed_init(%State{delete_on_shutdown: true} = state) do
+    delete_pod(state.conn, state.namespace, state.pod_name)
   end
+
+  defp cleanup_failed_init(%State{}), do: :ok
 
   defp wait_until_ready(conn, config) do
     deadline = System.monotonic_time(:millisecond) + config.ready_timeout
@@ -549,124 +533,6 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
-  defp run_exec(state, command_list, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 120_000)
-
-    state
-    |> exec_op(command_list)
-    |> K8s.Client.put_conn(state.conn)
-    |> K8s.Client.run(recv_timeout: timeout)
-    |> normalize_exec_result()
-  end
-
-  defp run_exec_with_stdin(state, command_list, input, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 120_000)
-    parent = self()
-    ref = make_ref()
-    collector = spawn_link(fn -> exec_stream_collector(parent, ref, %{}) end)
-
-    result =
-      case K8s.Client.stream_to(state.conn, exec_op(state, command_list), [recv_timeout: timeout], collector) do
-        {:ok, send_to_websocket} ->
-          send_stdin(send_to_websocket, input)
-          send_to_websocket.(:close)
-          collect_exec_stream(ref, timeout)
-
-        {:error, reason} ->
-          {:error, format_api_error(reason)}
-      end
-
-    Process.unlink(collector)
-    Process.exit(collector, :shutdown)
-    result
-  end
-
-  defp exec_op(state, command_list) do
-    K8s.Client.connect(
-      "v1",
-      "pods/exec",
-      [namespace: state.namespace, name: state.pod_name],
-      command: command_list,
-      container: state.container,
-      tty: false
-    )
-  end
-
-  defp send_stdin(send_to_websocket, input) do
-    input
-    |> chunk_binary(32 * 1024)
-    |> Enum.each(fn chunk -> send_to_websocket.({:stdin, chunk}) end)
-  end
-
-  defp chunk_binary("", _size), do: []
-
-  defp chunk_binary(binary, size) when byte_size(binary) <= size, do: [binary]
-
-  defp chunk_binary(binary, size) do
-    <<chunk::binary-size(size), rest::binary>> = binary
-    [chunk | chunk_binary(rest, size)]
-  end
-
-  defp exec_stream_collector(parent, ref, acc) do
-    receive do
-      {:open, true} ->
-        exec_stream_collector(parent, ref, acc)
-
-      {:stdout, data} ->
-        exec_stream_collector(parent, ref, append_stream(acc, :stdout, data))
-
-      {:stderr, data} ->
-        exec_stream_collector(parent, ref, append_stream(acc, :stderr, data))
-
-      {:error, data} ->
-        exec_stream_collector(parent, ref, append_stream(acc, :error, data))
-
-      {:close, _reason} ->
-        send(parent, {ref, normalize_exec_result({:ok, acc})})
-
-      :done ->
-        send(parent, {ref, normalize_exec_result({:ok, acc})})
-    end
-  end
-
-  defp append_stream(acc, key, data), do: Map.update(acc, key, data, &(&1 <> data))
-
-  defp collect_exec_stream(ref, timeout) do
-    receive do
-      {^ref, result} -> result
-    after
-      timeout -> {:error, :timeout}
-    end
-  end
-
-  defp normalize_exec_result({:ok, response}) do
-    stdout = Map.get(response, :stdout, "") || ""
-    stderr = Map.get(response, :stderr, "") || ""
-    error = Map.get(response, :error, "") || ""
-
-    {:ok,
-     %{
-       output: stdout <> stderr,
-       exit_code: derive_exit_code(error)
-     }}
-  end
-
-  defp normalize_exec_result({:error, reason}), do: {:error, format_api_error(reason)}
-
-  # K8s exec returns an error channel with a JSON-like status when the
-  # remote command exits non-zero. Pull the exit code out of it if present.
-  defp derive_exit_code(""), do: 0
-  defp derive_exit_code(nil), do: 0
-
-  defp derive_exit_code(error) when is_binary(error) do
-    case Regex.run(~r/exit (?:status|code):?\s*(\d+)/i, error) do
-      [_, code] -> String.to_integer(code)
-      _ -> 1
-    end
-  end
-
-  defp derive_exit_code(_), do: 1
-
   # ============================================================================
   # Config / state assembly
   # ============================================================================
@@ -686,7 +552,9 @@ defmodule Condukt.Sandbox.Kubernetes do
     delete_on_shutdown =
       Keyword.get_lazy(opts, :delete_on_shutdown, fn -> generated? end)
 
-    with {:ok, workspace_source} <- normalize_workspace_source(Keyword.get(opts, :workspace_source)) do
+    with {:ok, workspace_source} <- WorkspaceSource.normalize(Keyword.get(opts, :workspace_source)),
+         {:ok, heartbeat_interval} <-
+           normalize_heartbeat_interval(Keyword.get(opts, :heartbeat_interval, @default_heartbeat_interval)) do
       {:ok,
        %{
          id: id,
@@ -701,7 +569,7 @@ defmodule Condukt.Sandbox.Kubernetes do
          resources: stringify_resources(Keyword.get(opts, :resources, %{})),
          service_account: Keyword.get(opts, :service_account),
          active_deadline_seconds: Keyword.get(opts, :active_deadline_seconds, @default_active_deadline),
-         heartbeat_interval: Keyword.get(opts, :heartbeat_interval, @default_heartbeat_interval),
+         heartbeat_interval: heartbeat_interval,
          workspace_source: workspace_source,
          workspace_source_timeout: Keyword.get(opts, :workspace_source_timeout, @default_workspace_source_timeout),
          ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
@@ -727,7 +595,8 @@ defmodule Condukt.Sandbox.Kubernetes do
   defp start_heartbeat(state, %{heartbeat_interval: nil}), do: {:ok, state}
 
   defp start_heartbeat(state, %{heartbeat_interval: interval}) when is_integer(interval) and interval > 0 do
-    pid = spawn_link(fn -> heartbeat_loop(state, interval) end)
+    owner = self()
+    pid = spawn(fn -> heartbeat_loop(Process.monitor(owner), state, interval) end)
     {:ok, %{state | heartbeat_pid: pid}}
   end
 
@@ -738,15 +607,18 @@ defmodule Condukt.Sandbox.Kubernetes do
   defp stop_heartbeat(%State{heartbeat_pid: nil}), do: :ok
 
   defp stop_heartbeat(%State{heartbeat_pid: pid}) when is_pid(pid) do
-    Process.unlink(pid)
     Process.exit(pid, :shutdown)
     :ok
   end
 
-  defp heartbeat_loop(state, interval) do
+  defp heartbeat_loop(owner_ref, state, interval) do
     _ = patch_heartbeat(state)
-    Process.sleep(interval)
-    heartbeat_loop(state, interval)
+
+    receive do
+      {:DOWN, ^owner_ref, :process, _pid, _reason} -> :ok
+    after
+      interval -> heartbeat_loop(owner_ref, state, interval)
+    end
   end
 
   defp build_labels(id, extra) do
@@ -796,35 +668,14 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   defp normalize_env(_), do: %{}
 
-  defp normalize_workspace_source(nil), do: {:ok, nil}
+  defp normalize_heartbeat_interval(false), do: {:ok, false}
+  defp normalize_heartbeat_interval(nil), do: {:ok, nil}
 
-  defp normalize_workspace_source(git) when is_binary(git), do: {:ok, %{git: git, ref: nil}}
-
-  defp normalize_workspace_source(source) when is_list(source) do
-    source
-    |> Map.new(fn {key, value} -> {key, value} end)
-    |> normalize_workspace_source()
+  defp normalize_heartbeat_interval(interval) when is_integer(interval) and interval > 0 do
+    {:ok, interval}
   end
 
-  defp normalize_workspace_source(source) when is_map(source) do
-    git = Map.get(source, :git) || Map.get(source, "git")
-    ref = Map.get(source, :ref) || Map.get(source, "ref")
-
-    cond do
-      not is_binary(git) ->
-        {:error, ":workspace_source requires a git URL string or a :git entry"}
-
-      not is_nil(ref) and not is_binary(ref) ->
-        {:error, ":workspace_source :ref must be a string when provided"}
-
-      true ->
-        {:ok, %{git: git, ref: ref}}
-    end
-  end
-
-  defp normalize_workspace_source(_other) do
-    {:error, ":workspace_source must be a git URL string or keyword/map options"}
-  end
+  defp normalize_heartbeat_interval(interval), do: {:error, {:invalid_heartbeat_interval, interval}}
 
   # ============================================================================
   # Connection resolution
@@ -977,12 +828,12 @@ defmodule Condukt.Sandbox.Kubernetes do
   end
 
   defp wrap_with_cwd(command, nil), do: command
-  defp wrap_with_cwd(command, cwd), do: "cd #{shell_quote(cwd)} && #{command}"
+  defp wrap_with_cwd(command, cwd), do: "cd #{Exec.shell_quote(cwd)} && #{command}"
 
   defp wrap_with_timeout(script, timeout) when is_integer(timeout) and timeout > 0 do
     seconds = timeout |> Kernel./(1_000) |> :erlang.float_to_binary(decimals: 3)
 
-    "timeout --kill-after=5s #{seconds}s bash -c #{shell_quote(script)}"
+    "timeout --kill-after=5s #{seconds}s bash -c #{Exec.shell_quote(script)}"
   end
 
   defp wrap_with_timeout(script, _timeout), do: script
@@ -996,17 +847,13 @@ defmodule Condukt.Sandbox.Kubernetes do
 
       list ->
         exports =
-          Enum.map_join(list, "\n", fn {k, v} -> "export #{k}=#{shell_quote(v)}" end)
+          Enum.map_join(list, "\n", fn {k, v} -> "export #{k}=#{Exec.shell_quote(v)}" end)
 
         exports <> "\n" <> script
     end
   end
 
   defp valid_env_key?({key, _value}), do: Regex.match?(~r/^[A-Za-z_][A-Za-z0-9_]*$/, key)
-
-  defp shell_quote(s) when is_binary(s) do
-    "'" <> String.replace(s, "'", "'\\''") <> "'"
-  end
 
   defp split_lines(""), do: []
   defp split_lines(s), do: String.split(s, "\n", trim: true)
@@ -1031,9 +878,6 @@ defmodule Condukt.Sandbox.Kubernetes do
       _ -> []
     end
   end
-
-  defp format_remote_error(""), do: :remote_error
-  defp format_remote_error(output) when is_binary(output), do: {:remote_error, output}
 
   defp timestamp, do: DateTime.utc_now() |> DateTime.to_iso8601()
 

@@ -195,9 +195,10 @@ so the caller can decide what to do. Pass `on_stale: :recreate` to delete
 and recreate automatically.
 
 Each pod also carries a `condukt.io/heartbeat-at` annotation. By default,
-the sandbox starts a linked worker that refreshes it every 60 seconds. If
-the owning Condukt process crashes, the worker dies too, and a separate
-process can reap stale pods before `activeDeadlineSeconds` expires:
+the sandbox starts a worker tied to the owner process that refreshes it
+every 60 seconds. If the owning Condukt process crashes, the worker dies
+too, and a separate process can reap stale pods before
+`activeDeadlineSeconds` expires:
 
 ```elixir
 {:ok, deleted_pods} =
