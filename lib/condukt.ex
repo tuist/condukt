@@ -167,6 +167,8 @@ defmodule Condukt do
       @impl Condukt
       def secrets, do: nil
 
+      def mcp_servers, do: []
+
       @impl Condukt
       def init(opts), do: {:ok, opts}
 
@@ -180,6 +182,7 @@ defmodule Condukt do
                      thinking_level: 0,
                      sandbox: 0,
                      secrets: 0,
+                     mcp_servers: 0,
                      init: 1,
                      handle_event: 2
 
@@ -206,6 +209,10 @@ defmodule Condukt do
       - `:secrets` - Session secret declarations. Resolved at session start
         and exposed to command tools as environment variables without adding
         plaintext values to model context or snapshots.
+      - `:mcp_servers` - List of `Condukt.MCP.Server` declarations. Each
+        server is connected at session start, its `tools/list` is fetched,
+        and the discovered tools are merged into the agent's tool list
+        under their `<server>.<tool>` ids. See `Condukt.MCP`.
       - `:session_store` - Session store module or `{module, opts}` tuple
       - `:compactor` - Compactor module or `{module, opts}` tuple
         (see `Condukt.Compactor`)

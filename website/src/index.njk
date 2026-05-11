@@ -60,9 +60,9 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="m8 8 4 4-4 4"/></svg>
         </span>
         <h3>Workflow engine</h3>
-        <p>A Burrito-built <code>condukt</code> executable runs HCL, JSON,
-        YAML, and <code>.exs</code> workflow files on Linux, macOS, and
-        Windows through mise.</p>
+        <p>A Burrito-built <code>condukt</code> executable runs HCL and
+        <code>.exs</code> workflow files on Linux, macOS, and Windows
+        through mise.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
@@ -89,6 +89,42 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
         secrets out of provider requests.</p>
       </article>
     </div>
+  </div>
+</section>
+
+<section id="workflows" class="install-section">
+  <div class="container">
+    <p class="eyebrow">Workflows</p>
+    <h2>A typed DAG, authored in HCL.</h2>
+    <p class="lede">
+      Compose deterministic commands, agent loops, HTTP calls, custom
+      tools, and fan-outs into a single graph. References between steps
+      make data flow visible in the file, and <code>condukt check</code>
+      validates the graph before it runs.
+    </p>
+    <div class="code-block">{% highlight "hcl" %}workflow "release_notes" {
+  runtime {
+    model = "openai:gpt-4.1-mini"
+  }
+
+  cmd "version" {
+    argv = ["sh", "-c", "git describe --tags --always"]
+  }
+
+  agent "draft" {
+    needs = ["version"]
+    input = "Draft release notes for ${task.version.stdout}"
+  }
+
+  output = task.draft.output
+}{% endhighlight %}</div>
+    <p>
+      Five step kinds compose any workflow: <code>cmd</code>,
+      <code>agent</code>, <code>http</code>, <code>tool</code>, and
+      <code>map</code>. Run with <code>condukt run release_notes.hcl</code>
+      or validate without executing using <code>condukt check release_notes.hcl</code>.
+      <a href="https://hexdocs.pm/condukt/workflows.html">Read the workflows guide</a>.
+    </p>
   </div>
 </section>
 

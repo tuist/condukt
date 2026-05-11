@@ -2,7 +2,7 @@
 title: Where an agent's tools should run
 date: 2026-05-03
 description: "We just landed sandboxes in Condukt. Same agent, swap where the tool calls actually execute. Here is the thinking behind it."
-author: The Condukt team
+author: The Tuist team
 ---
 
 A pattern keeps coming up when people build agents on top of a real application. The agent picks up a tool call, the tool runs inside the same process that serves the rest of the app, and now your web server is also doing whatever the model decided. It uses the same memory, the same scheduler, the same blast radius. Most of the time that is fine. The moment your tools do anything heavier than reading a file, "most of the time" turns into "almost never," and you start finding model-generated subprocesses chewing through CPU next to your request handlers, scripts that fan out, compilers that spike memory, and host filesystem writes you would rather not have allowed in production. We have been chewing on this in [Condukt](https://github.com/tuist/condukt), and the latest release ships an abstraction that opens the door to addressing it: the sandbox.

@@ -24,6 +24,7 @@ defmodule Condukt.Session do
   use GenServer
 
   alias Condukt.{Compactor, Context, Message, Redactor, Sandbox, Secrets, SessionID, SessionStore, Telemetry, Tool}
+  alias Condukt.MCP
   alias Condukt.SessionStore.Snapshot
   alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolCall
@@ -47,6 +48,7 @@ defmodule Condukt.Session do
     :cwd,
     :sandbox,
     :secrets,
+    :mcp_registry,
     :api_key,
     :base_url,
     :session_store,
@@ -110,6 +112,7 @@ defmodule Condukt.Session do
       |> put_configured_opt(config, :load_project_instructions, fn -> true end)
       |> Keyword.put_new(:tools, agent_module.tools())
       |> Keyword.put_new(:subagents, agent_subagents(agent_module))
+      |> Keyword.put_new(:mcp_servers, agent_mcp_servers(agent_module))
       |> put_configured_opt(config, :cwd, &File.cwd!/0)
       |> put_configured_opt(config, :sandbox, fn -> agent_sandbox(agent_module) end)
       |> put_configured_opt(config, :secrets, fn -> agent_secrets(agent_module) end)
@@ -148,6 +151,14 @@ defmodule Condukt.Session do
   defp agent_secrets(agent_module) do
     if function_exported?(agent_module, :secrets, 0) do
       agent_module.secrets()
+    end
+  end
+
+  defp agent_mcp_servers(agent_module) do
+    if function_exported?(agent_module, :mcp_servers, 0) do
+      agent_module.mcp_servers()
+    else
+      []
     end
   end
 
@@ -263,10 +274,14 @@ defmodule Condukt.Session do
         id = Keyword.get(opts, :id) || SessionID.generate()
 
         with {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd)},
-             {:secrets, {:ok, secrets}} <- {:secrets, Secrets.resolve(opts[:secrets])} do
+             {:secrets, {:ok, secrets}} <- {:secrets, Secrets.resolve(opts[:secrets])},
+             {:mcp, {:ok, mcp_registry}} <-
+               {:mcp, MCP.start_all(Keyword.get(opts, :mcp_servers, []))} do
           emit_secret_resolve(id, agent_module, secrets)
           subagents = normalize_subagents(Keyword.get(opts, :subagents, []))
           {:ok, subagent_supervisor} = maybe_start_subagent_supervisor(subagents)
+          configured_tools = Keyword.fetch!(opts, :tools)
+          tools = configured_tools ++ MCP.tools(mcp_registry)
 
           state =
             %__MODULE__{
@@ -277,12 +292,13 @@ defmodule Condukt.Session do
               thinking_level: restore_value(opts, :thinking_level, snapshot && snapshot.thinking_level),
               configured_system_prompt: configured_system_prompt,
               system_prompt: Context.compose_system_prompt(configured_system_prompt, project_context.prompt),
-              tools: maybe_inject_subagent_tool(Keyword.fetch!(opts, :tools), subagents),
+              tools: maybe_inject_subagent_tool(tools, subagents),
               subagents: subagents,
               subagent_supervisor: subagent_supervisor,
               cwd: cwd,
               sandbox: sandbox,
               secrets: secrets,
+              mcp_registry: mcp_registry,
               api_key: opts[:api_key],
               base_url: opts[:base_url],
               session_store: session_store,
@@ -301,6 +317,9 @@ defmodule Condukt.Session do
 
           {:secrets, {:error, reason}} ->
             {:stop, {:secrets_init_failed, reason}}
+
+          {:mcp, {:error, reason}} ->
+            {:stop, {:mcp_init_failed, reason}}
         end
 
       {:stop, reason} ->
@@ -442,13 +461,16 @@ defmodule Condukt.Session do
   end
 
   @impl true
-  def terminate(_reason, %{subagent_supervisor: nil}), do: :ok
+  def terminate(_reason, state) do
+    if state.mcp_registry, do: MCP.stop_all(state.mcp_registry)
+    stop_subagent_supervisor(state.subagent_supervisor)
+    :ok
+  end
 
-  def terminate(_reason, %{subagent_supervisor: supervisor}) do
-    if Process.alive?(supervisor) do
-      Supervisor.stop(supervisor)
-    end
+  defp stop_subagent_supervisor(nil), do: :ok
 
+  defp stop_subagent_supervisor(supervisor) do
+    if Process.alive?(supervisor), do: Supervisor.stop(supervisor)
     :ok
   end
 

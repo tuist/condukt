@@ -22,6 +22,26 @@
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.
 
+## MCP
+
+- Condukt connects to external Model Context Protocol servers as a
+  client, exposing each server's tools to agents and workflows under
+  `<server>.<tool>` ids. See `guides/mcp.md` for transports, auth
+  shapes, and HCL syntax.
+- Three transports are supported: `stdio` (subprocess + newline JSON-RPC),
+  `http_sse` (legacy 2024-11 HTTP+SSE), and `streamable_http` (2025-03-26).
+  No MCP server mode in v1.
+- Stdio MCP subprocesses are NOT routed through `Condukt.Sandbox` for
+  the same reason `Condukt.Tools.Command` is exempt: the binary is
+  selected by the operator, not by the model. `Condukt.MCP.Transport.Stdio`
+  uses `Port.open` directly with bidirectional binary streaming.
+- Bearer auth values are not auto-registered as session secrets. If a
+  caller wants the value redacted from transcripts, declare it under
+  `:secrets` as well.
+- Interactive OAuth is intentionally out of scope. The library accepts
+  bearer tokens or `client_credentials` grants resolved through
+  `Condukt.Secrets`-shaped refs.
+
 ## Sub-agents
 
 - Agents can declare `subagents/0` as `role: AgentModule` or

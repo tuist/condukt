@@ -2,7 +2,7 @@
 title: A graph with room for agents
 date: 2026-05-09
 description: "We just shipped workflows in Condukt. A typed DAG of steps where some are deterministic commands and some are agentic loops with typed inputs and outputs. Here is the thinking behind it."
-author: The Condukt team
+author: The Tuist team
 ---
 
 If you have spent enough time around continuous integration, you know that the building block teams have settled on is the pipeline. A YAML file in the repository, a list of jobs, some `needs` between them, and a runner that walks the graph. People do not always call it a graph, but that is what it is. A typed, directed, mostly acyclic set of steps where each step has inputs, produces outputs, and the next step starts when its dependencies are done. It works because the shape is honest about what is happening: software delivery is a graph of work, and CI made that graph the unit of automation.

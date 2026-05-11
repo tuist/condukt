@@ -89,6 +89,7 @@ defmodule Condukt.MixProject do
         "guides/tools.md": [title: "Tools"],
         "guides/subagents.md": [title: "Sub-agents"],
         "guides/workflows.md": [title: "Workflows"],
+        "guides/mcp.md": [title: "MCP"],
         "guides/sandbox.md": [title: "Sandbox"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
@@ -114,6 +115,9 @@ defmodule Condukt.MixProject do
         ],
         Workflows: [
           "guides/workflows.md"
+        ],
+        Integrations: [
+          "guides/mcp.md"
         ],
         Guides: [
           "guides/sandbox.md",
@@ -169,6 +173,12 @@ defmodule Condukt.MixProject do
           Condukt.Workflows.HCLCompiler,
           Condukt.Workflows.Validator,
           Condukt.Workflows.ToolRegistry
+        ],
+        MCP: [
+          Condukt.MCP,
+          Condukt.MCP.Server,
+          Condukt.MCP.Client,
+          Condukt.MCP.Registry
         ],
         Sandbox: [
           Condukt.Sandbox,

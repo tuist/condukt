@@ -18,18 +18,43 @@ defmodule Condukt.Workflows.Executor do
   resolved and returned.
   """
 
+  alias Condukt.MCP
   alias Condukt.Sandbox
   alias Condukt.Workflows.{Document, Expr, ToolRegistry}
 
   def run(%Document{} = doc, inputs \\ %{}, opts \\ []) when is_map(inputs) do
     with {:ok, normalized_inputs} <- Document.validate_inputs(doc, inputs),
          {:ok, order} <- topological_sort(doc.steps),
-         {:ok, runtime_opts, owned_sandbox} <- prepare_runtime(doc, opts) do
+         {:ok, runtime_opts, owned_sandbox} <- prepare_runtime(doc, opts),
+         {:ok, runtime_opts, mcp_registry} <- prepare_mcp_servers(doc, runtime_opts) do
       result = execute(order, doc, normalized_inputs, runtime_opts)
+      cleanup_mcp(mcp_registry)
       cleanup_runtime(owned_sandbox)
       result
     end
   end
+
+  defp prepare_mcp_servers(%Document{mcp_servers: servers}, opts) when map_size(servers) > 0 do
+    specs =
+      Enum.map(servers, fn {name, spec} ->
+        spec |> Map.put("name", name)
+      end)
+
+    case MCP.start_all(specs) do
+      {:ok, registry} ->
+        existing = Keyword.get(opts, :tools, %{})
+        merged = Map.merge(MCP.Registry.tool_map(registry), existing)
+        {:ok, Keyword.put(opts, :tools, merged), registry}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp prepare_mcp_servers(_doc, opts), do: {:ok, opts, nil}
+
+  defp cleanup_mcp(nil), do: :ok
+  defp cleanup_mcp(registry), do: MCP.stop_all(registry)
 
   defp prepare_runtime(%Document{runtime: runtime}, opts) do
     runtime_opts =

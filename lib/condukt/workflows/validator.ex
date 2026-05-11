@@ -8,9 +8,11 @@ defmodule Condukt.Workflows.Validator do
   @step_kinds ~w(cmd agent http tool map)
   @http_methods ~w(GET POST PUT PATCH DELETE HEAD OPTIONS)
 
-  @top_level_keys ~w(name inputs runtime steps output)
+  @top_level_keys ~w(name inputs runtime mcp_servers steps output)
   @input_keys ~w(type description default enum items)
   @runtime_keys ~w(model sandbox cwd)
+  @mcp_server_keys ~w(transport command args env url headers auth prefix init_timeout request_timeout)
+  @mcp_transports ~w(stdio http http_sse streamable_http)
   @common_step_keys ~w(kind needs when)
   @step_keys %{
     "cmd" => @common_step_keys ++ ~w(argv cwd env),
@@ -26,9 +28,11 @@ defmodule Condukt.Workflows.Validator do
          :ok <- valid_name(doc),
          :ok <- optional_map(doc, "inputs", [:workflow, "inputs"]),
          :ok <- optional_map(doc, "runtime", [:workflow, "runtime"]),
+         :ok <- optional_map(doc, "mcp_servers", [:workflow, "mcp_servers"]),
          :ok <- required_map(doc, "steps", [:workflow, "steps"]),
          :ok <- validate_inputs(Map.get(doc, "inputs", %{})),
          :ok <- validate_runtime(Map.get(doc, "runtime", %{})),
+         :ok <- validate_mcp_servers(Map.get(doc, "mcp_servers", %{})),
          :ok <- validate_steps(Map.fetch!(doc, "steps")) do
       {:ok, doc}
     end
@@ -58,6 +62,42 @@ defmodule Condukt.Workflows.Validator do
   end
 
   defp validate_input_spec(id, _spec), do: {:error, {:invalid_input, [:workflow, "inputs", id]}}
+
+  defp validate_mcp_servers(servers) do
+    Enum.reduce_while(servers, :ok, fn {id, spec}, :ok ->
+      case validate_mcp_server(id, spec) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp validate_mcp_server(id, spec) when is_binary(id) and is_map(spec) do
+    path = [:workflow, "mcp_servers", id]
+
+    with :ok <- valid_mcp_server_id(id, path),
+         :ok <- known_keys(spec, @mcp_server_keys, path),
+         :ok <- required_string(spec, "transport", path ++ ["transport"]),
+         :ok <- one_of(spec["transport"], @mcp_transports, path ++ ["transport"]) do
+      validate_mcp_transport_attrs(spec["transport"], spec, path)
+    end
+  end
+
+  defp validate_mcp_server(id, _spec), do: {:error, {:invalid_mcp_server, [:workflow, "mcp_servers", id]}}
+
+  defp valid_mcp_server_id(id, path) do
+    if Regex.match?(@name_pattern, id), do: :ok, else: {:error, {:invalid_mcp_server_id, path, id}}
+  end
+
+  defp validate_mcp_transport_attrs("stdio", spec, path) do
+    with :ok <- required_string(spec, "command", path ++ ["command"]) do
+      optional_list(spec, "args", path ++ ["args"])
+    end
+  end
+
+  defp validate_mcp_transport_attrs(transport, spec, path) when transport in ["http", "http_sse", "streamable_http"] do
+    required_string(spec, "url", path ++ ["url"])
+  end
 
   defp validate_runtime(runtime) do
     with :ok <- known_keys(runtime, @runtime_keys, [:workflow, "runtime"]),
