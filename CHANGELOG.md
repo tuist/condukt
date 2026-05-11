@@ -1,6 +1,25 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.0.0] - 2026-05-11
+
+### Bug Fixes
+
+- drop missing priv dir from Hex package files
+
+
+
+### Changes
+
+- redesign workflows around a single self-contained .star file
+
+
+
+### Features
+
+- Add client-side MCP support
+
+
 ## [0.21.0] - 2026-05-08
 
 ### Features
