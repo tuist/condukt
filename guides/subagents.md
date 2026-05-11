@@ -187,6 +187,34 @@ The default shared sandbox keeps file operations consistent. A sub-agent that
 reads `lib/foo.ex` sees the same filesystem view as the parent unless the
 registration overrides `:sandbox` or `:cwd`.
 
+Tool surfaces are not inherited. Each sub-agent declares its own `tools/0`,
+and MCP servers behave the same way: a child does not see MCP servers
+declared on the parent. Declare them per role:
+
+- Named sub-agent modules expose their own `mcp_servers/0` callback. See
+  `guides/mcp.md`.
+- Anonymous sub-agents can opt in inline with `:mcp_servers` in the role
+  opts:
+
+  ```elixir
+  def subagents do
+    [
+      researcher: [
+        model: "anthropic:claude-haiku-4-5",
+        mcp_servers: [
+          %Condukt.MCP.Server{
+            name: "docs",
+            transport: {:stdio, command: "docs-mcp", args: []}
+          }
+        ]
+      ]
+    ]
+  end
+  ```
+
+This keeps each role's tool surface deliberate and avoids sharing live MCP
+connections across agents.
+
 ## Supervision
 
 A parent session with sub-agents starts a linked `DynamicSupervisor`.
