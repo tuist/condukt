@@ -20,10 +20,14 @@ defmodule Condukt.MCP.Transport do
   # (`%Condukt.MCP.Server{}`) and `:owner` (the client pid that should
   # receive the inbound messages). Transport-specific options are passed
   # through unchanged.
+  #
+  # `start_link/1` returns the normal GenServer start result,
+  # `send_message/2` returns `:ok` or `{:error, reason}`, and `close/1`
+  # returns `:ok`.
 
-  @callback start_link(opts :: keyword()) :: GenServer.on_start()
-  @callback send_message(pid(), map()) :: :ok | {:error, term()}
-  @callback close(pid()) :: :ok
+  @callback start_link(keyword()) :: term()
+  @callback send_message(pid(), map()) :: term()
+  @callback close(pid()) :: term()
 
   @doc """
   Returns the implementation module for the transport tag declared on
