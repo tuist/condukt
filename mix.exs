@@ -68,6 +68,11 @@ defmodule Condukt.MixProject do
       {:rustler_precompiled, "~> 0.8"},
       {:rustler, ">= 0.0.0", only: [:dev, :test], runtime: false},
 
+      # Kubernetes sandbox client. Only loaded when an application uses
+      # `Condukt.Sandbox.Kubernetes` at runtime, so projects that don't run
+      # on K8s don't pay for the HTTP stack at boot.
+      {:k8s, "~> 2.8"},
+
       # Development & Testing
       {:quokka, "~> 2.12", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
@@ -184,7 +189,8 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox,
           Condukt.Sandbox.Local,
           Condukt.Sandbox.Virtual,
-          Condukt.Sandbox.Virtual.Tools.Mount
+          Condukt.Sandbox.Virtual.Tools.Mount,
+          Condukt.Sandbox.Kubernetes
         ],
         "Session Stores": [
           Condukt.SessionStore,

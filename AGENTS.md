@@ -18,6 +18,9 @@
 - `Condukt.Sandbox.Local` is the default and operates against the host
   filesystem. `Condukt.Sandbox.Virtual` is in-tree and routes through a
   Rust NIF wrapping bashkit for in-memory virtual filesystem isolation.
+  `Condukt.Sandbox.Kubernetes` runs each session in a dedicated pod via
+  the `:k8s` library; idempotent on a stable `:id` so an Oban-style
+  worker can reattach the same pod across job retries.
 - `Condukt.Tools.Command` is the explicit exception: it runs a host-allowlisted
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.

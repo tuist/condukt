@@ -17,6 +17,10 @@ at session start.
   a Rust-implemented bash interpreter (bashkit), with no host process
   spawning by default. It is shipped via a precompiled NIF, so consumers
   do not need a Rust toolchain to use it.
+* `Condukt.Sandbox.Kubernetes` runs each session inside a dedicated
+  Kubernetes pod. All filesystem reads, writes, and process execution
+  happen inside the pod via the Kubernetes exec API; the agent cannot
+  reach the host running the Condukt BEAM process.
 
 Custom sandboxes implement the `Condukt.Sandbox` behaviour and plug in the
 same way.
@@ -76,6 +80,154 @@ def tools do
   Condukt.Tools.coding_tools() ++ [Condukt.Sandbox.Virtual.Tools.Mount]
 end
 ```
+
+## Kubernetes sandbox
+
+`Condukt.Sandbox.Kubernetes` creates one pod per session and routes every
+filesystem and process primitive through the Kubernetes exec API. It uses
+the [`:k8s`](https://hex.pm/packages/k8s) library and talks to the API
+server over HTTPS, so no `kubectl` binary is required.
+
+```elixir
+# Minimal: uses the current kubeconfig context and the "default" namespace.
+{:ok, agent} =
+  MyApp.CodingAgent.start_link(
+    api_key: "...",
+    sandbox: Condukt.Sandbox.Kubernetes
+  )
+
+# Production: pinned image, namespace, resource limits, RBAC.
+sandbox = {
+  Condukt.Sandbox.Kubernetes,
+  image: "ghcr.io/myorg/agent-runtime:v1.4.2",
+  namespace: "agents",
+  context: "prod-cluster",
+  service_account: "condukt-agent",
+  resources: %{
+    requests: %{cpu: "500m", memory: "1Gi"},
+    limits: %{cpu: "2", memory: "4Gi"}
+  },
+  active_deadline_seconds: 4 * 3600,
+  labels: %{"tenant" => "acme"},
+  cwd: "/workspace"
+}
+```
+
+### Decoupled pod lifecycle with `:id`
+
+The Kubernetes sandbox supports an idempotent `:id` opt that decouples the
+pod lifecycle from any single BEAM process. `init/1` derives a deterministic
+pod name from the id and either adopts an existing pod or creates a fresh
+one. This is the recommended pattern when an Oban-style worker manages the
+session: a job retry passes the same `session_id` through, the sandbox
+reattaches to the existing pod, and any state already on disk (a cloned
+repo, in-progress edits) is preserved.
+
+```elixir
+defmodule MyApp.AgentWorker do
+  use Oban.Worker, queue: :agents, max_attempts: 3
+
+  @impl true
+  def perform(%Oban.Job{args: %{"session_id" => sid, "prompt" => prompt}}) do
+    {:ok, agent} =
+      MyApp.CodingAgent.start_link(
+        api_key: System.get_env("ANTHROPIC_API_KEY"),
+        sandbox: {Condukt.Sandbox.Kubernetes, id: sid, namespace: "agents"}
+      )
+
+    Condukt.Session.run(agent, prompt)
+  end
+end
+```
+
+When `:id` is supplied, `shutdown/1` is a no-op by default and the pod
+outlives the BEAM process. When the session is truly done, the caller
+deletes the pod explicitly:
+
+```elixir
+Condukt.Sandbox.Kubernetes.terminate(session_id, namespace: "agents")
+```
+
+When `:id` is omitted, a UUID is generated and `shutdown/1` deletes the
+pod.
+
+### State persistence
+
+Each pod gets an `emptyDir` volume mounted at the session cwd
+(`/workspace` by default). With `restartPolicy: Always`, K8s restarts the
+container on crash and the volume survives, so a cloned repo or
+in-progress file edits persist across container restarts within the same
+pod. The volume does not survive pod deletion or node loss; for cross-node
+durability, build an image that mounts a PersistentVolumeClaim.
+
+### Stale pod handling
+
+When `init/1` adopts an existing pod, it accepts `Running`, waits on
+`Pending`, and waits for terminating pods to be deleted before recreating.
+On `Succeeded` or `Failed` (which the keepalive container should not
+normally produce) it returns `{:error, {:stale_pod, phase}}` by default
+so the caller can decide what to do. Pass `on_stale: :recreate` to delete
+and recreate automatically.
+
+### Hard ceiling on pod lifetime
+
+Every pod is created with `activeDeadlineSeconds` (default 8 hours).
+This is K8s-side insurance against truly abandoned pods: even if Condukt
+crashes and forgets the pod, the cluster reclaims it.
+
+### Auth resolution
+
+Connection auth is resolved in this order:
+
+1. The `:conn` opt, if you build a `K8s.Conn` yourself.
+2. The in-cluster ServiceAccount token at
+   `/var/run/secrets/kubernetes.io/serviceaccount/` when
+   `KUBERNETES_SERVICE_HOST` is set or `in_cluster: true` is passed.
+3. A kubeconfig file at `:kubeconfig` (or `$KUBECONFIG`, or
+   `~/.kube/config`), using `:context` if supplied.
+
+### RBAC
+
+The identity Condukt runs as needs permission to create, get, exec into,
+and delete pods in the target namespace:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: condukt-sandbox
+  namespace: agents
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: condukt-sandbox
+  namespace: agents
+subjects:
+  - kind: ServiceAccount
+    name: condukt
+    namespace: agents
+roleRef:
+  kind: Role
+  name: condukt-sandbox
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### Limitations
+
+* `mount/3` is unsupported. K8s pods cannot accept new volumes once
+  running. Mounts must be declared up front; in v1 that means baking a
+  PVC into a custom image.
+* Writes are base64-embedded in the exec command line, so very large
+  payloads (tens of MB) should be fetched into the pod from inside it
+  (`git clone`, `curl`, etc) rather than written through `Sandbox.write/3`.
 
 ## Picking a sandbox
 
