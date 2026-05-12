@@ -47,15 +47,6 @@ defmodule Condukt.Plug do
       {"ok": false, "error": {"code": "invalid_input", "message": "..."}}
   """
 
-  @type opts :: [
-          agent: module(),
-          operation: atom(),
-          prompt: String.t() | (Plug.Conn.t() -> String.t()),
-          prompt_param: String.t() | atom(),
-          run_opts: keyword() | (Plug.Conn.t() -> keyword()),
-          input: (Plug.Conn.t() -> map())
-        ]
-
   @doc """
   Declares a POST route for an operation.
 
