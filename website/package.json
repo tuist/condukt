@@ -7,12 +7,15 @@
     "build": "eleventy",
     "dev": "eleventy --serve --quiet",
     "clean": "rm -rf _site",
+    "social:images": "node scripts/generate-social-images.mjs",
     "deploy": "aube run build && wrangler pages deploy ./_site --project-name=condukt-website --branch=main --commit-dirty=true"
   },
   "devDependencies": {
     "@11ty/eleventy": "^3.0.0",
     "@lumis-sh/lumis": "^0.4.0",
     "@lumis-sh/themes": "^0.1.0",
+    "gray-matter": "^4.0.3",
+    "sharp": "^0.34.5",
     "wrangler": "^4.0.0"
   },
   "aube": {

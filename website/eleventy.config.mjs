@@ -5,6 +5,8 @@ import elixir from "@lumis-sh/lumis/langs/elixir";
 import hcl from "@lumis-sh/lumis/langs/hcl";
 import theme from "@lumis-sh/themes/catppuccin_mocha";
 
+import { generatePostSocialImages } from "./scripts/generate-social-images.mjs";
+
 const LANGUAGES = { bash, elixir, hcl };
 
 let highlighterPromise;
@@ -22,6 +24,11 @@ export default function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ "src/static": "/" });
 
   eleventyConfig.addWatchTarget("src/assets/");
+  eleventyConfig.addWatchTarget("src/blog/posts/");
+
+  eleventyConfig.on("eleventy.before", async () => {
+    await generatePostSocialImages();
+  });
 
   eleventyConfig.addFilter("readableDate", (value) => {
     const date = value instanceof Date ? value : new Date(value);
