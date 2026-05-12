@@ -102,8 +102,8 @@ function renderSvg({ title, date }) {
       <stop offset="1" stop-color="#0b0d10" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" rx="34" fill="url(#bg)"/>
-  <rect width="${WIDTH}" height="${HEIGHT}" rx="34" fill="url(#glow)"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#bg)"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#glow)"/>
   <path d="M0 124H1200M0 506H1200" stroke="#ffffff" stroke-opacity="0.05"/>
   <path d="M90 0V630M1110 0V630" stroke="#ffffff" stroke-opacity="0.04"/>
   <circle cx="230" cy="318" r="165" fill="#ffffff" fill-opacity="0.035"/>
@@ -124,7 +124,7 @@ async function renderPostImage(postPath, logoBuffer) {
   }
 
   const image = await sharp(Buffer.from(renderSvg(data)))
-    .composite([{ input: logoBuffer, left: 106, top: 222 }])
+    .composite([{ input: logoBuffer, left: 120, top: 220 }])
     .png()
     .toBuffer();
 
