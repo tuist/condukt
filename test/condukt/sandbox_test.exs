@@ -24,6 +24,9 @@ defmodule Condukt.SandboxTest do
     @impl true
     def exec(_state, _command, _opts), do: {:ok, %{output: "ok", exit_code: 0}}
 
+    @impl true
+    def cwd(_state), do: "/"
+
     # Intentionally no glob/3, grep/3, mount/3 — they're optional callbacks.
   end
 

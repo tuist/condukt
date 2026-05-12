@@ -27,6 +27,9 @@ defmodule Condukt.Workflows.ExecutorTest do
       send(Keyword.fetch!(state, :reply_to), {:sandbox_exec, command, opts})
       {:ok, %{output: "from sandbox\n", exit_code: 0}}
     end
+
+    @impl Sandbox
+    def cwd(_state), do: "/"
   end
 
   defp doc(map) do

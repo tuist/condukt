@@ -191,7 +191,7 @@ defmodule Condukt.Sandbox.KubernetesTest do
     pod_name = Kubernetes.pod_name_for(id)
     old_heartbeat = DateTime.utc_now() |> DateTime.add(-3_600, :second) |> DateTime.to_iso8601()
 
-    :ok = patch_pod_annotations(conn, ns, pod_name, %{"condukt.io/heartbeat-at" => old_heartbeat})
+    :ok = patch_pod_annotations(conn, ns, pod_name, %{"condukt.tuist.dev/heartbeat-at" => old_heartbeat})
 
     assert {:ok, [^pod_name]} = Kubernetes.reap_stale(conn: conn, namespace: ns, stale_after: 60_000)
     wait_until(fn -> not pod_exists?(conn, ns, pod_name) end, 60_000)

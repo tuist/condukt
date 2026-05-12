@@ -66,6 +66,9 @@ defmodule Condukt.Sandbox.Virtual do
   end
 
   @impl Sandbox
+  def cwd(%State{base_cwd: base_cwd}), do: base_cwd
+
+  @impl Sandbox
   def read_file(%State{session: session}, path) do
     NIF.read_file(session, path)
   end

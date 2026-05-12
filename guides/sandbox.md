@@ -115,13 +115,15 @@ sandbox = {
 }
 ```
 
-### Decoupled pod lifecycle with `:id`
+### Decoupled pod lifecycle via the session id
 
-The Kubernetes sandbox supports an idempotent `:id` opt that decouples the
-pod lifecycle from any single BEAM process. `init/1` derives a deterministic
-pod name from the id and either adopts an existing pod or creates a fresh
-one. This is the recommended pattern when an Oban-style worker manages the
-session: a job retry passes the same `session_id` through, the sandbox
+The Kubernetes sandbox is idempotent on a stable id and decouples the pod
+lifecycle from any single BEAM process. The session id (passed as `:id` to
+`start_link/1`, or auto-generated) flows into the sandbox by default, so
+the same value drives the session and the pod. `init/1` derives a
+deterministic pod name from it and either adopts an existing pod or creates
+a fresh one. This is the recommended pattern when an Oban-style worker
+manages the session: a job retry passes the same id through, the sandbox
 reattaches to the existing pod, and any state already on disk (a cloned
 repo, in-progress edits) is preserved.
 
@@ -130,11 +132,13 @@ defmodule MyApp.AgentWorker do
   use Oban.Worker, queue: :agents, max_attempts: 3
 
   @impl true
-  def perform(%Oban.Job{args: %{"session_id" => sid, "prompt" => prompt}}) do
+  def perform(%Oban.Job{id: job_id, args: %{"prompt" => prompt}}) do
     {:ok, agent} =
       MyApp.CodingAgent.start_link(
+        id: job_id,
         api_key: System.get_env("ANTHROPIC_API_KEY"),
-        sandbox: {Condukt.Sandbox.Kubernetes, id: sid, namespace: "agents"}
+        sandbox: {Condukt.Sandbox.Kubernetes, namespace: "agents"},
+        session_store: Condukt.SessionStore.Disk
       )
 
     Condukt.Session.run(agent, prompt)
@@ -142,16 +146,39 @@ defmodule MyApp.AgentWorker do
 end
 ```
 
-When `:id` is supplied, `shutdown/1` is a no-op by default and the pod
+The pattern above pairs three things keyed on the same id: the pod (so the
+workspace state survives across retries), the session snapshot in
+`SessionStore.Disk` (so the conversation history survives), and the
+heartbeat that keeps the pod alive while a worker is using it. A retry that
+re-enters `perform/1` with the same `job_id` reattaches to the pod and
+restores the session messages from the on-disk snapshot. Without a session
+store, the pod survives but the conversation starts over.
+
+Pass `:id` explicitly to the sandbox spec only when you want the pod
+identity to diverge from the session identity (for example, a single
+long-running pod shared across multiple sessions). An explicit value on the
+sandbox spec wins over the session-supplied default.
+
+When an id is in play, `shutdown/1` is a no-op by default and the pod
 outlives the BEAM process. When the session is truly done, the caller
 deletes the pod explicitly:
 
 ```elixir
-Condukt.Sandbox.Kubernetes.terminate(session_id, namespace: "agents")
+Condukt.Sandbox.Kubernetes.terminate(job_id, namespace: "agents")
 ```
 
-When `:id` is omitted, a UUID is generated and `shutdown/1` deletes the
-pod.
+When no id is supplied at the session level, one is generated and the pod
+follows the usual single-use lifecycle: `shutdown/1` deletes it.
+
+### Project instructions inside the sandbox
+
+`AGENTS.md`, `CLAUDE.md`, and `.agents/skills/*/SKILL.md` are read through
+the active sandbox at session start, not from the host filesystem
+directly. For `Sandbox.Local` that is the same place either way. For
+`Sandbox.Virtual` and `Sandbox.Kubernetes` it means the discovery finds
+files in the sandbox: a virtual filesystem with mounts, or a workspace
+inside a pod cloned via `:workspace_source`. The agent picks up the same
+project instructions regardless of which backend it is running against.
 
 ### State persistence
 
@@ -194,7 +221,7 @@ normally produce) it returns `{:error, {:stale_pod, phase}}` by default
 so the caller can decide what to do. Pass `on_stale: :recreate` to delete
 and recreate automatically.
 
-Each pod also carries a `condukt.io/heartbeat-at` annotation. By default,
+Each pod also carries a `condukt.tuist.dev/heartbeat-at` annotation. By default,
 the sandbox starts a worker tied to the owner process that refreshes it
 every 60 seconds. If the owning Condukt process crashes, the worker dies
 too, and a separate process can reap stale pods before

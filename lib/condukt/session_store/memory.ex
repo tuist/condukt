@@ -54,7 +54,8 @@ defmodule Condukt.SessionStore.Memory do
     Keyword.get_lazy(opts, :key, fn ->
       {
         Keyword.get(opts, :agent_module),
-        Keyword.get(opts, :cwd)
+        Keyword.get(opts, :cwd),
+        Keyword.get(opts, :id)
       }
     end)
   end

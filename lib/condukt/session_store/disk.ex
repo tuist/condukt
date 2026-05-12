@@ -52,7 +52,12 @@ defmodule Condukt.SessionStore.Disk do
 
   defp path(opts) do
     Keyword.get_lazy(opts, :path, fn ->
-      Path.join([Keyword.fetch!(opts, :cwd), ".condukt", "session.store"])
+      cwd = Keyword.fetch!(opts, :cwd)
+
+      case Keyword.get(opts, :id) do
+        nil -> Path.join([cwd, ".condukt", "session.store"])
+        id -> Path.join([cwd, ".condukt", "sessions", "#{id}.store"])
+      end
     end)
   end
 

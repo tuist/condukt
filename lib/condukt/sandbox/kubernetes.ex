@@ -6,41 +6,48 @@ defmodule Condukt.Sandbox.Kubernetes do
   execution happen inside the Pod via the Kubernetes exec API. The agent
   cannot reach the host running the Condukt BEAM process.
 
-  ## Idempotent init with a stable `:id`
+  ## Idempotent init via the session id
 
-  When you pass an `:id` opt, `init/1` is idempotent: it derives a
-  deterministic Pod name from the id and either adopts an existing Pod or
-  creates a fresh one. This is the recommended pattern for Oban-style
-  workers where the job lifecycle and the Pod lifecycle are decoupled:
+  `init/1` is idempotent on a stable id: it derives a deterministic Pod name
+  from it and either adopts an existing Pod or creates a fresh one. The
+  session's `:id` (passed to `Condukt.Session.start_link/1`, or
+  auto-generated) flows into the sandbox by default, so a single id at the
+  session level drives both the session and the Pod. This is the
+  recommended pattern for Oban-style workers where the job lifecycle and
+  the Pod lifecycle are decoupled:
 
       defmodule MyApp.AgentWorker do
         use Oban.Worker, queue: :agents, max_attempts: 3
 
         @impl true
-        def perform(%Oban.Job{args: %{"session_id" => sid, "prompt" => prompt}}) do
+        def perform(%Oban.Job{id: job_id, args: %{"prompt" => prompt}}) do
           {:ok, agent} =
             MyApp.CodingAgent.start_link(
+              id: job_id,
               api_key: System.get_env("ANTHROPIC_API_KEY"),
-              sandbox: {Condukt.Sandbox.Kubernetes, id: sid, namespace: "agents"}
+              sandbox: {Condukt.Sandbox.Kubernetes, namespace: "agents"}
             )
 
           Condukt.Session.run(agent, prompt)
         end
       end
 
-  If the job is retried after a crash, the same `session_id` flows through
-  and the sandbox reattaches to the existing Pod. Repo clones and in-progress
+  If the job is retried after a crash, the same `job_id` flows through and
+  the sandbox reattaches to the existing Pod. Repo clones and in-progress
   file edits persist (they live in an `emptyDir` volume mounted at the
   session cwd, which survives container restarts within the same Pod).
 
-  When `:id` is omitted, a UUID is generated and the Pod is single-use:
-  `shutdown/1` deletes it.
+  Pass `:id` explicitly on the sandbox spec only when you want the pod
+  identity to diverge from the session identity. An explicit value wins
+  over the session-supplied default. When no id is supplied at the session
+  level, one is generated and the pod is single-use: `shutdown/1` deletes
+  it.
 
   ## Init options
 
-  * `:id` — stable session id. If supplied, the pod is named deterministically
-    and `init/1` is idempotent (adopt if exists, create otherwise). If
-    omitted, a UUID is generated and `shutdown/1` deletes the pod.
+  * `:id` — stable identifier used to derive the pod name. Defaults to the
+    session id when invoked through `Condukt.Session`. Pass it explicitly
+    on the sandbox spec only to diverge from the session id.
   * `:namespace` — Kubernetes namespace (default `"default"`).
   * `:image` — container image (default `"debian:bookworm-slim"`).
   * `:cwd` — working directory inside the pod, also where the workspace
@@ -127,9 +134,9 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   @managed_by_label "app.kubernetes.io/managed-by"
   @managed_by_value "condukt"
-  @id_label "condukt.io/id"
-  @created_annotation "condukt.io/created-at"
-  @heartbeat_annotation "condukt.io/heartbeat-at"
+  @id_label "condukt.tuist.dev/id"
+  @created_annotation "condukt.tuist.dev/created-at"
+  @heartbeat_annotation "condukt.tuist.dev/heartbeat-at"
 
   # ============================================================================
   # Sandbox callbacks
@@ -154,6 +161,9 @@ defmodule Condukt.Sandbox.Kubernetes do
 
     :ok
   end
+
+  @impl Sandbox
+  def cwd(%State{base_cwd: base_cwd}), do: base_cwd
 
   @impl Sandbox
   def read_file(state, path) do

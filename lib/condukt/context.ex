@@ -1,30 +1,57 @@
 defmodule Condukt.Context do
   @moduledoc """
-  Loads project instructions and local skills from a project root.
+  Loads project instructions and local skills from the active sandbox.
 
   Condukt automatically looks for local instruction files such as `AGENTS.md`
   and reusable workflows under `.agents/skills/*/SKILL.md`. The discovered
   instructions are appended to the configured system prompt so agents can adapt
   to the project they are running in.
+
+  Discovery routes through `Condukt.Sandbox`, so the files are read from
+  wherever the active sandbox lives: the host filesystem for `Sandbox.Local`,
+  the virtual filesystem for `Sandbox.Virtual`, or inside the pod for
+  `Sandbox.Kubernetes`.
   """
 
   alias Condukt.Context.Skill
+  alias Condukt.Sandbox
 
   @context_files ["AGENTS.md", "CLAUDE.md"]
   @skills_dir ".agents/skills"
+
   def empty do
     %{agents_md: nil, skills: [], prompt: nil}
   end
 
-  def discover(project_root) when is_binary(project_root) do
-    agents_md = read_agents_md(project_root)
-    skills = discover_skills(project_root)
+  @doc """
+  Loads project instructions and skills.
+
+  Accepts a `Condukt.Sandbox` handle (the canonical form, used by
+  `Condukt.Session`) or a host filesystem path (convenience form for tests
+  and scripts: builds a transient `Sandbox.Local` rooted there and delegates).
+  """
+  def discover(sandbox_or_root)
+
+  def discover(%Sandbox{} = sandbox) do
+    project_root = Sandbox.cwd(sandbox)
+    agents_md = read_agents_md(sandbox, project_root)
+    skills = discover_skills(sandbox, project_root)
 
     %{
       agents_md: agents_md,
       skills: skills,
       prompt: compose_prompt(agents_md, skills)
     }
+  end
+
+  def discover(project_root) when is_binary(project_root) do
+    {:ok, sandbox} = Sandbox.new(Sandbox.Local, cwd: project_root)
+
+    try do
+      discover(sandbox)
+    after
+      Sandbox.shutdown(sandbox)
+    end
   end
 
   def compose_system_prompt(base_prompt, nil), do: present(base_prompt)
@@ -38,47 +65,62 @@ defmodule Condukt.Context do
     end
   end
 
-  def read_agents_md(project_root) when is_binary(project_root) do
+  defp read_agents_md(sandbox, project_root) do
     @context_files
     |> Enum.map(&Path.join(project_root, &1))
-    |> Enum.filter(&File.regular?/1)
-    |> Enum.uniq_by(&(Path.expand(&1) |> File.stat!() |> file_identity()))
-    |> Enum.map(&File.read!/1)
+    |> Enum.map(&sandbox_read(sandbox, &1))
+    |> Enum.reject(&is_nil/1)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
     |> case do
       [] -> nil
       parts -> Enum.join(parts, "\n\n")
     end
   end
 
-  def discover_skills(project_root) when is_binary(project_root) do
-    skills_dir = Path.join(project_root, @skills_dir)
-
-    if File.dir?(skills_dir) do
-      skills_dir
-      |> File.ls!()
-      |> Enum.sort()
-      |> Enum.map(&load_skill(skills_dir, &1))
-      |> Enum.reject(&is_nil/1)
-    else
-      []
+  defp sandbox_read(sandbox, path) do
+    case Sandbox.read(sandbox, path) do
+      {:ok, content} -> content
+      {:error, _} -> nil
     end
   end
 
-  defp load_skill(skills_dir, entry) do
-    skill_dir = Path.join(skills_dir, entry)
-    skill_path = Path.join(skill_dir, "SKILL.md")
+  defp discover_skills(sandbox, project_root) do
+    pattern = Path.join(@skills_dir, "*/SKILL.md")
 
-    if File.dir?(skill_dir) and File.regular?(skill_path) do
-      content = File.read!(skill_path)
-      {name, description} = parse_frontmatter(content, entry)
+    case Sandbox.glob(sandbox, pattern, cwd: project_root) do
+      {:ok, paths} ->
+        paths
+        |> Enum.sort()
+        |> Enum.map(&load_skill(sandbox, project_root, &1))
+        |> Enum.reject(&is_nil/1)
 
-      %Skill{
-        name: name,
-        description: description,
-        path: Path.join([@skills_dir, entry, "SKILL.md"])
-      }
+      _ ->
+        []
+    end
+  end
+
+  defp load_skill(sandbox, project_root, relative_path) do
+    skill_dir_name =
+      relative_path
+      |> Path.split()
+      |> Enum.at(-2)
+
+    absolute_path = Path.join(project_root, relative_path)
+
+    case Sandbox.read(sandbox, absolute_path) do
+      {:ok, content} ->
+        {name, description} = parse_frontmatter(content, skill_dir_name)
+
+        %Skill{
+          name: name,
+          description: description,
+          path: relative_path
+        }
+
+      {:error, _} ->
+        nil
     end
   end
 
@@ -165,9 +207,5 @@ defmodule Condukt.Context do
       "" -> nil
       trimmed -> trimmed
     end
-  end
-
-  defp file_identity(%File.Stat{type: type, inode: inode, major_device: major, minor_device: minor}) do
-    {type, inode, major, minor}
   end
 end
