@@ -100,11 +100,9 @@ There is one small thing that turned out to matter more than I expected. Pass `:
 
 For stable `:id` sessions, the existing checkout is reused on reattach and the ref is checked out again. The clone runs inside the pod, so the image needs `git`. The default image is intentionally minimal and does not include it.
 
-## The conversation, not just the workspace
+## One id, three things keyed on it
 
-Preserving the workspace is half the story. The other half is the conversation. If a session has done eight tool calls and the BEAM crashes on the ninth, restarting from an empty message history is not a real retry. So the same id that ties retries to a pod also ties them to a session snapshot.
-
-The `Condukt.SessionStore` behaviour was already in the library, with `Disk` and `Memory` implementations. Pass it to `start_link` alongside the id and the snapshot is keyed by the id automatically. The disk store writes to `<cwd>/.condukt/sessions/<id>.store`, the memory store keys by the same tuple. An explicit id opts you into stable storage; without one, you get the old per-cwd behavior.
+The same id that names a pod can do more than name a pod. Pair `:id` with `:session_store` and the conversation snapshot is keyed by it too. The disk store writes to `<cwd>/.condukt/sessions/<id>.store`, the memory store keys by the same tuple.
 
 <div class="code-block">{% highlight "elixir" %}def perform(%Oban.Job{id: job_id, args: %{"prompt" => prompt}}) do
   {:ok, agent} =
@@ -118,13 +116,11 @@ The `Condukt.SessionStore` behaviour was already in the library, with `Disk` and
   Condukt.Session.run(agent, prompt)
 end{% endhighlight %}</div>
 
-Three things keyed on the same `job_id` now: the pod, the workspace, and the messages. A retry reattaches to all of them.
+Three things keyed on the same `job_id`: the pod, the workspace, and the messages. A retry reattaches to all of them.
 
-## Project instructions, from where the code lives
+## Project instructions follow the workspace
 
-The other thing we had to fix was a smaller and quieter problem. Condukt reads `AGENTS.md`, `CLAUDE.md`, and any `.agents/skills/*/SKILL.md` it finds in the project root at session start, and it folds those instructions into the system prompt. That worked perfectly when the project lived on the host filesystem. With a Kubernetes sandbox where the workspace is cloned inside the pod, the host has nothing to read, and the agent was silently losing context it should have had.
-
-The fix is to route project context discovery through the sandbox, the same way file reads and exec are already routed. The sandbox knows its own working directory, the session asks for instructions through it, and `Local`, `Virtual`, and `Kubernetes` all answer the same question from where their files actually live. The agent gets the same project instructions regardless of which backend it is running against. No special case for Kubernetes in the discovery code.
+`AGENTS.md`, `CLAUDE.md`, and any `.agents/skills/*/SKILL.md` the agent should know about are read from wherever the sandbox lives. If the workspace is on the host, that is the host. If the workspace is inside a pod cloned at init, that is the pod. The sandbox knows its own working directory and the session reads through it, so the agent ends up with the same system prompt regardless of which backend it is running against. There is no special case for Kubernetes anywhere in the discovery code.
 
 ## Why this and not a vendor
 
