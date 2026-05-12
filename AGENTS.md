@@ -49,6 +49,19 @@
   bearer tokens or `client_credentials` grants resolved through
   `Condukt.Secrets`-shaped refs.
 
+## HTTP routes
+
+- Statically declared `operation/2` agent entrypoints can be exposed as JSON
+  POST endpoints with `Condukt.Plug` or `Condukt.Phoenix`.
+- Plug routers can import `Condukt.Plug.operation_route/3` or mount
+  `Condukt.Plug` directly with `to: Condukt.Plug` and `init_opts:`.
+- Phoenix routers can import `Condukt.Phoenix.operation_route/3`. The route
+  stores operation metadata in route private data and delegates to
+  `Condukt.Plug`.
+- HTTP route requests must be JSON objects matching the operation input schema.
+  Responses are JSON envelopes shaped as `%{ok: true, result: result}` or
+  `%{ok: false, error: %{code: code, message: message}}`.
+
 ## Sub-agents
 
 - Agents can declare `subagents/0` as `role: AgentModule` or
