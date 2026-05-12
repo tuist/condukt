@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.0] - 2026-05-12
+
+### Features
+
+- add HTTP route helpers for operations (Plug + Phoenix)
+
+
 ## [1.2.1] - 2026-05-12
 
 ### Changes
