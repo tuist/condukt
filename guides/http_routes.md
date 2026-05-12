@@ -1,7 +1,7 @@
 # HTTP Routes
 
 Module-defined agents and typed operations can be exposed as JSON HTTP
-endpoints with `Condukt.Plug` or `Condukt.Phoenix`.
+endpoints with `Condukt.Plug`.
 
 Use an agent route when you want to run a normal `use Condukt` module as a
 one-shot request handler. Use an operation route when you want a statically
@@ -31,49 +31,17 @@ end
 defmodule MyApp.Router do
   use Plug.Router
 
-  import Condukt.Plug, only: [agent_route: 2, agent_route: 3]
-
   plug Plug.Parsers, parsers: [:json], json_decoder: JSON
   plug :match
   plug :dispatch
 
-  agent_route "/assistant", MyApp.AssistantAgent,
-    prompt: "Help with this support request.",
-    run_opts: [timeout: 120_000]
-end
-```
-
-The direct mount form is:
-
-```elixir
-post "/assistant",
-  to: Condukt.Plug,
-  init_opts: [
-    agent: MyApp.AssistantAgent,
-    prompt: "Help with this support request.",
-    run_opts: [timeout: 120_000]
-  ]
-```
-
-### Phoenix Router
-
-```elixir
-defmodule MyAppWeb.Router do
-  use MyAppWeb, :router
-
-  import Condukt.Phoenix, only: [agent_route: 2, agent_route: 3]
-
-  pipeline :api do
-    plug :accepts, ["json"]
-  end
-
-  scope "/api", MyAppWeb do
-    pipe_through :api
-
-    agent_route "/assistant", MyApp.AssistantAgent,
+  post "/assistant",
+    to: Condukt.Plug,
+    init_opts: [
+      agent: MyApp.AssistantAgent,
       prompt: "Help with this support request.",
       run_opts: [timeout: 120_000]
-  end
+    ]
 end
 ```
 
@@ -97,8 +65,12 @@ Agent route response:
 Use `:prompt_param` if the request uses a different field name:
 
 ```elixir
-agent_route "/assistant", MyApp.AssistantAgent,
-  prompt_param: "message"
+post "/assistant",
+  to: Condukt.Plug,
+  init_opts: [
+    agent: MyApp.AssistantAgent,
+    prompt_param: "message"
+  ]
 ```
 
 ## Operation routes
@@ -141,53 +113,22 @@ No conversation history is kept between HTTP requests.
 defmodule MyApp.Router do
   use Plug.Router
 
-  import Condukt.Plug, only: [operation_route: 3, operation_route: 4]
-
   plug Plug.Parsers, parsers: [:json], json_decoder: JSON
   plug :match
   plug :dispatch
 
-  operation_route "/review-pr", MyApp.ReviewAgent, :review_pr,
-    run_opts: [timeout: 120_000]
-end
-```
-
-You can also mount `Condukt.Plug` directly:
-
-```elixir
-post "/review-pr",
-  to: Condukt.Plug,
-  init_opts: [
-    agent: MyApp.ReviewAgent,
-    operation: :review_pr,
-    run_opts: [timeout: 120_000]
-  ]
-```
-
-### Phoenix Router
-
-```elixir
-defmodule MyAppWeb.Router do
-  use MyAppWeb, :router
-
-  import Condukt.Phoenix, only: [operation_route: 3, operation_route: 4]
-
-  pipeline :api do
-    plug :accepts, ["json"]
-  end
-
-  scope "/api", MyAppWeb do
-    pipe_through :api
-
-    operation_route "/review-pr", MyApp.ReviewAgent, :review_pr,
+  post "/review-pr",
+    to: Condukt.Plug,
+    init_opts: [
+      agent: MyApp.ReviewAgent,
+      operation: :review_pr,
       run_opts: [timeout: 120_000]
-  end
+    ]
 end
 ```
 
-Phoenix pipelines normally parse JSON before the action runs. If
-`conn.body_params` has not been fetched, `Condukt.Plug` reads and decodes the
-request body itself.
+If `conn.body_params` has not been fetched, `Condukt.Plug` reads and decodes
+the request body itself.
 
 ### Request and response shape
 
@@ -235,8 +176,13 @@ Use `:run_opts` to pass options to `Condukt.run/3` for agent routes or
 or a one-arity function that receives the connection:
 
 ```elixir
-operation_route "/review-pr", MyApp.ReviewAgent, :review_pr,
-  run_opts: &MyApp.RouteOptions.condukt_run_opts/1
+post "/review-pr",
+  to: Condukt.Plug,
+  init_opts: [
+    agent: MyApp.ReviewAgent,
+    operation: :review_pr,
+    run_opts: &MyApp.RouteOptions.condukt_run_opts/1
+  ]
 ```
 
 If the HTTP input should come from somewhere other than the JSON body, pass an

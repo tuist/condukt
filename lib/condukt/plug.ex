@@ -25,13 +25,6 @@ defmodule Condukt.Plug do
           run_opts: [timeout: 120_000]
         ]
 
-  For terser Plug router declarations, import the route helpers:
-
-      import Condukt.Plug, only: [agent_route: 2, agent_route: 3, operation_route: 3, operation_route: 4]
-
-      agent_route "/assistant", MyApp.AssistantAgent, prompt: "Help with this request."
-      operation_route "/review-pr", MyApp.ReviewAgent, :review_pr
-
   The request body must be a JSON object. Operation routes use the object as
   operation input. Agent routes read the optional prompt from the `"prompt"`
   field by default. If `Plug.Parsers` has already parsed the body,
@@ -46,37 +39,6 @@ defmodule Condukt.Plug do
 
       {"ok": false, "error": {"code": "invalid_input", "message": "..."}}
   """
-
-  @doc """
-  Declares a POST route for an operation.
-
-  This macro expands to Plug Router's `post/3` target plug form. Phoenix
-  routers can use `Condukt.Phoenix.operation_route/3` instead.
-  """
-  defmacro operation_route(path, agent_module, operation_name, opts \\ []) do
-    plug_opts =
-      opts
-      |> Keyword.put(:operation, operation_name)
-      |> Keyword.put(:agent, agent_module)
-
-    quote do
-      post(unquote(path), to: Condukt.Plug, init_opts: unquote(plug_opts))
-    end
-  end
-
-  @doc """
-  Declares a POST route for a module-defined one-shot agent.
-
-  This macro expands to Plug Router's `post/3` target plug form. Phoenix
-  routers can use `Condukt.Phoenix.agent_route/2` instead.
-  """
-  defmacro agent_route(path, agent_module, opts \\ []) do
-    plug_opts = Keyword.put(opts, :agent, agent_module)
-
-    quote do
-      post(unquote(path), to: Condukt.Plug, init_opts: unquote(plug_opts))
-    end
-  end
 
   @doc false
   def init(opts), do: opts

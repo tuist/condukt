@@ -53,14 +53,10 @@
 
 - Module-defined one-shot agents and statically declared `operation/2`
   entrypoints can be exposed as JSON POST endpoints with `Condukt.Plug` or
-  `Condukt.Phoenix`.
-- Plug routers can import `Condukt.Plug.agent_route/2`,
-  `Condukt.Plug.agent_route/3`, or `Condukt.Plug.operation_route/3`, or mount
-  `Condukt.Plug` directly with `to: Condukt.Plug` and `init_opts:`.
-- Phoenix routers can import `Condukt.Phoenix.agent_route/2`,
-  `Condukt.Phoenix.agent_route/3`, or `Condukt.Phoenix.operation_route/3`.
-  The route stores metadata in route private data and delegates to
   `Condukt.Plug`.
+- Plug routers mount `Condukt.Plug` directly with `to: Condukt.Plug` and
+  `init_opts:`. Pass `agent:` for normal one-shot agents and add `operation:`
+  for typed operation routes.
 - Agent route requests may include an optional `"prompt"` string. If omitted,
   the route's `:prompt` option is used, then an empty prompt.
 - Operation route requests must be JSON objects matching the operation input

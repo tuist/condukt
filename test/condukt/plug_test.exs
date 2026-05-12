@@ -44,22 +44,43 @@ defmodule Condukt.PlugTest do
   defmodule Router do
     use Plug.Router
 
-    import Condukt.Plug, only: [agent_route: 3, operation_route: 3, operation_route: 4]
-
     plug(Plug.Parsers, parsers: [:json], json_decoder: JSON)
     plug(:match)
     plug(:dispatch)
 
-    agent_route("/assistant", AssistantAgent, run_opts: &__MODULE__.run_opts/1)
-
-    agent_route("/assistant-default", AssistantAgent,
-      prompt: "Use the route default prompt.",
-      run_opts: &__MODULE__.run_opts/1
+    post("/assistant",
+      to: Condukt.Plug,
+      init_opts: [
+        agent: AssistantAgent,
+        run_opts: &__MODULE__.run_opts/1
+      ]
     )
 
-    operation_route("/review", ReviewAgent, :review_pr)
+    post("/assistant-default",
+      to: Condukt.Plug,
+      init_opts: [
+        agent: AssistantAgent,
+        prompt: "Use the route default prompt.",
+        run_opts: &__MODULE__.run_opts/1
+      ]
+    )
 
-    operation_route("/review-with-opts", ReviewAgent, :review_pr, run_opts: &__MODULE__.run_opts/1)
+    post("/review",
+      to: Condukt.Plug,
+      init_opts: [
+        agent: ReviewAgent,
+        operation: :review_pr
+      ]
+    )
+
+    post("/review-with-opts",
+      to: Condukt.Plug,
+      init_opts: [
+        agent: ReviewAgent,
+        operation: :review_pr,
+        run_opts: &__MODULE__.run_opts/1
+      ]
+    )
 
     post("/custom-input",
       to: Condukt.Plug,
@@ -202,35 +223,6 @@ defmodule Condukt.PlugTest do
 
       assert conn.status == 404
       assert %{"ok" => false, "error" => %{"code" => "unknown_operation"}} = JSON.decode!(conn.resp_body)
-    end
-  end
-
-  describe "Phoenix action target" do
-    test "delegates route private operation metadata to Condukt.Plug" do
-      model = model_for(%{"verdict" => "approve", "summary" => "Phoenix."})
-
-      conn =
-        conn(:post, "/review", JSON.encode!(%{repo: "tuist/condukt", pr_number: 1}))
-        |> put_private(:condukt_operation, agent: ReviewAgent, operation: :review_pr, run_opts: [model: model])
-        |> Condukt.Phoenix.call(:operation)
-
-      assert conn.status == 200
-      assert %{"ok" => true, "result" => %{"summary" => "Phoenix."}} = JSON.decode!(conn.resp_body)
-    end
-
-    test "delegates agent route private metadata to Condukt.Plug" do
-      model = LLMProvider.model(LLMProvider.text_response("Phoenix agent.")) |> elem(0)
-
-      conn =
-        conn(:post, "/assistant", JSON.encode!(%{prompt: "Help me."}))
-        |> put_private(:condukt_route,
-          agent: AssistantAgent,
-          run_opts: [model: model, load_project_instructions: false]
-        )
-        |> Condukt.Phoenix.call(:agent)
-
-      assert conn.status == 200
-      assert %{"ok" => true, "result" => "Phoenix agent."} = JSON.decode!(conn.resp_body)
     end
   end
 

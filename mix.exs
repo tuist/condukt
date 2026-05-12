@@ -148,7 +148,6 @@ defmodule Condukt.MixProject do
           Condukt,
           Condukt.Session,
           Condukt.Operation,
-          Condukt.Phoenix,
           Condukt.Plug,
           Condukt.Message,
           Condukt.Telemetry
