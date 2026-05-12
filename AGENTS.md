@@ -57,8 +57,9 @@
 - Plug routers mount `Condukt.Plug` directly with `to: Condukt.Plug` and
   `init_opts:`. Pass `agent:` for normal one-shot agents and add `operation:`
   for typed operation routes.
-- Agent route requests may include an optional `"prompt"` string. If omitted,
-  the route's `:prompt` option is used, then an empty prompt.
+- Agent route requests may use a raw prompt body, a JSON string body, or a JSON
+  object with an optional `"prompt"` string. If omitted, the route's `:prompt`
+  option is used, then an empty prompt.
 - Operation route requests must be JSON objects matching the operation input
   schema. Responses are JSON envelopes shaped as
   `%{ok: true, result: result}` or

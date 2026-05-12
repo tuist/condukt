@@ -10,9 +10,10 @@ declared entrypoint with input and output schemas.
 ## Agent routes
 
 Agent routes run `Condukt.run(MyApp.Agent, prompt, opts)` for each HTTP
-request. The request body can include an optional `"prompt"` string. If it is
-missing, the route's `:prompt` option is used. If neither is provided, Condukt
-runs the agent with an empty prompt.
+request. The request body can be a raw prompt string, a JSON string, or a JSON
+object with an optional `"prompt"` string. If it is missing, the route's
+`:prompt` option is used. If neither is provided, Condukt runs the agent with
+an empty prompt.
 
 ```elixir
 defmodule MyApp.AssistantAgent do
@@ -46,6 +47,12 @@ end
 ```
 
 Agent route request:
+
+```text
+Summarize the last customer message and suggest a reply.
+```
+
+Or as JSON:
 
 ```json
 {

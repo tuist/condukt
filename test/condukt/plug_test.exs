@@ -165,6 +165,38 @@ defmodule Condukt.PlugTest do
       Process.delete(:condukt_plug_model)
     end
 
+    test "runs a module-defined one-shot agent with a raw prompt body" do
+      {model, model_id} = LLMProvider.model(LLMProvider.text_response("raw answer"))
+      Process.put(:condukt_plug_model, model)
+
+      conn =
+        conn(:post, "/assistant", "Summarize this raw body.")
+        |> Router.call([])
+
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body) == %{"ok" => true, "result" => "raw answer"}
+
+      assert_receive {LLMProvider, :request, ^model_id, context, _opts}
+      assert inspect(context) =~ "Summarize this raw body."
+    after
+      Process.delete(:condukt_plug_model)
+    end
+
+    test "runs a module-defined one-shot agent with a JSON string body" do
+      {model, model_id} = LLMProvider.model(LLMProvider.text_response("string answer"))
+
+      conn =
+        conn(:post, "/assistant", JSON.encode!("Summarize this JSON string."))
+        |> put_req_header("content-type", "application/json")
+        |> Condukt.Plug.call(agent: AssistantAgent, run_opts: [model: model, load_project_instructions: false])
+
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body) == %{"ok" => true, "result" => "string answer"}
+
+      assert_receive {LLMProvider, :request, ^model_id, context, _opts}
+      assert inspect(context) =~ "Summarize this JSON string."
+    end
+
     test "uses the route prompt when the request omits one" do
       {model, model_id} = LLMProvider.model(LLMProvider.text_response("default answer"))
       Process.put(:condukt_plug_model, model)
@@ -191,6 +223,16 @@ defmodule Condukt.PlugTest do
 
       assert conn.status == 400
       assert %{"ok" => false, "error" => %{"code" => "invalid_prompt"}} = JSON.decode!(conn.resp_body)
+    end
+
+    test "returns 400 for invalid JSON prompt bodies when content type is JSON" do
+      conn =
+        conn(:post, "/assistant", "{not json")
+        |> put_req_header("content-type", "application/json")
+        |> Condukt.Plug.call(agent: AssistantAgent)
+
+      assert conn.status == 400
+      assert %{"ok" => false, "error" => %{"code" => "invalid_json"}} = JSON.decode!(conn.resp_body)
     end
   end
 

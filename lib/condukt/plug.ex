@@ -13,9 +13,9 @@ defmodule Condukt.Plug do
           run_opts: [timeout: 120_000]
         ]
 
-  Agent routes omit `:operation`. The request body can include an optional
-  `"prompt"` string. If no prompt is provided, `:prompt` is used, falling back
-  to an empty prompt.
+  Agent routes omit `:operation`. The request body can be a raw prompt string,
+  a JSON string, or a JSON object with an optional `"prompt"` string. If no
+  prompt is provided, `:prompt` is used, falling back to an empty prompt.
 
       post "/assistant",
         to: Condukt.Plug,
@@ -25,11 +25,10 @@ defmodule Condukt.Plug do
           run_opts: [timeout: 120_000]
         ]
 
-  The request body must be a JSON object. Operation routes use the object as
-  operation input. Agent routes read the optional prompt from the `"prompt"`
-  field by default. If `Plug.Parsers` has already parsed the body,
-  `conn.body_params` is reused. Otherwise this plug reads and decodes the JSON
-  body itself.
+  Operation route request bodies must be JSON objects. Agent route request
+  bodies can be raw text prompts, JSON strings, or JSON objects. If
+  `Plug.Parsers` has already parsed the body, `conn.body_params` is reused.
+  Otherwise this plug reads and decodes the body itself.
 
   Successful responses are encoded as:
 
@@ -74,8 +73,8 @@ defmodule Condukt.Plug do
   end
 
   defp run_agent(conn, opts, agent_module) do
-    with {:ok, params} <- body_input(conn),
-         {:ok, prompt} <- prompt(conn, opts, params),
+    with {:ok, body} <- agent_body(conn),
+         {:ok, prompt} <- prompt(conn, opts, body),
          {:ok, result} <- Condukt.run(agent_module, prompt, run_opts(opts, conn)) do
       json(conn, 200, %{ok: true, result: result})
     else
@@ -102,12 +101,14 @@ defmodule Condukt.Plug do
   defp normalize_input(input) when is_map(input), do: {:ok, input}
   defp normalize_input(_input), do: {:error, :input_must_be_a_map}
 
-  defp prompt(conn, opts, params) do
+  defp prompt(_conn, _opts, {:prompt, prompt}), do: validate_prompt(prompt)
+
+  defp prompt(conn, opts, {:params, params}) do
     prompt_key = Keyword.get(opts, :prompt_param, "prompt")
 
     case fetch_param(params, prompt_key) do
       {:ok, prompt} -> validate_prompt(prompt)
-      :error -> route_prompt(conn, opts)
+      :error -> prompt_from_unparsed_body(conn, opts)
     end
   end
 
@@ -129,8 +130,26 @@ defmodule Condukt.Plug do
     end
   end
 
+  defp prompt_from_unparsed_body(conn, opts) do
+    case read_agent_body(conn) do
+      {:ok, {:prompt, prompt}} -> validate_prompt(prompt)
+      {:ok, {:params, _params}} -> route_prompt(conn, opts)
+      {:error, {:body_read_failed, :stream_consumed}} -> route_prompt(conn, opts)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp validate_prompt(prompt) when is_binary(prompt), do: {:ok, prompt}
   defp validate_prompt(_prompt), do: {:error, :prompt_must_be_a_string}
+
+  defp agent_body(conn) do
+    case body_params(conn) do
+      {:ok, params} when is_map(params) -> {:ok, {:params, params}}
+      {:ok, prompt} when is_binary(prompt) -> {:ok, {:prompt, prompt}}
+      {:ok, _params} -> {:error, :agent_body_must_be_a_prompt_or_object}
+      :unfetched -> read_agent_body(conn)
+    end
+  end
 
   defp body_input(conn) do
     case body_params(conn) do
@@ -156,11 +175,44 @@ defmodule Condukt.Plug do
     end
   end
 
+  defp read_agent_body(conn) do
+    case Plug.Conn.read_body(conn) do
+      {:ok, "", _conn} -> {:ok, {:params, %{}}}
+      {:ok, body, _conn} -> decode_agent_body(conn, body)
+      {:more, _partial, _conn} -> {:error, :body_too_large}
+      {:error, reason} -> {:error, {:body_read_failed, reason}}
+    end
+  end
+
+  defp decode_agent_body(conn, body) do
+    case JSON.decode(body) do
+      {:ok, decoded} when is_map(decoded) -> {:ok, {:params, decoded}}
+      {:ok, prompt} when is_binary(prompt) -> {:ok, {:prompt, prompt}}
+      {:ok, _decoded} -> {:error, :agent_body_must_be_a_prompt_or_object}
+      {:error, reason} -> decode_agent_body_fallback(conn, body, reason)
+    end
+  end
+
+  defp decode_agent_body_fallback(conn, body, reason) do
+    if json_request?(conn) do
+      {:error, {:invalid_json, reason}}
+    else
+      {:ok, {:prompt, body}}
+    end
+  end
+
   defp decode_json(body) do
     case JSON.decode(body) do
       {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
       {:ok, _decoded} -> {:error, :json_body_must_be_an_object}
       {:error, reason} -> {:error, {:invalid_json, reason}}
+    end
+  end
+
+  defp json_request?(conn) do
+    case Plug.Conn.get_req_header(conn, "content-type") do
+      [content_type | _] -> content_type |> String.downcase() |> String.contains?("json")
+      [] -> false
     end
   end
 
@@ -208,6 +260,10 @@ defmodule Condukt.Plug do
 
   defp error_response(:prompt_must_be_a_string) do
     {400, "invalid_prompt", "Route prompt must be a string."}
+  end
+
+  defp error_response(:agent_body_must_be_a_prompt_or_object) do
+    {400, "invalid_input", "Agent route body must be a prompt string or a JSON object."}
   end
 
   defp error_response(:body_too_large) do
