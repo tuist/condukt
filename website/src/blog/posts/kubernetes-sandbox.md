@@ -5,15 +5,23 @@ description: "We just shipped a Kubernetes sandbox for Condukt. One pod per sess
 author: The Tuist team
 ---
 
-When we [shipped the sandbox abstraction](/blog/sandboxes-for-tool-calls/) a few weeks back, we said the adapter we were most excited about was [Kubernetes](https://kubernetes.io). The latest release ships it.
+A few weeks ago we shipped the [sandbox abstraction in Condukt](/blog/sandboxes-for-tool-calls/). The idea was that you should be able to choose where an agent's tool calls actually run, separately from how the agent is defined. The latest release adds the adapter we said we were most excited about: [Kubernetes](https://kubernetes.io).
 
-I keep going back to a moment that pushed this up the list. We moved Tuist's production workloads onto a [Hetzner](https://www.hetzner.com) cluster recently. After years of paying a tax for someone else to hide the cluster from us, the surprising part was not the cost. It was the access. Manifests we read. State we inspect. Observability we wire ourselves. We had a coding agent reading our manifests and proposing changes within a couple of days. None of that was on the table before.
+## Why this question matters
 
-The next thought was unavoidable. If the cluster is already there, with the resource limits, the RBAC, the network policies, the dashboards, the audit trails, why would we run the agent's tool calls anywhere else?
+It is tempting to leave tool calls in the same process that hosts the rest of the application. A Phoenix server, an agent inside it, a tool that touches the filesystem or runs a command. For the first version of anything, that is fine. It stops being fine the moment the agents are doing real work.
 
-## The shape
+A coding agent that installs dependencies and runs a test suite is doing work that should not share an OS process with your HTTP handlers. A multi-tenant platform with dozens of sessions in flight cannot have one tenant's heavy compile tank tail latency for the other thirty. A long-running task that needs to outlive the BEAM has nowhere to go if its tool calls are bolted to that BEAM. An agent generating and executing scripts is, by construction, running untrusted code; you might want a boundary around it.
 
-`Condukt.Sandbox.Kubernetes` creates one pod per session and routes every filesystem and process primitive through the Kubernetes exec API. It uses the [`:k8s`](https://hex.pm/packages/k8s) library and talks to the API server over HTTPS. There is no `kubectl` binary involved at runtime, and the agent cannot reach the host BEAM at all. Reads, writes, exec, all of it happens on the other side of the API server.
+None of these are exotic situations. They show up as soon as agents stop being a nicer autocomplete and start being a real part of how a system gets work done. The question of where their tool calls run goes from academic to load-bearing.
+
+## Sandboxes, and the Kubernetes one
+
+A sandbox in Condukt is the layer underneath every tool that touches the filesystem or runs subprocesses. The tool itself does not know what is on the other side. It calls into a contract that the active sandbox implements. `Sandbox.Local` runs against the host filesystem. `Sandbox.Virtual` runs inside a Rust-implemented bash interpreter with an in-memory filesystem. `Sandbox.Kubernetes` runs each session inside a dedicated pod.
+
+The Kubernetes adapter uses the [`:k8s`](https://hex.pm/packages/k8s) library and talks to the API server over HTTPS. No `kubectl` binary is involved at runtime. Every filesystem read, every filesystem write, every `exec` call goes through the Kubernetes exec API. The agent cannot reach the host running the Condukt BEAM at all.
+
+Picking it is one option at session start.
 
 <div class="code-block">{% highlight "elixir" %}# Minimal: current kubeconfig, "default" namespace.
 {:ok, agent} =
@@ -22,7 +30,7 @@ The next thought was unavoidable. If the cluster is already there, with the reso
     sandbox: Condukt.Sandbox.Kubernetes
   )
 
-# Production-shaped.
+# Production-shaped: pinned image, namespace, resource limits, RBAC.
 {:ok, agent} =
   MyApp.CodingAgent.start_link(
     api_key: "...",
@@ -40,13 +48,13 @@ The next thought was unavoidable. If the cluster is already there, with the reso
 
 Same agent module, same tools, same prompts. What changes is where the call lands.
 
-## Retries
+A few smaller capabilities fall out of this shape and are worth naming. Each pod gets an `emptyDir` volume mounted at the session cwd, and with `restartPolicy: Always` the container can restart on crash and the workspace comes back with it. File writes stream through the exec stdin channel, so large payloads do not run into a command-line size ceiling. Pass `:workspace_source` and the pod clones a git repository at init, so the agent starts in a workspace that already has the code it is meant to work on. Project instructions (`AGENTS.md`, `CLAUDE.md`, anything under `.agents/skills/`) are read through the sandbox, so the agent picks them up from where its workspace lives rather than from the host.
 
-The first time you put a session behind an [Oban](https://hexdocs.pm/oban) worker, you trip over a question that does not show up locally. A worker picks up a job, opens a pod, the agent does some work, something crashes, the queue retries. With a fresh pod every retry, the cloned repository is gone, the in-progress edits are gone, and a "retry" is now a different operation from the one that died.
+## Reattaching after a crash
 
-We did not want to ship something that quietly punished you for using a queue.
+Once you put any of this behind a job queue, you bump into a question that does not show up locally. A worker picks up a job, opens a pod, the agent works for a few minutes, the BEAM crashes, the queue retries. With a fresh pod every time, the cloned workspace is gone, the edits are gone, the conversation starts from an empty message history, and a "retry" is a different operation from the one that died.
 
-The session already has an id. Pass `id:` to `start_link` and the sandbox uses it to derive a deterministic pod name. Existing pod? Adopt it. No pod? Create one. The Oban job id is stable across retries and already in scope, so it is the natural thing to pass:
+The shape we wanted is that the same stable identifier names everything that ought to survive a retry. The session already has an `:id`. Pass it explicitly, and the sandbox uses it to derive a deterministic pod name: existing pod, adopt it; no pod, create one. Pass `:session_store` alongside the id and the conversation snapshot is keyed by it too. The Oban job id is stable across retries and naturally in scope, which makes the wiring small:
 
 <div class="code-block">{% highlight "elixir" %}defmodule MyApp.AgentWorker do
   use Oban.Worker, queue: :agents, max_attempts: 3
@@ -57,22 +65,17 @@ The session already has an id. Pass `id:` to `start_link` and the sandbox uses i
       MyApp.CodingAgent.start_link(
         id: job_id,
         api_key: System.get_env("ANTHROPIC_API_KEY"),
-        sandbox: {Condukt.Sandbox.Kubernetes, namespace: "agents"}
+        sandbox: {Condukt.Sandbox.Kubernetes, namespace: "agents"},
+        session_store: Condukt.SessionStore.Disk
       )
 
     Condukt.Session.run(agent, prompt)
   end
 end{% endhighlight %}</div>
 
-The BEAM crashes, Oban retries the job with the same `job_id`, and the sandbox reattaches to the pod that was already doing the work. If you want a pod that outlives a single job (a long-running session driven by many jobs), pass your own stable id instead. When an id is supplied, `shutdown/1` is a no-op and the pod outlives the BEAM process. When the work is actually done, the caller deletes the pod with `Condukt.Sandbox.Kubernetes.terminate/2`. Without an id, the session generates a UUID and the pod follows the usual lifecycle.
+Three things keyed on the same `job_id`: the pod, the workspace it carries on disk, and the messages the session has already exchanged. A retry reattaches to all three.
 
-## Forgotten pods
-
-The price of decoupling pods from a single BEAM process is that you have to answer the question nobody likes thinking about: what about a pod whose owner forgot it existed? Crashes happen. Deploys happen. Nodes go away.
-
-Two layers, on purpose.
-
-The first is a heartbeat annotation on the pod itself. When the sandbox starts, it spawns a small worker linked to the owner process that patches the pod's `condukt.tuist.dev/heartbeat-at` annotation every minute. There is nothing magical about it. The worker dies when its owner dies, and any reaper running elsewhere in your system can look at the annotation, see that the timestamp has stopped advancing, and delete the pod. The cadence is whatever you decide, and the reaper is whatever process you already use for that kind of cleanup. We did not want to invent a new lifecycle manager on top of Kubernetes for this. The existing primitives are enough:
+The other half of decoupling pods from a single BEAM is what happens to a pod whose owner forgot it existed. Two layers, on purpose. Each pod carries a `condukt.tuist.dev/heartbeat-at` annotation that a worker linked to the owner process refreshes once a minute. When the owner dies, the worker dies, the annotation goes stale, and a reaper running elsewhere can delete stale pods on whatever cadence you like:
 
 <div class="code-block">{% highlight "elixir" %}{:ok, deleted_pods} =
   Condukt.Sandbox.Kubernetes.reap_stale(
@@ -80,54 +83,14 @@ The first is a heartbeat annotation on the pod itself. When the sandbox starts, 
     stale_after: 15 * 60_000
   ){% endhighlight %}</div>
 
-Underneath that, every pod is created with `activeDeadlineSeconds`, defaulting to eight hours. This is the cluster's own insurance policy. Even if Condukt forgets a pod entirely, Kubernetes reclaims it. I would rather have both than rely on either.
+Underneath that, every pod is created with `activeDeadlineSeconds`, defaulting to eight hours. This is the cluster's own insurance. Even if Condukt forgets a pod entirely, Kubernetes reclaims it. I would rather have both than rely on either.
 
-## Where the state lives
+## Where we are now
 
-Each pod gets an `emptyDir` volume mounted at the session cwd. With `restartPolicy: Always`, the container can restart on crash and the volume comes back with it. The cloned repository, any in-progress edits, anything the agent wrote, all of it survives across container restarts in the same pod. It does not survive pod deletion or node loss. If you need that, bake a PVC into your image and point the sandbox at it.
+There will probably be adapters for [Daytona](https://daytona.io) and [E2B](https://e2b.dev) too. They offer things that are non-trivial to replicate: fast cold starts, fine-grained per-tenant isolation, snapshots and forks of running sandboxes, per-second billing. If your product needs those, paying for them is the right call.
 
-There is one small thing that turned out to matter more than I expected. Pass `:workspace_source` and the pod clones a git repo at init:
+But a lot of teams do not. They want a place to run agent tool calls, with bounded resources and decent observability, and they already operate a cluster that gives them those things. For that case, the cluster is the answer. The namespaces, the RBAC, the [Grafana](https://grafana.com) dashboards, the audit logs are already wired up. Your agent's tool calls become one more workload on the same plane as everything else you operate.
 
-<div class="code-block">{% highlight "elixir" %}sandbox = {
-  Condukt.Sandbox.Kubernetes,
-  image: "ghcr.io/myorg/agent-runtime-with-git:v1",
-  namespace: "agents",
-  workspace_source: [
-    git: "https://github.com/myorg/repo.git",
-    ref: "main"
-  ]
-}{% endhighlight %}</div>
-
-For stable `:id` sessions, the existing checkout is reused on reattach and the ref is checked out again. The clone runs inside the pod, so the image needs `git`. The default image is intentionally minimal and does not include it.
-
-## One id, three things keyed on it
-
-The same id that names a pod can do more than name a pod. Pair `:id` with `:session_store` and the conversation snapshot is keyed by it too. The disk store writes to `<cwd>/.condukt/sessions/<id>.store`, the memory store keys by the same tuple.
-
-<div class="code-block">{% highlight "elixir" %}def perform(%Oban.Job{id: job_id, args: %{"prompt" => prompt}}) do
-  {:ok, agent} =
-    MyApp.CodingAgent.start_link(
-      id: job_id,
-      api_key: System.get_env("ANTHROPIC_API_KEY"),
-      sandbox: {Condukt.Sandbox.Kubernetes, namespace: "agents"},
-      session_store: Condukt.SessionStore.Disk
-    )
-
-  Condukt.Session.run(agent, prompt)
-end{% endhighlight %}</div>
-
-Three things keyed on the same `job_id`: the pod, the workspace, and the messages. A retry reattaches to all of them.
-
-## Project instructions follow the workspace
-
-`AGENTS.md`, `CLAUDE.md`, and any `.agents/skills/*/SKILL.md` the agent should know about are read from wherever the sandbox lives. If the workspace is on the host, that is the host. If the workspace is inside a pod cloned at init, that is the pod. The sandbox knows its own working directory and the session reads through it, so the agent ends up with the same system prompt regardless of which backend it is running against. There is no special case for Kubernetes anywhere in the discovery code.
-
-## Why this and not a vendor
-
-We will probably ship adapters for [Daytona](https://daytona.io) and [E2B](https://e2b.dev) too. They are a good fit for teams who would rather outsource the sandbox layer, and the contract is small enough that those adapters will be thin.
-
-The honest question is whether you need what they offer. Some of it is genuinely hard to replicate: fast cold-starts, fine-grained per-tenant isolation, snapshots and forks of running sandboxes, per-second billing. If your product needs those, paying for them is the right call. But a lot of teams do not. They want a place to run agent tool calls, with bounded resources and decent observability, and they already operate a cluster that gives them those things. For that case, the cluster is the answer. The namespaces, the RBAC, the [Grafana](https://grafana.com) boards, the audit logs are already wired up. Your agent's tool calls become one more workload on the same plane as everything else you run.
-
-That was the part that surprised me the most while building this. The Kubernetes adapter ended up not being the heavyweight option. For teams that already operate a cluster, it is the boring one. The agent calls go where everything else already goes.
+That is the part that surprised me the most while building this. The Kubernetes adapter ended up not being the heavyweight option. For teams already running a cluster, it is the boring one. The agent calls go where everything else already goes.
 
 The [sandbox guide](https://hexdocs.pm/condukt/sandbox.html) covers the auth resolution, the RBAC manifest, and the rest of the options. If you try it and something feels wrong, tell us.
