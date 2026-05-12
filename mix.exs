@@ -95,6 +95,7 @@ defmodule Condukt.MixProject do
         "guides/subagents.md": [title: "Sub-agents"],
         "guides/workflows.md": [title: "Workflows"],
         "guides/mcp.md": [title: "MCP"],
+        "guides/http_routes.md": [title: "HTTP Routes"],
         "guides/sandbox.md": [title: "Sandbox"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
@@ -122,7 +123,8 @@ defmodule Condukt.MixProject do
           "guides/workflows.md"
         ],
         Integrations: [
-          "guides/mcp.md"
+          "guides/mcp.md",
+          "guides/http_routes.md"
         ],
         Guides: [
           "guides/sandbox.md",
@@ -146,6 +148,7 @@ defmodule Condukt.MixProject do
           Condukt,
           Condukt.Session,
           Condukt.Operation,
+          Condukt.Plug,
           Condukt.Message,
           Condukt.Telemetry
         ],

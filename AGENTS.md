@@ -49,6 +49,22 @@
   bearer tokens or `client_credentials` grants resolved through
   `Condukt.Secrets`-shaped refs.
 
+## HTTP routes
+
+- Module-defined one-shot agents and statically declared `operation/2`
+  entrypoints can be exposed as JSON POST endpoints with `Condukt.Plug` or
+  `Condukt.Plug`.
+- Plug routers mount `Condukt.Plug` directly with `to: Condukt.Plug` and
+  `init_opts:`. Pass `agent:` for normal one-shot agents and add `operation:`
+  for typed operation routes.
+- Agent route requests may use a raw prompt body, a JSON string body, or a JSON
+  object with an optional `"prompt"` string. If omitted, the route's `:prompt`
+  option is used, then an empty prompt.
+- Operation route requests must be JSON objects matching the operation input
+  schema. Responses are JSON envelopes shaped as
+  `%{ok: true, result: result}` or
+  `%{ok: false, error: %{code: code, message: message}}`.
+
 ## Sub-agents
 
 - Agents can declare `subagents/0` as `role: AgentModule` or
