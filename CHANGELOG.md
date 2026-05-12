@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.2.0] - 2026-05-12
+
+### Features
+
+- scope Condukt sandbox and store by session id, route project context through sandbox
+
+
 ## [1.1.0] - 2026-05-11
 
 ### Features
