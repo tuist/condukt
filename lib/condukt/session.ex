@@ -52,6 +52,7 @@ defmodule Condukt.Session do
     :api_key,
     :base_url,
     :session_store,
+    :store_id,
     :compactor,
     :redactor,
     :project_context,
@@ -269,14 +270,14 @@ defmodule Condukt.Session do
     case agent_module.init(opts) do
       {:ok, user_state} ->
         configured_system_prompt = restore_value(opts, :system_prompt, snapshot && snapshot.system_prompt)
-        project_context = load_project_context(opts)
         cwd = Keyword.fetch!(opts, :cwd)
         id = Keyword.get(opts, :id) || SessionID.generate()
 
-        with {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd)},
+        with {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd, id)},
              {:secrets, {:ok, secrets}} <- {:secrets, Secrets.resolve(opts[:secrets])},
              {:mcp, {:ok, mcp_registry}} <-
                {:mcp, MCP.start_all(Keyword.get(opts, :mcp_servers, []))} do
+          project_context = load_project_context(opts, sandbox)
           emit_secret_resolve(id, agent_module, secrets)
           subagents = normalize_subagents(Keyword.get(opts, :subagents, []))
           {:ok, subagent_supervisor} = maybe_start_subagent_supervisor(subagents)
@@ -302,6 +303,7 @@ defmodule Condukt.Session do
               api_key: opts[:api_key],
               base_url: opts[:base_url],
               session_store: session_store,
+              store_id: if(Keyword.has_key?(opts, :id), do: id),
               compactor: opts[:compactor],
               redactor: opts[:redactor],
               project_context: project_context,
@@ -327,8 +329,19 @@ defmodule Condukt.Session do
     end
   end
 
-  defp resolve_sandbox(nil, cwd), do: Sandbox.new(Sandbox.Local, cwd: cwd)
-  defp resolve_sandbox(spec, _cwd), do: Sandbox.resolve(spec)
+  defp resolve_sandbox(nil, cwd, session_id) do
+    Sandbox.new(Sandbox.Local, cwd: cwd, id: session_id)
+  end
+
+  defp resolve_sandbox(module, _cwd, session_id) when is_atom(module) do
+    Sandbox.resolve({module, [id: session_id]})
+  end
+
+  defp resolve_sandbox({module, opts}, _cwd, session_id) when is_atom(module) and is_list(opts) do
+    Sandbox.resolve({module, Keyword.put_new(opts, :id, session_id)})
+  end
+
+  defp resolve_sandbox(spec, _cwd, _session_id), do: Sandbox.resolve(spec)
 
   defp normalize_subagents(subagents) do
     Enum.map(subagents, fn
@@ -1089,17 +1102,23 @@ defmodule Condukt.Session do
   end
 
   defp session_store_opts(opts) when is_list(opts) do
-    [
+    base = [
       agent_module: Keyword.get(opts, :agent_module),
       cwd: Keyword.get(opts, :cwd)
     ]
+
+    if Keyword.has_key?(opts, :id),
+      do: Keyword.put(base, :id, Keyword.get(opts, :id)),
+      else: base
   end
 
   defp session_store_opts(%__MODULE__{} = state) do
-    [
+    base = [
       agent_module: state.agent_module,
       cwd: state.cwd
     ]
+
+    if state.store_id, do: Keyword.put(base, :id, state.store_id), else: base
   end
 
   defp maybe_compact(%__MODULE__{compactor: nil} = state), do: state
@@ -1128,11 +1147,9 @@ defmodule Condukt.Session do
     end
   end
 
-  defp load_project_context(opts) do
+  defp load_project_context(opts, sandbox) do
     if Keyword.get(opts, :load_project_instructions, true) do
-      opts
-      |> Keyword.fetch!(:cwd)
-      |> Context.discover()
+      Context.discover(sandbox)
     else
       Context.empty()
     end

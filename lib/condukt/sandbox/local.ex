@@ -49,6 +49,9 @@ defmodule Condukt.Sandbox.Local do
   def shutdown(_state), do: :ok
 
   @impl Sandbox
+  def cwd(%State{cwd: cwd}), do: cwd
+
+  @impl Sandbox
   def read_file(%State{cwd: cwd}, path) do
     case File.read(resolve(path, cwd)) do
       {:ok, content} -> {:ok, content}

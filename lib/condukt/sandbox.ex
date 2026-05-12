@@ -116,6 +116,15 @@ defmodule Condukt.Sandbox do
   @callback mount(state :: term(), host_path :: binary(), vfs_path :: binary()) ::
               :ok | {:error, :not_supported | term()}
 
+  @doc """
+  Returns the effective working directory inside the sandbox.
+
+  Used by project-instruction discovery and any caller that needs to address
+  files relative to the sandbox's root without knowing which backend is in
+  use.
+  """
+  @callback cwd(state :: term()) :: binary()
+
   @optional_callbacks [mount: 3, grep: 3, glob: 3]
 
   # ============================================================================
@@ -186,4 +195,6 @@ defmodule Condukt.Sandbox do
       {:error, :not_supported}
     end
   end
+
+  def cwd(%__MODULE__{module: module, state: state}), do: module.cwd(state)
 end

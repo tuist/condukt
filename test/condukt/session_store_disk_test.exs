@@ -64,4 +64,17 @@ defmodule Condukt.SessionStore.DiskTest do
     path = Path.join(tmp_dir, "missing.session")
     assert :ok = Disk.clear(path: path, cwd: "/tmp")
   end
+
+  test "scopes snapshots by id when one is supplied", %{tmp_dir: tmp_dir} do
+    expected_path = Path.join([tmp_dir, ".condukt", "sessions", "job-42.store"])
+
+    snapshot_a = %Snapshot{messages: [Message.user("job 42")], model: "m", thinking_level: :low, system_prompt: nil}
+    snapshot_b = %Snapshot{messages: [Message.user("job 99")], model: "m", thinking_level: :low, system_prompt: nil}
+
+    assert :ok = Disk.save(snapshot_a, cwd: tmp_dir, id: "job-42")
+    assert :ok = Disk.save(snapshot_b, cwd: tmp_dir, id: "job-99")
+    assert File.exists?(expected_path)
+    assert {:ok, ^snapshot_a} = Disk.load(cwd: tmp_dir, id: "job-42")
+    assert {:ok, ^snapshot_b} = Disk.load(cwd: tmp_dir, id: "job-99")
+  end
 end

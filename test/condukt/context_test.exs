@@ -61,4 +61,19 @@ defmodule Condukt.ContextTest do
     assert composed ==
              "You are a helpful assistant.\n\n## Project Instructions\n\nUse mix test."
   end
+
+  @tag :tmp_dir
+  test "discovers via a sandbox handle rooted elsewhere than the host cwd", %{tmp_dir: project_root} do
+    File.write!(Path.join(project_root, "AGENTS.md"), "Sandbox-routed instruction.")
+
+    {:ok, sandbox} = Condukt.Sandbox.new(Condukt.Sandbox.Local, cwd: project_root)
+
+    try do
+      context = Context.discover(sandbox)
+      assert context.agents_md == "Sandbox-routed instruction."
+      assert context.prompt =~ "Sandbox-routed instruction."
+    after
+      Condukt.Sandbox.shutdown(sandbox)
+    end
+  end
 end
