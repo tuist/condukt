@@ -303,7 +303,7 @@ defmodule Condukt.Session do
               api_key: opts[:api_key],
               base_url: opts[:base_url],
               session_store: session_store,
-              store_id: if(Keyword.has_key?(opts, :id), do: id, else: nil),
+              store_id: if(Keyword.has_key?(opts, :id), do: id),
               compactor: opts[:compactor],
               redactor: opts[:redactor],
               project_context: project_context,
