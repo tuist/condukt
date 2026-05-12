@@ -34,14 +34,28 @@ defmodule Condukt.PlugTest do
     )
   end
 
+  defmodule AssistantAgent do
+    use Condukt
+
+    @impl true
+    def system_prompt, do: "You are an assistant exposed over HTTP."
+  end
+
   defmodule Router do
     use Plug.Router
 
-    import Condukt.Plug, only: [operation_route: 3, operation_route: 4]
+    import Condukt.Plug, only: [agent_route: 3, operation_route: 3, operation_route: 4]
 
     plug(Plug.Parsers, parsers: [:json], json_decoder: JSON)
     plug(:match)
     plug(:dispatch)
+
+    agent_route("/assistant", AssistantAgent, run_opts: &__MODULE__.run_opts/1)
+
+    agent_route("/assistant-default", AssistantAgent,
+      prompt: "Use the route default prompt.",
+      run_opts: &__MODULE__.run_opts/1
+    )
 
     operation_route("/review", ReviewAgent, :review_pr)
 
@@ -57,7 +71,7 @@ defmodule Condukt.PlugTest do
       ]
     )
 
-    def run_opts(_conn), do: [model: Process.get(:condukt_plug_model)]
+    def run_opts(_conn), do: [model: Process.get(:condukt_plug_model), load_project_instructions: false]
 
     def custom_input(conn), do: %{"repo" => conn.params["repo"], "pr_number" => 1}
 
@@ -111,6 +125,54 @@ defmodule Condukt.PlugTest do
     end
   end
 
+  describe "agent routes" do
+    test "runs a module-defined one-shot agent with the request prompt" do
+      {model, model_id} = LLMProvider.model(LLMProvider.text_response("agent answer"))
+      Process.put(:condukt_plug_model, model)
+
+      conn =
+        conn(:post, "/assistant", JSON.encode!(%{prompt: "Summarize this ticket."}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call([])
+
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body) == %{"ok" => true, "result" => "agent answer"}
+
+      assert_receive {LLMProvider, :request, ^model_id, context, _opts}
+      assert inspect(context) =~ "Summarize this ticket."
+    after
+      Process.delete(:condukt_plug_model)
+    end
+
+    test "uses the route prompt when the request omits one" do
+      {model, model_id} = LLMProvider.model(LLMProvider.text_response("default answer"))
+      Process.put(:condukt_plug_model, model)
+
+      conn =
+        conn(:post, "/assistant-default", JSON.encode!(%{}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call([])
+
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body) == %{"ok" => true, "result" => "default answer"}
+
+      assert_receive {LLMProvider, :request, ^model_id, context, _opts}
+      assert inspect(context) =~ "Use the route default prompt."
+    after
+      Process.delete(:condukt_plug_model)
+    end
+
+    test "rejects non-string prompts" do
+      conn =
+        conn(:post, "/assistant", JSON.encode!(%{prompt: %{text: "nope"}}))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call([])
+
+      assert conn.status == 400
+      assert %{"ok" => false, "error" => %{"code" => "invalid_prompt"}} = JSON.decode!(conn.resp_body)
+    end
+  end
+
   describe "direct plug usage" do
     test "reads and decodes the JSON body when Plug.Parsers has not run" do
       model = model_for(%{"verdict" => "approve", "summary" => "Direct plug."})
@@ -154,6 +216,21 @@ defmodule Condukt.PlugTest do
 
       assert conn.status == 200
       assert %{"ok" => true, "result" => %{"summary" => "Phoenix."}} = JSON.decode!(conn.resp_body)
+    end
+
+    test "delegates agent route private metadata to Condukt.Plug" do
+      model = LLMProvider.model(LLMProvider.text_response("Phoenix agent.")) |> elem(0)
+
+      conn =
+        conn(:post, "/assistant", JSON.encode!(%{prompt: "Help me."}))
+        |> put_private(:condukt_route,
+          agent: AssistantAgent,
+          run_opts: [model: model, load_project_instructions: false]
+        )
+        |> Condukt.Phoenix.call(:agent)
+
+      assert conn.status == 200
+      assert %{"ok" => true, "result" => "Phoenix agent."} = JSON.decode!(conn.resp_body)
     end
   end
 

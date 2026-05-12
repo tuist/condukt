@@ -1,12 +1,13 @@
 defmodule Condukt.Phoenix do
   @moduledoc """
-  Phoenix router helpers for typed Condukt operations.
+  Phoenix router helpers for Condukt agents and typed operations.
 
-  Import `operation_route/3` inside a Phoenix router to expose an operation as
-  a JSON POST endpoint:
+  Import `agent_route/2` or `operation_route/3` inside a Phoenix router to
+  expose a JSON POST endpoint:
 
-      import Condukt.Phoenix, only: [operation_route: 3, operation_route: 4]
+      import Condukt.Phoenix, only: [agent_route: 2, agent_route: 3, operation_route: 3, operation_route: 4]
 
+      agent_route "/assistant", MyApp.AssistantAgent, prompt: "Help with this request."
       operation_route "/review-pr", MyApp.ReviewAgent, :review_pr,
         run_opts: [timeout: 120_000]
 
@@ -29,17 +30,42 @@ defmodule Condukt.Phoenix do
     end
   end
 
+  @doc """
+  Declares a Phoenix POST route for a module-defined one-shot agent.
+  """
+  defmacro agent_route(path, agent_module, opts \\ []) do
+    plug_opts = Keyword.put(opts, :agent, agent_module)
+
+    quote do
+      post(unquote(path), Condukt.Phoenix, :agent, private: %{condukt_route: unquote(plug_opts)})
+    end
+  end
+
   @doc false
   def init(action), do: action
+
+  @doc false
+  def call(conn, :agent), do: agent(conn, conn.params)
 
   @doc false
   def call(conn, :operation), do: operation(conn, conn.params)
 
   @doc false
-  def operation(conn, _params) do
+  def agent(conn, _params), do: call_plug(conn)
+
+  @doc false
+  def operation(conn, _params), do: call_plug(conn)
+
+  defp call_plug(conn) do
     conn
     |> Map.fetch!(:private)
-    |> Map.fetch!(:condukt_operation)
+    |> fetch_route_opts()
     |> then(&Condukt.Plug.call(conn, &1))
+  end
+
+  defp fetch_route_opts(private) do
+    Map.get_lazy(private, :condukt_route, fn ->
+      Map.fetch!(private, :condukt_operation)
+    end)
   end
 end

@@ -1,9 +1,9 @@
 defmodule Condukt.Plug do
   @moduledoc """
-  Exposes typed Condukt operations as HTTP routes.
+  Exposes Condukt agents and typed operations as HTTP routes.
 
-  `Condukt.Plug` is a regular Plug that runs a statically declared
-  `Condukt.Operation`.
+  `Condukt.Plug` is a regular Plug that runs either a statically declared
+  `Condukt.Operation` or a module-defined one-shot agent.
 
       post "/review-pr",
         to: Condukt.Plug,
@@ -13,15 +13,30 @@ defmodule Condukt.Plug do
           run_opts: [timeout: 120_000]
         ]
 
-  For a terser Plug router declaration, import `operation_route/3`:
+  Agent routes omit `:operation`. The request body can include an optional
+  `"prompt"` string. If no prompt is provided, `:prompt` is used, falling back
+  to an empty prompt.
 
-      import Condukt.Plug, only: [operation_route: 3, operation_route: 4]
+      post "/assistant",
+        to: Condukt.Plug,
+        init_opts: [
+          agent: MyApp.AssistantAgent,
+          prompt: "Help with this request.",
+          run_opts: [timeout: 120_000]
+        ]
 
+  For terser Plug router declarations, import the route helpers:
+
+      import Condukt.Plug, only: [agent_route: 2, agent_route: 3, operation_route: 3, operation_route: 4]
+
+      agent_route "/assistant", MyApp.AssistantAgent, prompt: "Help with this request."
       operation_route "/review-pr", MyApp.ReviewAgent, :review_pr
 
-  The request body must be a JSON object matching the operation input schema.
-  If `Plug.Parsers` has already parsed the body, `conn.body_params` is reused.
-  Otherwise this plug reads and decodes the JSON body itself.
+  The request body must be a JSON object. Operation routes use the object as
+  operation input. Agent routes read the optional prompt from the `"prompt"`
+  field by default. If `Plug.Parsers` has already parsed the body,
+  `conn.body_params` is reused. Otherwise this plug reads and decodes the JSON
+  body itself.
 
   Successful responses are encoded as:
 
@@ -35,6 +50,8 @@ defmodule Condukt.Plug do
   @type opts :: [
           agent: module(),
           operation: atom(),
+          prompt: String.t() | (Plug.Conn.t() -> String.t()),
+          prompt_param: String.t() | atom(),
           run_opts: keyword() | (Plug.Conn.t() -> keyword()),
           input: (Plug.Conn.t() -> map())
         ]
@@ -56,15 +73,57 @@ defmodule Condukt.Plug do
     end
   end
 
+  @doc """
+  Declares a POST route for a module-defined one-shot agent.
+
+  This macro expands to Plug Router's `post/3` target plug form. Phoenix
+  routers can use `Condukt.Phoenix.agent_route/2` instead.
+  """
+  defmacro agent_route(path, agent_module, opts \\ []) do
+    plug_opts = Keyword.put(opts, :agent, agent_module)
+
+    quote do
+      post(unquote(path), to: Condukt.Plug, init_opts: unquote(plug_opts))
+    end
+  end
+
   @doc false
   def init(opts), do: opts
 
   @doc false
   def call(conn, opts) do
-    with {:ok, agent_module} <- required_opt(opts, :agent),
-         {:ok, operation_name} <- required_opt(opts, :operation),
-         {:ok, input} <- input(conn, opts),
+    case required_opt(opts, :agent) do
+      {:ok, agent_module} ->
+        dispatch(conn, opts, agent_module)
+
+      {:error, reason} ->
+        {status, code, message} = error_response(reason)
+        json(conn, status, %{ok: false, error: %{code: code, message: message}})
+    end
+  end
+
+  defp dispatch(conn, opts, agent_module) do
+    case Keyword.fetch(opts, :operation) do
+      {:ok, operation_name} -> run_operation(conn, opts, agent_module, operation_name)
+      :error -> run_agent(conn, opts, agent_module)
+    end
+  end
+
+  defp run_operation(conn, opts, agent_module, operation_name) do
+    with {:ok, input} <- input(conn, opts),
          {:ok, result} <- Condukt.Operation.run(agent_module, operation_name, input, run_opts(opts, conn)) do
+      json(conn, 200, %{ok: true, result: result})
+    else
+      {:error, reason} ->
+        {status, code, message} = error_response(reason)
+        json(conn, status, %{ok: false, error: %{code: code, message: message}})
+    end
+  end
+
+  defp run_agent(conn, opts, agent_module) do
+    with {:ok, params} <- body_input(conn),
+         {:ok, prompt} <- prompt(conn, opts, params),
+         {:ok, result} <- Condukt.run(agent_module, prompt, run_opts(opts, conn)) do
       json(conn, 200, %{ok: true, result: result})
     else
       {:error, reason} ->
@@ -89,6 +148,36 @@ defmodule Condukt.Plug do
 
   defp normalize_input(input) when is_map(input), do: {:ok, input}
   defp normalize_input(_input), do: {:error, :input_must_be_a_map}
+
+  defp prompt(conn, opts, params) do
+    prompt_key = Keyword.get(opts, :prompt_param, "prompt")
+
+    case fetch_param(params, prompt_key) do
+      {:ok, prompt} -> validate_prompt(prompt)
+      :error -> route_prompt(conn, opts)
+    end
+  end
+
+  defp fetch_param(params, key) when is_atom(key) do
+    case Map.fetch(params, Atom.to_string(key)) do
+      {:ok, value} -> {:ok, value}
+      :error -> Map.fetch(params, key)
+    end
+  end
+
+  defp fetch_param(params, key) when is_binary(key) do
+    Map.fetch(params, key)
+  end
+
+  defp route_prompt(conn, opts) do
+    case Keyword.get(opts, :prompt, "") do
+      prompt_fun when is_function(prompt_fun, 1) -> validate_prompt(prompt_fun.(conn))
+      prompt -> validate_prompt(prompt)
+    end
+  end
+
+  defp validate_prompt(prompt) when is_binary(prompt), do: {:ok, prompt}
+  defp validate_prompt(_prompt), do: {:error, :prompt_must_be_a_string}
 
   defp body_input(conn) do
     case body_params(conn) do
@@ -162,6 +251,10 @@ defmodule Condukt.Plug do
 
   defp error_response(:input_must_be_a_map) do
     {400, "invalid_input", "Route input must be a map."}
+  end
+
+  defp error_response(:prompt_must_be_a_string) do
+    {400, "invalid_prompt", "Route prompt must be a string."}
   end
 
   defp error_response(:body_too_large) do
