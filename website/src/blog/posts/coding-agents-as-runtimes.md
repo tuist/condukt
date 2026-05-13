@@ -17,7 +17,7 @@ So the question becomes: should Condukt treat them as providers, or as runtimes?
 
 ## Why this matters for products
 
-At Tuist, we are building [Atlas](https://pepicrft.me/blog/the-company-before-the-tools/), an AIOps platform for the whole company. One of the things we find exciting about that space is that operational data often points at work that needs to happen, but the handoff is still very manual. A Grafana alert fires. Someone opens the dashboard. Someone checks logs. Someone correlates it with deploys, recent changes, flaky tests, user reports, or infrastructure events. Eventually, someone opens an issue or starts investigating locally. There is a lot of structure in that process, but we still treat it as if it requires a human to initiate every step.
+At Tuist, we are building [Atlas](https://pepicrft.me/blog/the-company-before-the-tools/), an AIOps platform for the whole company. One of the things we find exciting about that space is that operational data often points at work that needs to happen, but the handoff is still very manual. A [Grafana](https://grafana.com/) alert fires. Someone opens the dashboard. Someone checks logs. Someone correlates it with deploys, recent changes, flaky tests, user reports, or infrastructure events. Eventually, someone opens an issue or starts investigating locally. There is a lot of structure in that process, but we still treat it as if it requires a human to initiate every step.
 
 What if Atlas could start that investigation automatically? Imagine an alert that says a service is returning more errors than usual. Atlas could gather the alert context, recent deploys, logs, traces, and the relevant repository. Then it could ask a coding agent to investigate:
 
