@@ -38,6 +38,8 @@ defmodule Condukt.Session do
     :id,
     :pid,
     :agent_module,
+    :runtime,
+    :runtime_opts,
     :model,
     :thinking_level,
     :configured_system_prompt,
@@ -107,6 +109,7 @@ defmodule Condukt.Session do
       |> Keyword.put(:explicit_keys, explicit_keys)
       |> put_configured_opt(config, :api_key)
       |> put_configured_opt(config, :base_url)
+      |> put_configured_opt(config, :runtime, fn -> agent_runtime(agent_module) end)
       |> put_configured_opt(config, :model, fn -> agent_module.model() end)
       |> put_configured_opt(config, :thinking_level, fn -> agent_module.thinking_level() end)
       |> put_configured_opt(config, :system_prompt, fn -> agent_module.system_prompt() end)
@@ -138,6 +141,14 @@ defmodule Condukt.Session do
   defp agent_sandbox(agent_module) do
     if function_exported?(agent_module, :sandbox, 0) do
       agent_module.sandbox()
+    end
+  end
+
+  defp agent_runtime(agent_module) do
+    if function_exported?(agent_module, :runtime, 0) do
+      agent_module.runtime()
+    else
+      Condukt.AgentRuntimes.Native
     end
   end
 
@@ -273,7 +284,8 @@ defmodule Condukt.Session do
         cwd = Keyword.fetch!(opts, :cwd)
         id = Keyword.get(opts, :id) || SessionID.generate()
 
-        with {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd, id)},
+        with {:runtime, {:ok, {runtime, runtime_opts}}} <- {:runtime, resolve_runtime(opts[:runtime])},
+             {:sandbox, {:ok, sandbox}} <- {:sandbox, resolve_sandbox(opts[:sandbox], cwd, id)},
              {:secrets, {:ok, secrets}} <- {:secrets, Secrets.resolve(opts[:secrets])},
              {:mcp, {:ok, mcp_registry}} <-
                {:mcp, MCP.start_all(Keyword.get(opts, :mcp_servers, []))} do
@@ -289,6 +301,8 @@ defmodule Condukt.Session do
               id: id,
               pid: self(),
               agent_module: agent_module,
+              runtime: runtime,
+              runtime_opts: runtime_opts,
               model: restore_value(opts, :model, snapshot && snapshot.model),
               thinking_level: restore_value(opts, :thinking_level, snapshot && snapshot.thinking_level),
               configured_system_prompt: configured_system_prompt,
@@ -314,6 +328,9 @@ defmodule Condukt.Session do
 
           {:ok, state}
         else
+          {:runtime, {:error, reason}} ->
+            {:stop, {:runtime_init_failed, reason}}
+
           {:sandbox, {:error, reason}} ->
             {:stop, {:sandbox_init_failed, reason}}
 
@@ -342,6 +359,36 @@ defmodule Condukt.Session do
   end
 
   defp resolve_sandbox(spec, _cwd, _session_id), do: Sandbox.resolve(spec)
+
+  defp resolve_runtime(nil), do: {:ok, {Condukt.AgentRuntimes.Native, []}}
+  defp resolve_runtime(Condukt.AgentRuntimes.Native), do: {:ok, {Condukt.AgentRuntimes.Native, []}}
+
+  defp resolve_runtime({Condukt.AgentRuntimes.Native, opts}) when is_list(opts) do
+    {:ok, {Condukt.AgentRuntimes.Native, opts}}
+  end
+
+  defp resolve_runtime(module) when is_atom(module) do
+    validate_runtime_module(module, [])
+  end
+
+  defp resolve_runtime({module, opts}) when is_atom(module) and is_list(opts) do
+    validate_runtime_module(module, opts)
+  end
+
+  defp resolve_runtime(runtime), do: {:error, {:invalid_runtime, runtime}}
+
+  defp validate_runtime_module(module, opts) do
+    cond do
+      Code.ensure_loaded?(module) and function_exported?(module, :run, 3) ->
+        {:ok, {module, opts}}
+
+      Code.ensure_loaded?(module) ->
+        {:error, {:runtime_missing_run_callback, module}}
+
+      true ->
+        {:error, {:runtime_not_loaded, module}}
+    end
+  end
 
   defp normalize_subagents(subagents) do
     Enum.map(subagents, fn
@@ -491,7 +538,15 @@ defmodule Condukt.Session do
   # Agent Loop Implementation
   # ============================================================================
 
+  defp do_run(%{runtime: Condukt.AgentRuntimes.Native} = state, prompt, opts) do
+    do_native_run(state, prompt, opts)
+  end
+
   defp do_run(state, prompt, opts) do
+    do_runtime_run(state, prompt, opts)
+  end
+
+  defp do_native_run(state, prompt, opts) do
     max_turns = opts[:max_turns] || @default_max_turns
     images = opts[:images] || []
 
@@ -509,7 +564,62 @@ defmodule Condukt.Session do
     end)
   end
 
-  defp do_stream(state, prompt, opts, emit, abort_ref) do
+  defp do_runtime_run(state, prompt, opts) do
+    user_message = Message.user(prompt, opts[:images] || [])
+    messages = state.messages ++ [user_message]
+
+    Telemetry.span(:agent, %{agent: state.agent_module, session_id: state.id}, fn ->
+      case state.runtime.run(prompt, runtime_context(state), opts) do
+        {:ok, result} ->
+          {response, result_messages, assigns} = normalize_runtime_result(result, state.assigns)
+          final_messages = messages ++ result_messages
+          {{:ok, response}, final_messages, assigns}
+
+        {:error, reason} ->
+          {{:error, reason}, messages, state.assigns}
+      end
+    end)
+  end
+
+  defp runtime_context(state) do
+    %{
+      agent: state.pid,
+      agent_module: state.agent_module,
+      session_id: state.id,
+      cwd: state.cwd,
+      sandbox: state.sandbox,
+      secrets: state.secrets,
+      system_prompt: state.system_prompt,
+      project_context: state.project_context,
+      runtime_opts: state.runtime_opts,
+      assigns: state.assigns,
+      user_state: state.user_state
+    }
+  end
+
+  defp normalize_runtime_result(response, assigns) when is_binary(response) do
+    {response, [Message.assistant(response)], assigns}
+  end
+
+  defp normalize_runtime_result(%{} = result, assigns) do
+    response = Map.get(result, :response) || Map.get(result, "response") || ""
+    messages = Map.get(result, :messages) || Map.get(result, "messages") || [Message.assistant(response)]
+    next_assigns = Map.get(result, :assigns) || Map.get(result, "assigns") || assigns
+
+    {response, messages, next_assigns}
+  end
+
+  defp do_stream(%{runtime: Condukt.AgentRuntimes.Native} = state, prompt, opts, emit, abort_ref) do
+    do_native_stream(state, prompt, opts, emit, abort_ref)
+  end
+
+  defp do_stream(state, _prompt, _opts, emit, _abort_ref) do
+    reason = {:streaming_not_supported_by_runtime, state.runtime}
+    emit.({:error, reason})
+    {:error, reason}
+  end
+
+  defp do_native_stream(state, prompt, opts, emit, abort_ref) do
     max_turns = opts[:max_turns] || @default_max_turns
     images = opts[:images] || []
 

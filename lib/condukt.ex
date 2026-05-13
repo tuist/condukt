@@ -57,6 +57,15 @@ defmodule Condukt do
   # ============================================================================
 
   @doc """
+  Returns the agent runtime.
+
+  The default native runtime is backed by `Condukt.Session` and ReqLLM. Other
+  runtime modules can own the inner loop while Condukt keeps the surrounding
+  session, sandbox, secrets, telemetry, workflow, and sub-agent boundaries.
+  """
+  @callback runtime() :: module() | {module(), keyword()}
+
+  @doc """
   Returns the default system prompt for this agent.
 
   This can be overridden at `start_link/1` via the `:system_prompt` option.
@@ -122,6 +131,7 @@ defmodule Condukt do
 
   @optional_callbacks [
     system_prompt: 0,
+    runtime: 0,
     tools: 0,
     subagents: 0,
     model: 0,
@@ -136,7 +146,12 @@ defmodule Condukt do
   # __using__ Macro
   # ============================================================================
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    runtime =
+      opts
+      |> Keyword.get(:runtime, Condukt.AgentRuntimes.Native)
+      |> expand_runtime_alias(__CALLER__)
+
     quote location: :keep do
       @behaviour Condukt
 
@@ -146,6 +161,9 @@ defmodule Condukt do
       @before_compile Condukt.Operation
 
       # Default implementations
+      @impl Condukt
+      def runtime, do: unquote(Macro.escape(runtime))
+
       @impl Condukt
       def system_prompt, do: nil
 
@@ -176,6 +194,7 @@ defmodule Condukt do
       def handle_event(_event, state), do: {:noreply, state}
 
       defoverridable system_prompt: 0,
+                     runtime: 0,
                      tools: 0,
                      subagents: 0,
                      model: 0,
@@ -234,6 +253,12 @@ defmodule Condukt do
       end
     end
   end
+
+  defp expand_runtime_alias({module, opts}, caller) when is_list(opts) do
+    {Macro.expand(module, caller), opts}
+  end
+
+  defp expand_runtime_alias(module, caller), do: Macro.expand(module, caller)
 
   # ============================================================================
   # Public API
