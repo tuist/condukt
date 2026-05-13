@@ -18,6 +18,10 @@ redaction).
 | `init/1` | identity | Called with the keyword opts at startup. |
 | `handle_event/2` | no op | Receives events as they happen during a run. |
 
+These callbacks describe the native Condukt agent loop: `Condukt.Session`
+builds a ReqLLM request from the agent's messages, model, system prompt, and
+tools, then repeats while the model asks for tools.
+
 You only override what you need:
 
 ```elixir
@@ -38,6 +42,91 @@ defmodule MyApp.ResearchAgent do
   def model, do: "anthropic:claude-sonnet-4-20250514"
 end
 ```
+
+## Agent runtimes
+
+Some agent implementations are not just model backends. Coding agents such as
+Codex SDK or Claude Code SDK own their own execution loop: they may plan,
+inspect files, edit code, invoke their own tools, stream intermediate events,
+and decide when the task is complete. Those systems should be integrated as
+agent runtimes, not as ReqLLM model providers.
+
+An agent runtime is the component that owns the loop for a run. The default
+runtime is the native Condukt session runtime described above. A future
+runtime-backed agent could be declared like this:
+
+```elixir
+defmodule MyApp.Implementer do
+  use Condukt.Agent, runtime: Condukt.AgentRuntimes.Codex
+
+  def instructions do
+    "Implement the requested change and leave the working tree ready for review."
+  end
+
+  def sandbox do
+    {Condukt.Sandbox.Local, cwd: "/path/to/repo"}
+  end
+
+  def secrets do
+    [github_token: {:env, "GITHUB_TOKEN"}]
+  end
+end
+```
+
+Passing a runtime changes the meaning of the agent module. The module is still
+addressable by Condukt, so it can be used in one-shot runs, workflows, and
+sub-agent registrations. Internally, however, Condukt delegates the loop to the
+runtime adapter instead of driving every LLM turn itself.
+
+### Callback implications
+
+Runtime-backed agents should have a smaller common callback surface than native
+agents. These callbacks remain generally meaningful:
+
+- `runtime/0`: selects the execution engine.
+- `instructions/0` or another runtime-defined instruction callback: passes
+  durable guidance to the external agent.
+- `sandbox/0`: defines where filesystem and subprocess side effects may happen.
+- `secrets/0`: declares credentials available to the runtime adapter.
+- `init/1`: prepares per-session state.
+- `handle_event/2`: observes normalized lifecycle and streaming events.
+- `subagents/0`: composes the runtime-backed agent with other Condukt agents
+  when the adapter supports nested delegation.
+
+These native callbacks are runtime-specific and should not be treated as
+portable configuration:
+
+- `model/0`: only applies when Condukt owns the ReqLLM call. A coding-agent SDK
+  may choose its model internally or expose a different option.
+- `thinking_level/0`: only applies if the runtime adapter maps it deliberately.
+- `tools/0`: describes Condukt-native LLM tools. External coding agents often
+  have their own tool protocol, so the adapter must decide whether and how to
+  expose Condukt tools.
+- `mcp_servers/0`: applies only when the runtime adapter can pass MCP servers
+  through to the external SDK.
+- `system_prompt/0`: may map to instructions, developer guidance, session
+  prompt, or nothing, depending on the runtime.
+
+The rule is: callbacks are not silently universal. If a runtime does not
+support a callback, Condukt should either reject that configuration or document
+the runtime-specific mapping. This keeps an agent definition from looking
+portable while relying on behavior that only exists in one SDK.
+
+### Runtime boundary
+
+Runtime adapters should preserve Condukt's orchestration boundary:
+
+- Condukt owns session identity, sandbox selection, secret resolution,
+  workflow placement, sub-agent registration, and normalized telemetry.
+- The runtime owns the internal loop, SDK-specific model configuration,
+  SDK-specific tools, and final result extraction.
+- Structured input and output should be enforced at the Condukt boundary, not
+  by asking callers to parse free-form SDK output.
+- Streaming should be normalized into Condukt events where possible, while
+  allowing runtime-specific event details to remain opt in.
+
+This boundary lets external coding agents participate in Condukt workflows
+without pretending they are ordinary chat-completion providers.
 
 ## Running an agent once
 
