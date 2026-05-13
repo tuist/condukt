@@ -77,7 +77,7 @@ function formatDate(value) {
 }
 
 function renderSvg({ title, date }) {
-  const lines = wrapText(title, 25, 3);
+  const lines = wrapText(title, 20, 3);
   const fontSize = lines.length >= 3 ? 60 : 70;
   const lineHeight = Math.round(fontSize * 1.12);
   const titleTop = lines.length === 1 ? 310 : lines.length === 2 ? 276 : 248;
