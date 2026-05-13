@@ -5,7 +5,7 @@ description: "Codex and Claude are already tuned coding harnesses. Condukt shoul
 author: The Tuist team
 ---
 
-One thing that has become clear while building Condukt is that coding agents are not just another model endpoint. Tools like Codex and Claude Code are already products with their own opinions, defaults, and interaction models. They are not thin wrappers around a completion API. They are coding environments.
+One thing that has become clear while building Condukt is that coding agents are not just another model endpoint. Tools like [Codex](https://github.com/openai/codex) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) are already products with their own opinions, defaults, and interaction models. They are not thin wrappers around a completion API. They are coding environments.
 
 That matters because the quality of the result does not come only from the model. It comes from the whole harness around it: the prompts, the tool selection, the permission model, the way the agent reads files, the way it edits code, the way it summarizes work, and the assumptions it carries about how software should be changed.
 
