@@ -80,6 +80,21 @@
 - See `guides/subagents.md` for declaration, inheritance, and supervision
   details.
 
+## Agent runtimes
+
+- Agents can be declared with `use Condukt.Agent, runtime: RuntimeModule` or
+  `runtime: {RuntimeModule, opts}`. The default runtime is
+  `Condukt.AgentRuntimes.Native`, where `Condukt.Session` drives the ReqLLM
+  turn and tool loop.
+- Non-native runtime modules implement `Condukt.AgentRuntime.run/3`. Condukt
+  still owns session identity, sandbox setup, secret resolution, project
+  instructions, telemetry, workflow placement, and sub-agent boundaries.
+- Treat `model/0`, `thinking_level/0`, `tools/0`, `mcp_servers/0`, and
+  `system_prompt/0` as native-loop callbacks unless a runtime adapter documents
+  an explicit mapping. Use `instructions/0` for durable guidance to
+  runtime-backed agents.
+- See `guides/agents.md` for runtime boundary and callback implications.
+
 ## Native NIF (`native/condukt_bashkit/`)
 
 - The `condukt_bashkit` Rust crate wraps the bashkit virtual sandbox into

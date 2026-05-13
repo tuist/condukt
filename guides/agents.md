@@ -11,6 +11,8 @@ redaction).
 
 | Callback | Default | Purpose |
 | -------- | ------- | ------- |
+| `runtime/0` | `Condukt.AgentRuntimes.Native` | Component that owns the agent loop. |
+| `instructions/0` | `nil` | Durable instructions for runtime-backed agents. |
 | `system_prompt/0` | `nil` | Static system prompt for the agent. |
 | `tools/0` | `[]` | List of tool modules, `{module, opts}` tuples, or inline tools. |
 | `model/0` | `"anthropic:claude-sonnet-4-20250514"` | ReqLLM `provider:model` identifier. |
@@ -52,8 +54,8 @@ and decide when the task is complete. Those systems should be integrated as
 agent runtimes, not as ReqLLM model providers.
 
 An agent runtime is the component that owns the loop for a run. The default
-runtime is the native Condukt session runtime described above. A future
-runtime-backed agent could be declared like this:
+runtime is the native Condukt session runtime described above. A
+runtime-backed agent can be declared like this:
 
 ```elixir
 defmodule MyApp.Implementer do
@@ -80,18 +82,16 @@ runtime adapter instead of driving every LLM turn itself.
 
 ### Callback implications
 
-Runtime-backed agents should have a smaller common callback surface than native
+Runtime-backed agents have a smaller common callback surface than native
 agents. These callbacks remain generally meaningful:
 
 - `runtime/0`: selects the execution engine.
-- `instructions/0` or another runtime-defined instruction callback: passes
-  durable guidance to the external agent.
+- `instructions/0`: passes durable guidance to the external agent.
 - `sandbox/0`: defines where filesystem and subprocess side effects may happen.
 - `secrets/0`: declares credentials available to the runtime adapter.
 - `init/1`: prepares per-session state.
 - `handle_event/2`: observes normalized lifecycle and streaming events.
-- `subagents/0`: composes the runtime-backed agent with other Condukt agents
-  when the adapter supports nested delegation.
+- `subagents/0`: composes the runtime-backed agent with other Condukt agents.
 
 These native callbacks are runtime-specific and should not be treated as
 portable configuration:
