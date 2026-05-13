@@ -42,7 +42,6 @@ defmodule Condukt.Session do
     :runtime_opts,
     :model,
     :thinking_level,
-    :instructions,
     :configured_system_prompt,
     :system_prompt,
     :tools,
@@ -111,7 +110,6 @@ defmodule Condukt.Session do
       |> put_configured_opt(config, :api_key)
       |> put_configured_opt(config, :base_url)
       |> put_configured_opt(config, :runtime, fn -> agent_runtime(agent_module) end)
-      |> put_configured_opt(config, :instructions, fn -> agent_instructions(agent_module) end)
       |> put_configured_opt(config, :model, fn -> agent_module.model() end)
       |> put_configured_opt(config, :thinking_level, fn -> agent_module.thinking_level() end)
       |> put_configured_opt(config, :system_prompt, fn -> agent_module.system_prompt() end)
@@ -151,12 +149,6 @@ defmodule Condukt.Session do
       agent_module.runtime()
     else
       Condukt.AgentRuntimes.Native
-    end
-  end
-
-  defp agent_instructions(agent_module) do
-    if function_exported?(agent_module, :instructions, 0) do
-      agent_module.instructions()
     end
   end
 
@@ -313,7 +305,6 @@ defmodule Condukt.Session do
               runtime_opts: runtime_opts,
               model: restore_value(opts, :model, snapshot && snapshot.model),
               thinking_level: restore_value(opts, :thinking_level, snapshot && snapshot.thinking_level),
-              instructions: Keyword.get(opts, :instructions),
               configured_system_prompt: configured_system_prompt,
               system_prompt: Context.compose_system_prompt(configured_system_prompt, project_context.prompt),
               tools: maybe_inject_subagent_tool(tools, subagents),
@@ -598,7 +589,6 @@ defmodule Condukt.Session do
       cwd: state.cwd,
       sandbox: state.sandbox,
       secrets: state.secrets,
-      instructions: state.instructions,
       system_prompt: state.system_prompt,
       project_context: state.project_context,
       runtime_opts: state.runtime_opts,

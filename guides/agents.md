@@ -12,7 +12,6 @@ redaction).
 | Callback | Default | Purpose |
 | -------- | ------- | ------- |
 | `runtime/0` | `Condukt.AgentRuntimes.Native` | Component that owns the agent loop. |
-| `instructions/0` | `nil` | Durable instructions for runtime-backed agents. |
 | `system_prompt/0` | `nil` | Static system prompt for the agent. |
 | `tools/0` | `[]` | List of tool modules, `{module, opts}` tuples, or inline tools. |
 | `model/0` | `"anthropic:claude-sonnet-4-20250514"` | ReqLLM `provider:model` identifier. |
@@ -61,7 +60,7 @@ runtime-backed agent can be declared like this:
 defmodule MyApp.Implementer do
   use Condukt.Agent, runtime: Condukt.AgentRuntimes.Codex
 
-  def instructions do
+  def system_prompt do
     "Implement the requested change and leave the working tree ready for review."
   end
 
@@ -86,7 +85,8 @@ Runtime-backed agents have a smaller common callback surface than native
 agents. These callbacks remain generally meaningful:
 
 - `runtime/0`: selects the execution engine.
-- `instructions/0`: passes durable guidance to the external agent.
+- `system_prompt/0`: passes durable guidance to the runtime. Project
+  instructions are composed into this prompt when enabled.
 - `sandbox/0`: defines where filesystem and subprocess side effects may happen.
 - `secrets/0`: declares credentials available to the runtime adapter.
 - `init/1`: prepares per-session state.
@@ -104,8 +104,6 @@ portable configuration:
   expose Condukt tools.
 - `mcp_servers/0`: applies only when the runtime adapter can pass MCP servers
   through to the external SDK.
-- `system_prompt/0`: may map to instructions, developer guidance, session
-  prompt, or nothing, depending on the runtime.
 
 The rule is: callbacks are not silently universal. If a runtime does not
 support a callback, Condukt should either reject that configuration or document

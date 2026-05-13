@@ -21,7 +21,7 @@ defmodule Condukt.AgentRuntimeTest do
     use Condukt.Agent, runtime: {EchoRuntime, default: true}
 
     @impl true
-    def instructions, do: "Use the external coding runtime."
+    def system_prompt, do: "Use the external coding runtime."
 
     @impl true
     def init(opts) do
@@ -35,7 +35,7 @@ defmodule Condukt.AgentRuntimeTest do
 
   test "Condukt.Agent accepts a runtime option" do
     assert RuntimeAgent.runtime() == {EchoRuntime, default: true}
-    assert RuntimeAgent.instructions() == "Use the external coding runtime."
+    assert RuntimeAgent.system_prompt() == "Use the external coding runtime."
   end
 
   test "module-defined one-shot runs delegate to the configured runtime" do
@@ -49,7 +49,7 @@ defmodule Condukt.AgentRuntimeTest do
     assert_receive {:runtime_called, "implement this", context, opts}
 
     assert context.agent_module == RuntimeAgent
-    assert context.instructions == "Use the external coding runtime."
+    assert context.system_prompt == "Use the external coding runtime."
     assert context.runtime_opts == [default: true]
     assert context.assigns == %{}
     assert Keyword.fetch!(opts, :max_turns) == 1

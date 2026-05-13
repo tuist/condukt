@@ -66,14 +66,6 @@ defmodule Condukt do
   @callback runtime() :: module() | {module(), keyword()}
 
   @doc """
-  Returns durable instructions for runtime-backed agents.
-
-  Native Condukt agents should usually use `system_prompt/0`. Runtime adapters
-  may map this callback to their own instruction or developer-guidance field.
-  """
-  @callback instructions() :: String.t() | nil
-
-  @doc """
   Returns the default system prompt for this agent.
 
   This can be overridden at `start_link/1` via the `:system_prompt` option.
@@ -140,7 +132,6 @@ defmodule Condukt do
   @optional_callbacks [
     system_prompt: 0,
     runtime: 0,
-    instructions: 0,
     tools: 0,
     subagents: 0,
     model: 0,
@@ -174,9 +165,6 @@ defmodule Condukt do
       def runtime, do: unquote(Macro.escape(runtime))
 
       @impl Condukt
-      def instructions, do: nil
-
-      @impl Condukt
       def system_prompt, do: nil
 
       @impl Condukt
@@ -207,7 +195,6 @@ defmodule Condukt do
 
       defoverridable system_prompt: 0,
                      runtime: 0,
-                     instructions: 0,
                      tools: 0,
                      subagents: 0,
                      model: 0,

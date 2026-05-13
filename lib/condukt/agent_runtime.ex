@@ -5,8 +5,9 @@ defmodule Condukt.AgentRuntime do
   Native Condukt agents use `Condukt.AgentRuntimes.Native`, where
   `Condukt.Session` drives ReqLLM turns and Condukt tool calls. Runtime modules
   that implement this behaviour receive the user prompt, a Condukt-owned
-  context map, and per-run options. They return either a final text response or
-  an explicit result map.
+  context map, and per-run options. Durable guidance is passed through the
+  composed `:system_prompt` value, including project instructions when enabled.
+  They return either a final text response or an explicit result map.
   """
 
   @type context :: %{
@@ -16,7 +17,6 @@ defmodule Condukt.AgentRuntime do
           required(:cwd) => String.t(),
           required(:sandbox) => struct(),
           required(:secrets) => map(),
-          required(:instructions) => String.t() | nil,
           required(:system_prompt) => String.t() | nil,
           required(:project_context) => map(),
           required(:runtime_opts) => keyword(),

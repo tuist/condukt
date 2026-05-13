@@ -90,9 +90,9 @@
   still owns session identity, sandbox setup, secret resolution, project
   instructions, telemetry, workflow placement, and sub-agent boundaries.
 - Treat `model/0`, `thinking_level/0`, `tools/0`, `mcp_servers/0`, and
-  `system_prompt/0` as native-loop callbacks unless a runtime adapter documents
-  an explicit mapping. Use `instructions/0` for durable guidance to
-  runtime-backed agents.
+  native tool-loop callbacks as native-only unless a runtime adapter documents
+  an explicit mapping. Use `system_prompt/0` for durable guidance to
+  runtime-backed agents; Condukt passes the composed prompt to the runtime.
 - See `guides/agents.md` for runtime boundary and callback implications.
 
 ## Native NIF (`native/condukt_bashkit/`)
