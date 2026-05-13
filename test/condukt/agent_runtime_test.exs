@@ -1,7 +1,13 @@
 defmodule Condukt.AgentRuntimeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  use Mimic
 
   alias Condukt.Message
+
+  @moduletag :tmp_dir
+
+  setup :set_mimic_from_context
+  setup :verify_on_exit!
 
   defmodule EchoRuntime do
     @behaviour Condukt.AgentRuntime
@@ -31,6 +37,22 @@ defmodule Condukt.AgentRuntimeTest do
 
   defmodule InvalidRuntimeAgent do
     use Condukt.Agent, runtime: MissingCallbackRuntime
+  end
+
+  defmodule CodexAgent do
+    use Condukt.Agent,
+      runtime: {Condukt.AgentRuntimes.Codex, command: "codex-test", sandbox: "read-only"}
+
+    @impl true
+    def system_prompt, do: "Return terse answers."
+  end
+
+  defmodule ClaudeAgent do
+    use Condukt.Agent,
+      runtime: {Condukt.AgentRuntimes.Claude, command: "claude-test", permission_mode: "dontAsk"}
+
+    @impl true
+    def system_prompt, do: "Return terse answers."
   end
 
   test "Condukt.Agent accepts a runtime option" do
@@ -77,5 +99,70 @@ defmodule Condukt.AgentRuntimeTest do
     after
       Process.flag(:trap_exit, previous)
     end
+  end
+
+  test "Codex runtime shells out through codex exec", %{tmp_dir: tmp_dir} do
+    MuonTrap
+    |> expect(:cmd, fn "bash", ["-lc", "exec \"$@\" < /dev/null", "condukt-agent-runtime", "codex-test" | args], opts ->
+      assert opts[:cd] == tmp_dir
+      assert opts[:stderr_to_stdout] == true
+      assert opts[:parallelism] == false
+      assert opts[:timeout] == 295_000
+      assert {"TERM", "dumb"} in opts[:env]
+
+      assert [
+               "--sandbox",
+               "read-only",
+               "--ask-for-approval",
+               "never",
+               "exec",
+               "--skip-git-repo-check",
+               "--color",
+               "never",
+               "-C",
+               ^tmp_dir,
+               "-o",
+               output_path,
+               prompt
+             ] = args
+
+      File.write!(output_path, "codex result\n")
+      assert prompt =~ "Return terse answers."
+      assert prompt =~ "Task:\nList files"
+
+      {"ignored stdout\n", 0}
+    end)
+
+    assert {:ok, "codex result"} =
+             Condukt.run(CodexAgent, "List files", cwd: tmp_dir, load_project_instructions: false)
+  end
+
+  test "Claude runtime shells out through claude print", %{tmp_dir: tmp_dir} do
+    MuonTrap
+    |> expect(:cmd, fn "bash",
+                       ["-lc", "exec \"$@\" < /dev/null", "condukt-agent-runtime", "claude-test" | args],
+                       opts ->
+      assert opts[:cd] == tmp_dir
+      assert opts[:stderr_to_stdout] == true
+      assert opts[:parallelism] == false
+      assert {"TERM", "dumb"} in opts[:env]
+
+      assert [
+               "--print",
+               "--output-format",
+               "text",
+               "--permission-mode",
+               "dontAsk",
+               "--no-session-persistence",
+               "--system-prompt",
+               "Return terse answers.",
+               "List files"
+             ] = args
+
+      {"claude result\n", 0}
+    end)
+
+    assert {:ok, "claude result"} =
+             Condukt.run(ClaudeAgent, "List files", cwd: tmp_dir, load_project_instructions: false)
   end
 end

@@ -89,6 +89,10 @@
 - Non-native runtime modules implement `Condukt.AgentRuntime.run/3`. Condukt
   still owns session identity, sandbox setup, secret resolution, project
   instructions, telemetry, workflow placement, and sub-agent boundaries.
+- Built-in SDK runtime adapters are `Condukt.AgentRuntimes.Codex`, which shells
+  out to `codex exec`, and `Condukt.AgentRuntimes.Claude`, which shells out to
+  `claude --print`. Both use `MuonTrap`, the session cwd, and resolved session
+  secrets.
 - Treat `model/0`, `thinking_level/0`, `tools/0`, `mcp_servers/0`, and
   native tool-loop callbacks as native-only unless a runtime adapter documents
   an explicit mapping. Use `system_prompt/0` for durable guidance to

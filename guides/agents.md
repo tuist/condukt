@@ -126,6 +126,59 @@ Runtime adapters should preserve Condukt's orchestration boundary:
 This boundary lets external coding agents participate in Condukt workflows
 without pretending they are ordinary chat-completion providers.
 
+### Built-in SDK runtimes
+
+Condukt ships runtime adapters for local coding-agent CLIs:
+
+- `Condukt.AgentRuntimes.Codex`: shells out to `codex exec`.
+- `Condukt.AgentRuntimes.Claude`: shells out to `claude --print`.
+
+Both adapters run through `MuonTrap`, use the session cwd as the subprocess
+working directory, merge resolved session secrets into the subprocess
+environment, and pass the composed system prompt to the external agent.
+
+Example:
+
+```elixir
+defmodule MyApp.CodexImplementer do
+  use Condukt.Agent,
+    runtime: {Condukt.AgentRuntimes.Codex, sandbox: "workspace-write"}
+
+  def system_prompt do
+    "Implement the requested change and leave the working tree ready for review."
+  end
+end
+
+defmodule MyApp.ClaudeReviewer do
+  use Condukt.Agent,
+    runtime: {Condukt.AgentRuntimes.Claude, permission_mode: "acceptEdits"}
+
+  def system_prompt do
+    "Review the working tree and report actionable findings."
+  end
+end
+```
+
+Codex runtime options:
+
+- `:command`: executable name or path. Defaults to `"codex"`.
+- `:model`: passed as `--model`.
+- `:profile`: passed as `--profile`.
+- `:sandbox`: passed as `--sandbox`. Defaults to `"workspace-write"`.
+- `:approval_policy`: passed as `--ask-for-approval`. Defaults to `"never"`.
+- `:extra_args`: appended before the prompt.
+- `:env`: trusted environment overrides merged with session secrets.
+
+Claude runtime options:
+
+- `:command`: executable name or path. Defaults to `"claude"`.
+- `:model`: passed as `--model`.
+- `:permission_mode`: passed as `--permission-mode`. Defaults to
+  `"acceptEdits"`.
+- `:output_format`: passed as `--output-format`. Defaults to `"text"`.
+- `:extra_args`: appended before the prompt.
+- `:env`: trusted environment overrides merged with session secrets.
+
 ## Running an agent once
 
 For one-shot work, pass the agent module directly to `Condukt.run/3`:
