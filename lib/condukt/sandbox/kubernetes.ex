@@ -460,7 +460,8 @@ defmodule Condukt.Sandbox.Kubernetes do
       namespace: state.namespace,
       pod_name: state.pod_name,
       session_id: state.id,
-      policy: policy
+      policy: policy,
+      owner_pid: state.owner_pid
     ]
 
     case Condukt.Sandbox.Net.K8s.ControlBridge.start_link(bridge_opts) do
@@ -643,7 +644,8 @@ defmodule Condukt.Sandbox.Kubernetes do
          ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
          on_stale: Keyword.get(opts, :on_stale, :error),
          delete_on_shutdown: delete_on_shutdown,
-         net: Keyword.get(opts, :net)
+         net: Keyword.get(opts, :net),
+         owner_pid: Keyword.get(opts, :owner_pid)
        }}
     end
   end
@@ -658,7 +660,8 @@ defmodule Condukt.Sandbox.Kubernetes do
       id: config.id,
       delete_on_shutdown: config.delete_on_shutdown,
       net_policy: Map.get(config, :net_policy),
-      net_resource_names: Map.get(config, :net_resource_names)
+      net_resource_names: Map.get(config, :net_resource_names),
+      owner_pid: Map.get(config, :owner_pid)
     }
   end
 
