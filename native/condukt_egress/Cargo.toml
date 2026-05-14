@@ -20,6 +20,16 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 
+# Tier 2 MITM stack: terminate TLS with the per-session CA, mint leaf
+# certs on the fly, parse HTTP/1.1 request lines so the event carries
+# method + path + headers.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["x509-parser", "pem"] }
+httparse = "1.9"
+thiserror = "1"
+
 [profile.release]
 # Small, single binary for distroless containers. We trade compile time for
 # image size: thin-LTO, panic=abort, strip symbols.

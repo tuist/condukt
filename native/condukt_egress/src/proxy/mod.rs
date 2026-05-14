@@ -12,9 +12,11 @@ use tokio::net::TcpListener;
 mod conn;
 mod control;
 mod event;
+mod http1;
 mod orig_dst;
 mod policy;
 mod sni;
+mod tls;
 
 #[derive(ClapArgs, Debug)]
 pub struct Args {
@@ -71,6 +73,18 @@ async fn run_async(args: Args) -> Result<(), Box<dyn Error>> {
         .map_err(|e| format!("parsing policy {}: {}", args.policy_file, e))?;
     let policy = Arc::new(policy);
 
+    let ca = match (args.ca_cert_path.as_deref(), args.ca_key_path.as_deref()) {
+        (Some(cert), Some(key)) => {
+            let ctx = tls::CaContext::load(cert, key).await?;
+            eprintln!("condukt-egress proxy: Tier 2 enabled (CA loaded from {cert})");
+            Some(Arc::new(ctx))
+        }
+        _ => {
+            eprintln!("condukt-egress proxy: Tier 1 only (no CA configured)");
+            None
+        }
+    };
+
     eprintln!(
         "condukt-egress proxy: listen={} control={} policy={}",
         args.listen, args.control_listen, args.policy_file
@@ -92,10 +106,11 @@ async fn run_async(args: Args) -> Result<(), Box<dyn Error>> {
 
         let policy = Arc::clone(&policy);
         let control = Arc::clone(&control);
+        let ca = ca.as_ref().map(Arc::clone);
         let session_id = args.session_id.clone();
 
         tokio::spawn(async move {
-            conn::handle(client, policy, control, session_id).await;
+            conn::handle(client, policy, control, ca, session_id).await;
         });
     }
 }

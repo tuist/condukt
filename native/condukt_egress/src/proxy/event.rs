@@ -33,6 +33,12 @@ pub struct Request {
     pub port: u16,
     pub remote_addr: Option<String>,
     pub scheme: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     pub bytes_in: u64,
     #[serde(default)]
@@ -61,6 +67,9 @@ impl Request {
             } else {
                 "http".into()
             },
+            method: None,
+            path: None,
+            request_headers: None,
             bytes_in: 0,
             bytes_out: 0,
             started_at: Utc::now(),

@@ -1,32 +1,41 @@
-//! Per-connection handling for the Tier 1 proxy.
+//! Per-connection handling.
 //!
-//! Flow:
+//! Two paths:
 //!
-//! 1. Accept a redirected TCP connection on the proxy's listen port.
-//! 2. Recover the original destination via `SO_ORIGINAL_DST`.
-//! 3. Peek the first bytes from the client to identify the protocol.
-//!    - TLS: parse SNI from the ClientHello.
-//!    - Cleartext: parse the `Host:` header (best-effort; for v1 we
-//!      treat unknown-host cleartext as `<original_dst_ip>`).
-//! 4. Evaluate the connection against the policy. If denied, emit
-//!    `RequestDenied` and close.
-//! 5. If allowed, dial the original destination and splice bytes both
-//!    ways. Byte counters fold into the event emitted on connection
-//!    close.
+//! - Tier 1 (no CA configured, or non-TLS traffic): peek bytes, get
+//!   SNI / Host header, evaluate policy, then transparently splice
+//!   bytes between client and upstream. The proxy never sees plaintext
+//!   bodies on TLS in this mode.
+//! - Tier 2 (CA configured AND traffic is TLS AND the client trusts
+//!   the CA): terminate TLS with a per-SNI leaf cert signed by our CA,
+//!   parse the HTTP/1.1 request line + headers on the cleartext side,
+//!   then forward the request to a fresh TLS connection to the real
+//!   destination. Method, path, and headers land in the
+//!   `request_closed` event. If the TLS handshake fails (client does
+//!   not trust the CA), the connection cannot be salvaged at that
+//!   point — the bytes have already been consumed by the rustls
+//!   accept attempt. Future enhancement: probe via a side channel
+//!   before consuming.
 
 use crate::proxy::control::ControlChannel;
 use crate::proxy::event::{Event, Kind, Request, Tier};
+use crate::proxy::http1;
 use crate::proxy::orig_dst;
 use crate::proxy::policy::{Decision, Policy};
 use crate::proxy::sni;
-use std::sync::Arc;
+use crate::proxy::tls::CaContext;
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, RootCertStore};
+use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub async fn handle(
     mut client: TcpStream,
     policy: Arc<Policy>,
     control: Arc<ControlChannel>,
+    ca: Option<Arc<CaContext>>,
     session_id: Option<String>,
 ) {
     let remote = client.peer_addr().ok();
@@ -48,12 +57,15 @@ pub async fn handle(
     };
     let peeked_bytes = &peek_buf[..peeked];
 
-    let (tier, host) = identify(peeked_bytes, dst.port(), dst.ip().to_string());
+    let (initial_tier, host) = identify(peeked_bytes, dst.port(), dst.ip().to_string());
 
-    let mut request = Request::new(host.clone(), dst.port(), tier, remote, session_id);
-
-    // Emit request_opened so the BEAM sees the connection attempt even
-    // if the upstream dial later fails.
+    let mut request = Request::new(
+        host.clone(),
+        dst.port(),
+        initial_tier.clone(),
+        remote,
+        session_id,
+    );
     control.emit(Event::new(Kind::RequestOpened, request.clone()));
 
     let decision = policy.evaluate(&host);
@@ -63,8 +75,32 @@ pub async fn handle(
         let _ = client.shutdown().await;
         return;
     }
-
     control.emit(Event::new(Kind::RequestAllowed, request.clone()));
+
+    let is_tls = matches!(initial_tier, Tier::Sni);
+    let should_mitm = is_tls && ca.is_some() && dst.port() == 443;
+
+    if should_mitm {
+        let ca = ca.as_ref().expect("ca presence checked").clone();
+        match mitm(client, &host, dst, ca, &mut request).await {
+            Ok(()) => {
+                control.emit(Event::new(Kind::RequestClosed, request));
+                return;
+            }
+            Err(MitmError::HandshakeFailed) => {
+                let event =
+                    Event::new(Kind::RequestClosed, request).with_reason("tls_handshake_failed");
+                control.emit(event);
+                return;
+            }
+            Err(MitmError::Other(msg)) => {
+                let event = Event::new(Kind::RequestClosed, request)
+                    .with_reason(format!("mitm_error: {msg}"));
+                control.emit(event);
+                return;
+            }
+        }
+    }
 
     let upstream = match TcpStream::connect(dst).await {
         Ok(s) => s,
@@ -84,6 +120,168 @@ pub async fn handle(
     control.emit(Event::new(Kind::RequestClosed, request));
 }
 
+enum MitmError {
+    HandshakeFailed,
+    Other(String),
+}
+
+async fn mitm(
+    client: TcpStream,
+    host: &str,
+    dst: std::net::SocketAddr,
+    ca: Arc<CaContext>,
+    request: &mut Request,
+) -> Result<(), MitmError> {
+    let server_cfg = ca
+        .server_config_for(host)
+        .await
+        .map_err(|e| MitmError::Other(format!("server_config: {e}")))?;
+    let acceptor = TlsAcceptor::from(server_cfg);
+
+    let tls_client = acceptor
+        .accept(client)
+        .await
+        .map_err(|_| MitmError::HandshakeFailed)?;
+
+    // Upstream TLS client. We use the system default roots; in v1 the
+    // sidecar image bakes in webpki-roots-equivalent (gcr.io/distroless
+    // ships with /etc/ssl/certs).
+    let connector =
+        build_tls_connector().map_err(|e| MitmError::Other(format!("tls_connector: {e}")))?;
+    let server_name = ServerName::try_from(host.to_string())
+        .map_err(|e| MitmError::Other(format!("sni: {e}")))?;
+
+    let upstream_tcp = TcpStream::connect(dst)
+        .await
+        .map_err(|e| MitmError::Other(format!("upstream_connect: {e}")))?;
+
+    let tls_upstream = connector
+        .connect(server_name, upstream_tcp)
+        .await
+        .map_err(|e| MitmError::Other(format!("upstream_tls: {e}")))?;
+
+    // Read HTTP request head, capture method/path/headers, then splice
+    // the rest of the bytes.
+    let (mut cr, mut cw) = tokio::io::split(tls_client);
+    let (mut ur, mut uw) = tokio::io::split(tls_upstream);
+
+    let mut head_buf = Vec::with_capacity(8 * 1024);
+    let mut tmp = [0u8; 4096];
+
+    let head = loop {
+        let n = cr
+            .read(&mut tmp)
+            .await
+            .map_err(|e| MitmError::Other(format!("read_head: {e}")))?;
+        if n == 0 {
+            break None;
+        }
+        head_buf.extend_from_slice(&tmp[..n]);
+
+        match http1::parse(&head_buf) {
+            Ok(Some(head)) => break Some(head),
+            Ok(None) => continue,
+            Err(_) => break None,
+        }
+    };
+
+    if let Some(head) = head {
+        request.tier = Tier::Body;
+        request.method = Some(head.method.clone());
+        request.path = Some(head.path.clone());
+        request.request_headers = Some(head.headers);
+        let _ = head.head_len;
+    }
+
+    // Forward the buffer we already read.
+    uw.write_all(&head_buf)
+        .await
+        .map_err(|e| MitmError::Other(format!("forward_head: {e}")))?;
+
+    // From here, splice both directions.
+    let client_to_up = async {
+        let mut buf = [0u8; 16 * 1024];
+        let mut total = 0u64;
+        loop {
+            match cr.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    total += n as u64;
+                    if uw.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = uw.shutdown().await;
+        total
+    };
+
+    let up_to_client = async {
+        let mut buf = [0u8; 16 * 1024];
+        let mut total = 0u64;
+        loop {
+            match ur.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    total += n as u64;
+                    if cw.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = cw.shutdown().await;
+        total
+    };
+
+    let (out, inb) = tokio::join!(client_to_up, up_to_client);
+    request.bytes_out = head_buf.len() as u64 + out;
+    request.bytes_in = inb;
+    request.finished_at = Some(chrono::Utc::now());
+    Ok(())
+}
+
+fn build_tls_connector() -> Result<TlsConnector, String> {
+    static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
+
+    let cfg = CONFIG
+        .get_or_init(|| {
+            let mut roots = RootCertStore::empty();
+            for cert in load_system_roots() {
+                let _ = roots.add(cert);
+            }
+            Arc::new(
+                ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            )
+        })
+        .clone();
+    Ok(TlsConnector::from(cfg))
+}
+
+fn load_system_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
+    // Read /etc/ssl/certs/ca-certificates.crt (the Debian / distroless
+    // bundle our image is built on). On other platforms we'd want
+    // rustls-native-certs; v1 only runs in distroless so the well-known
+    // path is sufficient.
+    let path = "/etc/ssl/certs/ca-certificates.crt";
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let mut cursor = std::io::Cursor::new(bytes);
+    let mut out = Vec::new();
+    while let Ok(Some(item)) = rustls_pemfile::read_one(&mut cursor) {
+        if let rustls_pemfile::Item::X509Certificate(der) = item {
+            out.push(der);
+        }
+    }
+    out
+}
+
 fn identify(bytes: &[u8], port: u16, dst_ip: String) -> (Tier, String) {
     if sni::looks_like_tls(bytes) {
         if let Some(host) = sni::extract(bytes) {
@@ -92,7 +290,6 @@ fn identify(bytes: &[u8], port: u16, dst_ip: String) -> (Tier, String) {
         return (Tier::Sni, dst_ip);
     }
 
-    // Cleartext: try Host header.
     if let Some(host) = parse_http_host(bytes) {
         return (Tier::Cleartext, host);
     }
