@@ -55,9 +55,13 @@
   `proxy`). Rust toolchain pinned in
   `native/condukt_egress/rust-toolchain.toml`. Built and pushed to
   ghcr by `.github/workflows/release.yml`.
-- See `guides/net.md` for the topology diagram, tier model,
-  configuration examples, policy syntax, sinks, and known
-  limitations (HTTP/2, non-80/443 ports).
+- ALPN advertises both `h2` and `http/1.1`; the sidecar terminates
+  whichever the client picks and forwards over the matching protocol
+  to the upstream. Mixed-protocol connections fall back to
+  byte-splice. See `guides/net.md` for the topology diagram, tier
+  model, configuration examples, policy syntax, sinks, and known
+  limitations (non-80/443 ports, BEAM-side event subscription
+  pending).
 
 ## MCP
 

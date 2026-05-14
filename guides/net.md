@@ -185,18 +185,30 @@ agent definitions stay portable across backends.
 
 ## Limitations
 
-  * **HTTP/2 / h2 on Tier 2** is not yet implemented. The sidecar
-    advertises only `http/1.1` via ALPN; clients that require h2 fall
-    back to the `tls_handshake_failed` path. Tier 1 is unaffected.
-  * **Non-HTTP TLS** (gRPC, custom protocols) flows through Tier 1
-    correctly (SNI audit + host policy) but Tier 2 body capture
-    expects HTTP/1.1 framing inside the TLS tunnel.
+  * **HTTP/2 mixed-protocol** connections fall back to byte-splice.
+    The proxy advertises both `h2` and `http/1.1` via ALPN. When
+    client and upstream negotiate the same protocol, body capture
+    works; when they negotiate different protocols (e.g. client picks
+    h2, upstream only does h1), the proxy falls through to the
+    Tier-1 splice path for that connection. In practice this is
+    extremely rare because modern servers offer both.
+  * **Non-HTTP TLS** (raw gRPC over h2c, custom protocols inside
+    TLS) flows through Tier 1 correctly (SNI audit + host policy)
+    but Tier 2 body capture expects HTTP framing inside the TLS
+    tunnel.
   * **Egress to ports other than 80/443** bypasses the proxy because
     the iptables redirect only covers those two ports. The
     NetworkPolicy denies them at the CNI layer instead, but the
     decision is not surfaced as a `Net.Event`. If you need other
     ports proxied, request them on the `:net` opt: a future revision
     will accept a list of redirected ports.
+  * **BEAM-side event subscription** is not wired yet: the sidecar
+    emits NDJSON events over its control TCP channel, and
+    `Condukt.Sandbox.Net.K8s.ControlReader` decodes them, but the
+    K8s port-forward connecting the two has not landed. Until that
+    closes, events are visible via the sidecar's container logs (and
+    are deliverable to any caller that opens a port-forward to
+    `:15002` on the pod). The wire format is stable.
 
 ## RBAC
 
