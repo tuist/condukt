@@ -22,7 +22,7 @@
 //! `mix condukt.workspace.prepare`).
 
 use crate::proxy::control::ControlChannel;
-use crate::proxy::event::{Event, Kind, Request};
+use crate::proxy::event::{DecisionAction, Event, Kind, Request};
 use crate::proxy::h2;
 use crate::proxy::http1;
 use crate::proxy::orig_dst;
@@ -32,6 +32,7 @@ use crate::proxy::tls::CaContext;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
@@ -73,8 +74,34 @@ pub async fn handle(
 
     control.emit(Event::new(Kind::RequestOpened, request.clone()));
 
-    if let Decision::Deny(reason) = policy.evaluate(&host) {
-        let event = Event::new(Kind::RequestDenied, request.clone()).with_reason(reason.as_str());
+    let denial_reason: Option<String> = match policy.evaluate(&host) {
+        Decision::Allow => None,
+        Decision::Deny(reason) => Some(reason.as_str().to_string()),
+        Decision::Decide => {
+            let timeout = Duration::from_millis(policy.decide_timeout_ms);
+            match control
+                .request_decision(
+                    request.id.clone(),
+                    request.session_id.clone(),
+                    host.clone(),
+                    dst.port(),
+                    request.scheme.clone(),
+                    timeout,
+                )
+                .await
+            {
+                Some(d) if d.action == DecisionAction::Allow => None,
+                Some(d) => Some(match d.reason {
+                    Some(r) if !r.is_empty() => format!("decider: {r}"),
+                    _ => "decider_deny".into(),
+                }),
+                None => Some("decider_timeout".into()),
+            }
+        }
+    };
+
+    if let Some(reason) = denial_reason {
+        let event = Event::new(Kind::RequestDenied, request.clone()).with_reason(reason);
         control.emit(event);
         let _ = client.shutdown().await;
         return;

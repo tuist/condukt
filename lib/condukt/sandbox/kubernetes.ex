@@ -155,12 +155,20 @@ defmodule Condukt.Sandbox.Kubernetes do
   @impl Sandbox
   def shutdown(%State{} = state) do
     stop_heartbeat(state)
+    stop_net_bridge(state)
 
     if state.delete_on_shutdown do
       delete_pod(state.conn, state.namespace, state.pod_name)
       teardown_net(state)
     end
 
+    :ok
+  end
+
+  defp stop_net_bridge(%State{net_bridge_pid: nil}), do: :ok
+
+  defp stop_net_bridge(%State{net_bridge_pid: pid}) when is_pid(pid) do
+    Condukt.Sandbox.Net.K8s.ControlBridge.stop(pid)
     :ok
   end
 
@@ -432,12 +440,32 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   defp prepare_and_start(state, config) do
     with {:ok, state} <- WorkspaceSource.prepare(state, config),
-         {:ok, state} <- start_heartbeat(state, config) do
+         {:ok, state} <- start_heartbeat(state, config),
+         {:ok, state} <- start_net_bridge(state, config) do
       {:ok, state}
     else
       {:error, reason} ->
         cleanup_failed_init(state)
         {:error, reason}
+    end
+  end
+
+  defp start_net_bridge(%State{net_policy: nil} = state, _config), do: {:ok, state}
+
+  defp start_net_bridge(%State{net_policy: %Condukt.Sandbox.Net.Policy{decide: nil}} = state, _config), do: {:ok, state}
+
+  defp start_net_bridge(%State{net_policy: policy} = state, _config) do
+    bridge_opts = [
+      conn: state.conn,
+      namespace: state.namespace,
+      pod_name: state.pod_name,
+      session_id: state.id,
+      policy: policy
+    ]
+
+    case Condukt.Sandbox.Net.K8s.ControlBridge.start_link(bridge_opts) do
+      {:ok, pid} -> {:ok, %{state | net_bridge_pid: pid}}
+      {:error, reason} -> {:error, {:net_bridge_failed, reason}}
     end
   end
 
