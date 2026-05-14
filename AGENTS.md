@@ -29,6 +29,36 @@
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.
 
+## Sandbox Net
+
+- `Condukt.Sandbox.Net` is the per-session egress audit + policy layer.
+  Configured via `net: [policy: %Condukt.Sandbox.Net.Policy{...}]` on
+  the `Condukt.Sandbox.Kubernetes` sandbox spec. Other sandboxes
+  silently ignore the option (no enforcement plane available).
+- The K8s integration adds an init container (writes iptables NAT
+  rules with CAP_NET_ADMIN, then exits) and a sidecar
+  (`condukt-egress proxy`) to the pod, plus a per-session `Secret`
+  (policy JSON + ephemeral CA cert/key) and `NetworkPolicy` (egress
+  scoped to DNS + tcp/80,443). All teardown is best-effort on
+  shutdown when `:delete_on_shutdown` is true.
+- The sidecar image is `ghcr.io/tuist/condukt-egress:<version>`,
+  published by the release workflow. `default_image/0` resolves to
+  the tag matching the installed Condukt version; override with
+  `:image` on the `:net` opts when mirroring or pinning.
+- Tier 1 (SNI + host policy enforcement) works on any workspace
+  image. Tier 2 (method + path + headers via TLS termination with
+  per-session CA) requires the workspace to trust the mounted CA.
+  Use `mix condukt.workspace.prepare <image> --output <ref>` to
+  derive a cooperative variant from any base image.
+- The Rust sidecar lives under `native/condukt_egress/` and ships a
+  single binary with two subcommands (`netfilter-setup` and
+  `proxy`). Rust toolchain pinned in
+  `native/condukt_egress/rust-toolchain.toml`. Built and pushed to
+  ghcr by `.github/workflows/release.yml`.
+- See `guides/net.md` for the topology diagram, tier model,
+  configuration examples, policy syntax, sinks, and known
+  limitations (HTTP/2, non-80/443 ports).
+
 ## MCP
 
 - Condukt connects to external Model Context Protocol servers as a

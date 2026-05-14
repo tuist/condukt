@@ -101,6 +101,7 @@ defmodule Condukt.MixProject do
         "guides/mcp.md": [title: "MCP"],
         "guides/http_routes.md": [title: "HTTP Routes"],
         "guides/sandbox.md": [title: "Sandbox"],
+        "guides/net.md": [title: "Sandbox Net"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
         "guides/compaction.md": [title: "Compaction"],
@@ -132,6 +133,7 @@ defmodule Condukt.MixProject do
         ],
         Guides: [
           "guides/sandbox.md",
+          "guides/net.md",
           "guides/streaming_and_events.md",
           "guides/sessions_and_persistence.md",
           "guides/compaction.md",
@@ -197,7 +199,15 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox.Local,
           Condukt.Sandbox.Virtual,
           Condukt.Sandbox.Virtual.Tools.Mount,
-          Condukt.Sandbox.Kubernetes
+          Condukt.Sandbox.Kubernetes,
+          Condukt.Sandbox.Net,
+          Condukt.Sandbox.Net.Policy,
+          Condukt.Sandbox.Net.Request,
+          Condukt.Sandbox.Net.Event,
+          Condukt.Sandbox.Net.Sink,
+          Condukt.Sandbox.Net.Sink.Log,
+          Condukt.Sandbox.Net.Sink.Process,
+          Condukt.Sandbox.Net.CA
         ],
         "Session Stores": [
           Condukt.SessionStore,
