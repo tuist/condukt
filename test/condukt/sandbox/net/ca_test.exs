@@ -10,8 +10,8 @@ defmodule Condukt.Sandbox.Net.CATest do
       assert ca.common_name == "test-session"
       assert ca.cert_pem =~ "-----BEGIN CERTIFICATE-----"
       assert ca.cert_pem =~ "-----END CERTIFICATE-----"
-      assert ca.key_pem =~ "-----BEGIN EC PRIVATE KEY-----"
-      assert ca.key_pem =~ "-----END EC PRIVATE KEY-----"
+      assert ca.key_pem =~ "-----BEGIN PRIVATE KEY-----"
+      assert ca.key_pem =~ "-----END PRIVATE KEY-----"
     end
 
     test "produces a parseable X.509 certificate with CA basic constraint" do

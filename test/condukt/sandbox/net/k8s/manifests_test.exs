@@ -108,7 +108,7 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
       vol = Manifests.secret_volume("condukt-net-abc")
       assert vol["name"] == Manifests.secret_volume_name()
       assert vol["secret"]["secretName"] == "condukt-net-abc"
-      assert vol["secret"]["defaultMode"] == 0o400
+      assert vol["secret"]["defaultMode"] == 0o444
     end
 
     test "workspace mount is read-only at /etc/condukt" do

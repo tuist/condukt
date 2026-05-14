@@ -212,11 +212,18 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   Returns the pod-level Volume entry that mounts the secret.
   """
   def secret_volume(secret_name) do
+    # Mode 0o444: world-readable. The mounted files (CA cert, CA key,
+    # policy JSON) are owned by uid 0 from the kubelet's perspective,
+    # so an owner-only mode would lock out the sidecar uid (1337) and
+    # the workspace's non-root user. Everyone inside the pod is in the
+    # same trust boundary (the pod's network namespace) so making the
+    # files in-pod world-readable doesn't widen the threat model. The
+    # per-session CA's blast radius is still bounded by the session.
     %{
       "name" => @secret_volume_name,
       "secret" => %{
         "secretName" => secret_name,
-        "defaultMode" => 0o400
+        "defaultMode" => 0o444
       }
     }
   end

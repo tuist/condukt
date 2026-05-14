@@ -106,7 +106,12 @@ defmodule Condukt.Sandbox.Net.CA do
      %__MODULE__{
        common_name: common_name,
        cert_pem: Certificate.to_pem(cert),
-       key_pem: PrivateKey.to_pem(private_key),
+       # `wrap: true` emits PKCS#8 (`-----BEGIN PRIVATE KEY-----`)
+       # instead of SEC1 (`-----BEGIN EC PRIVATE KEY-----`). The
+       # condukt-egress sidecar parses keys with rcgen's
+       # `KeyPair::from_pem`, which is reliable on PKCS#8 but only
+       # partially on SEC1.
+       key_pem: PrivateKey.to_pem(private_key, wrap: true),
        not_before: not_before,
        not_after: not_after
      }}
