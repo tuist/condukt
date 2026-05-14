@@ -6,9 +6,9 @@ defmodule Condukt.Sandbox.Net.Event do
   when its outcome is known (`:request_closed`), and when policy decides on the
   request (`:request_allowed` or `:request_denied`).
 
-  For track-only Tier 1, callers usually only care about `:request_closed`
-  events. The lifecycle separation exists so suspension-point gating (a future
-  enhancement) can hold a request between `:request_opened` and the decision.
+  Most callers only care about `:request_closed`. The lifecycle separation
+  exists so suspension-point gating (held between `:request_opened` and the
+  decision) can surface live in-flight requests to a UI or human reviewer.
   """
 
   alias Condukt.Sandbox.Net.Request

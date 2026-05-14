@@ -19,10 +19,12 @@
 #      rules and exits 0.
 #   3. The sidecar container (`condukt-net-egress`) starts and reports
 #      "accepting connections" in its logs.
-#   4. From inside the workspace container, `curl https://api.github.com`
-#      gets redirected to the sidecar (Tier 1 SNI). Without the
-#      sidecar bound, the connection would either fail or escape; with
-#      it, traffic flows to the upstream and bytes come back.
+#   4. With the CA trusted in the workspace, `curl --cacert .../ca.pem
+#      https://api.github.com` succeeds (MITM is transparent).
+#   5. A request to a host outside the allowlist is RST at SNI by the
+#      sidecar (deny event surfaces in logs).
+#   6. Without --cacert the TLS handshake fails (request_closed event
+#      with reason tls_handshake_failed); no fallback path exists.
 #
 # Tear-down is automatic (delete_on_shutdown derives from generated
 # id), but feel free to `kubectl delete pod -l condukt.tuist.dev/id=...`
@@ -128,32 +130,30 @@ case start_result do
           "10"
         ] ++ args
 
-      {out, exit} = System.cmd("kubectl", kubectl_argv, stderr_to_stdout: true)
-      {out, exit}
+      System.cmd("kubectl", kubectl_argv, stderr_to_stdout: true)
     end
 
-    # Test 1: Tier 2 path with --cacert (workspace explicitly trusts the
-    # mounted CA). Handshake should succeed, body should flow.
-    IO.puts("==> Tier 2: curl --cacert /etc/condukt/ca.pem https://api.github.com")
-    {tier2_out, tier2_exit} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://api.github.com"])
-    IO.puts(tier2_out)
-    IO.puts("    exit=#{tier2_exit}")
+    # Test 1: cooperative path. The workspace trusts the mounted CA so
+    # the MITM handshake succeeds and we see the HTTP/2 response.
+    IO.puts("==> allow + trust: curl --cacert /etc/condukt/ca.pem https://api.github.com")
+    {allow_out, allow_exit} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://api.github.com"])
+    IO.puts(allow_out)
+    IO.puts("    exit=#{allow_exit}")
 
     # Test 2: deny path. example.org isn't in the allowlist; the
-    # sidecar should refuse at SNI.
+    # sidecar should refuse at SNI before terminating TLS.
     IO.puts("==> deny: curl --cacert /etc/condukt/ca.pem https://example.org")
     {deny_out, deny_exit} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://example.org"])
     IO.puts(deny_out)
     IO.puts("    exit=#{deny_exit}")
 
-    # Test 3: Tier 1 (no --cacert). MITM handshake fails because the
-    # workspace doesn't trust the CA. Expected.
-    IO.puts("==> Tier 1 (no cacert): curl https://api.github.com")
-    {tier1_out, tier1_exit} = exec_curl.(["https://api.github.com"])
-    IO.puts(tier1_out)
-    IO.puts("    exit=#{tier1_exit}")
-
-    curl_out = "see above"
+    # Test 3: uncooperative workspace. Without --cacert curl rejects
+    # the leaf cert; we expect a request_closed event with reason
+    # tls_handshake_failed in the sidecar logs.
+    IO.puts("==> handshake fail (no cacert): curl https://api.github.com")
+    {fail_out, fail_exit} = exec_curl.(["https://api.github.com"])
+    IO.puts(fail_out)
+    IO.puts("    exit=#{fail_exit}")
 
     # Tail sidecar logs after the curl to see request_opened events
     {after_logs, _} =

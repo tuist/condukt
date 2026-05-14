@@ -1,23 +1,21 @@
 # Sandbox Net
 
-`Condukt.Sandbox.Net` captures every outbound TCP connection an agent
+`Condukt.Sandbox.Net` captures every outbound HTTP request an agent
 makes inside a sandbox, surfaces it as a structured event, and enforces
-per-host policy at the network layer. It is the egress counterpart to
-`Condukt.Sandbox`'s filesystem and process capture.
+per-request policy at the network layer. It is the egress counterpart
+to `Condukt.Sandbox`'s filesystem and process capture.
 
-Two capture tiers are supported:
+The sidecar terminates TLS for every outbound HTTPS connection using a
+per-session ephemeral CA, then forwards the request to the real
+destination. Method, path, headers, and body all land in the event
+stream. Cleartext HTTP (port 80) is captured at the wire layer directly.
 
-| Tier | What you see | Image requirement | Enforcement |
-|------|--------------|-------------------|-------------|
-| 1    | TLS SNI, destination IP/port, byte counts | None: any image works | RST at SNI on deny |
-| 2    | Tier 1 + method, path, headers | Image trusts the per-session CA | Same |
-
-Tier 1 always works as soon as the sandbox is `Condukt.Sandbox.Kubernetes`
-and a `:net` policy is configured. Tier 2 additionally requires the
-workspace image to trust a per-session CA that Condukt generates and
-mounts at session start. The `mix condukt.workspace.prepare` task
-derives a cooperative variant from any image so operators don't have
-to maintain their own Dockerfile for this.
+The workspace image must trust the per-session CA at session start.
+Operators either build a cooperative image from any base with
+`mix condukt.workspace.prepare`, or `FROM` one of the published
+`ghcr.io/tuist/condukt-workspace:*` images. Without a trusted CA the
+TLS handshake fails and the request emits a `request_closed` event
+with reason `tls_handshake_failed`; the request does not flow.
 
 ## Quick start
 
@@ -30,11 +28,11 @@ defmodule MyApp.CodingAgent do
     {
       Condukt.Sandbox.Kubernetes,
       namespace: "agents",
-      image: "ghcr.io/myorg/agent:1.4",
+      image: "ghcr.io/myorg/agent:1.4-condukt",
       net: [
         policy: %Condukt.Sandbox.Net.Policy{
           allow_hosts: ["api.github.com", "*.openai.com"],
-          default: :deny,
+          decide: {MyApp.NetGuard, timeout: 5_000},
           sink: {Condukt.Sandbox.Net.Sink.Process, to: MyApp.NetEventListener}
         }
       ]
@@ -58,54 +56,7 @@ When the session starts, Condukt:
    inside the workspace image.
 
 Events flow into the configured `:sink` as
-`%Condukt.Sandbox.Net.Event{}` structs (one per connection lifecycle
-step).
-
-## How the redirect works
-
-`condukt-egress netfilter-setup` runs once as an init container (with
-`CAP_NET_ADMIN`) and writes these rules into the pod's network
-namespace:
-
-```
-iptables -t nat -A OUTPUT -o lo -j RETURN
-iptables -t nat -A OUTPUT -m owner --uid-owner <sidecar-uid> -j RETURN
-iptables -t nat -A OUTPUT -p tcp --dport 80  -j REDIRECT --to-port 15001
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 15001
-```
-
-Loopback and the sidecar's own traffic are exempted. Everything else
-heading out to ports 80 or 443 gets rewritten in the kernel to land on
-`localhost:15001`, where the sidecar listens. Because the rewrite is
-kernel-side, it does not matter whether the agent uses `curl`, `git`,
-`npm`, a static Go binary with its own TLS stack, or anything else.
-The agent's container is created without `CAP_NET_ADMIN`, so it cannot
-remove these rules.
-
-## What the sidecar does
-
-For each redirected connection the sidecar:
-
-1. Recovers the original destination via `SO_ORIGINAL_DST`.
-2. Peeks the first bytes to identify TLS (ClientHello byte pattern)
-   or cleartext HTTP (`Host:` header).
-3. Pulls the destination hostname out of either the SNI extension or
-   the `Host:` header, falling back to the destination IP.
-4. Evaluates the hostname against the policy. On deny, it RSTs the
-   connection and emits a `request_denied` event.
-5. On allow, depending on tier:
-   - **Tier 1**: opens a TCP connection to the original destination
-     and splices bytes between client and upstream. Bodies remain
-     opaque.
-   - **Tier 2** (if a CA is configured AND the connection is TLS):
-     mints a leaf certificate for the SNI host signed by the
-     per-session CA, terminates TLS to the client using that leaf,
-     opens a fresh outbound TLS connection to the real upstream
-     (verifying the upstream cert against the system trust store),
-     parses the HTTP/1.1 request line + headers, and forwards the
-     traffic. Method, path, and headers land in the event.
-6. On connection close, emits a `request_closed` event with
-   `bytes_in` / `bytes_out` and `finished_at`.
+`%Condukt.Sandbox.Net.Event{}` structs.
 
 ## Policy
 
@@ -113,12 +64,30 @@ For each redirected connection the sidecar:
 %Condukt.Sandbox.Net.Policy{
   allow_hosts: ["api.github.com", "*.openai.com", "**.googleapis.com"],
   deny_hosts: ["secret.internal.example.com"],
+  decide: {MyApp.NetGuard, timeout: 5_000},
   default: :deny,
   redact: [~r/sk-[A-Za-z0-9]{32,}/],
   max_body_capture: 4096,
   sink: {Condukt.Sandbox.Net.Sink.Process, to: self()}
 }
 ```
+
+For each outbound connection the sidecar parses the SNI (HTTPS) or
+`Host:` header (HTTP) and looks the hostname up through this pipeline:
+
+1. **`deny_hosts`** — if the host matches, deny immediately. Evaluated
+   first so a deny is always final.
+2. **`allow_hosts`** — if the host matches, allow immediately. No
+   round-trip to the BEAM, no LLM cost. Use for hostnames you trust
+   unconditionally for this session.
+3. **`decide`** — if set, the request and a session-context snapshot
+   are sent to the configured decider (function, MFA tuple, or
+   `Condukt` agent module). The decider returns `:allow` or
+   `{:deny, reason}`. If the decider times out (default 5s), the
+   default action applies. Use for hostnames you want a human or an
+   agent to gate on.
+4. **`default`** — `:allow` or `:deny`. Applied when none of the
+   above matched. Defaults to `:deny` so the policy fails closed.
 
 Host patterns:
 
@@ -127,9 +96,111 @@ Host patterns:
     (matches `api.openai.com` but not `v1.api.openai.com`).
   * `**.googleapis.com` matches one or more labels.
 
-`:deny_hosts` is evaluated before `:allow_hosts`. The default action
-applies when neither list matches; setting `default: :deny` (the
-factory default) makes the policy fail closed.
+## Decider
+
+A decider is a callable that, given a session-context snapshot and a
+parsed request, returns `:allow | {:deny, reason}`. Three forms are
+supported.
+
+### Function
+
+```elixir
+decide: fn ctx, req ->
+  if String.contains?(req.host, "internal") do
+    {:deny, "internal hosts blocked"}
+  else
+    :allow
+  end
+end
+```
+
+Synchronous, programmatic. Runs in the BEAM's normal scheduler with no
+LLM cost. Suited to rules that can be expressed in code.
+
+### MFA tuple
+
+```elixir
+decide: {MyApp.NetGuard, :decide, []}
+```
+
+Same shape as the function form but referenceable from configuration.
+
+### Agent module
+
+```elixir
+decide: {MyApp.NetGuard, timeout: 10_000}
+
+defmodule MyApp.NetGuard do
+  use Condukt
+
+  @impl true
+  def model, do: "anthropic:claude-sonnet-4-6"
+
+  @impl true
+  def system_prompt do
+    """
+    You gate outbound network requests for an AI coding agent.
+    You receive the request the agent is about to make and a few
+    messages of context. Decide whether the request fits the
+    session's stated purpose and whether the destination is safe.
+    Return JSON `{"decision": "allow" | "deny", "reason": "..."}`.
+    """
+  end
+
+  @impl true
+  def output_schema do
+    %{
+      type: "object",
+      properties: %{
+        decision: %{type: "string", enum: ["allow", "deny"]},
+        reason: %{type: "string"}
+      },
+      required: ["decision", "reason"]
+    }
+  end
+end
+```
+
+The agent runs as a sub-agent of the gated session. It receives the
+session-context snapshot and the request as JSON input. Its structured
+output is decoded into a decision. If the agent errors or its output
+fails schema validation, the request is denied with `:decider_error`.
+
+The decider agent's own egress is **not** routed through the same
+sandbox-net policy: gating the gatekeeper's calls through itself would
+deadlock. Run the decider with a different `Condukt.Sandbox.Net.Policy`
+(or with `:net` unset) if it needs to make API calls of its own.
+
+### Context snapshot
+
+The decider receives a `Condukt.Sandbox.Net.Context` containing:
+
+  * `:session_id` — the gated session's id.
+  * `:recent_messages` — the last N messages from the session
+    (default `5`, configurable via `Policy.context_messages`).
+    Redaction (`Condukt.Redactor`) is applied to message bodies
+    before they leave the session.
+  * `:request` — the `Condukt.Sandbox.Net.Request` the agent is about
+    to make. Method, path, and headers are populated where the
+    sidecar could derive them; full body is not in the context (only
+    method/path/headers, to keep the decider cost bounded).
+  * `:metadata` — caller-supplied per-session metadata, set on the
+    sandbox spec via `net: [..., context_metadata: %{...}]`. Useful
+    for passing in user identity, tenant, or session purpose.
+
+### Timeouts
+
+If the decider does not respond within `:timeout` (default 5000ms),
+the request is denied with reason `:decider_timeout`. The sidecar
+closes the connection; the workspace sees a normal connection reset.
+
+### Decision caching
+
+A per-session in-memory cache (keyed on host) coalesces identical
+decisions for the duration of the session. A decider that says "deny
+github.com" once does not get re-invoked for every subsequent
+github.com connection. To disable, pass `decision_cache: false` on the
+policy.
 
 ## Sinks
 
@@ -139,15 +210,14 @@ Events are delivered to whichever sink the policy declares.
     line and a `[:condukt, :sandbox, :net, kind]` telemetry event.
   * `Condukt.Sandbox.Net.Sink.Process` forwards events to a target
     `pid()` or registered atom as
-    `{:condukt_sandbox_net_event, event}` messages. Useful for tests
-    and applications that already own an event-handling process.
+    `{:condukt_sandbox_net_event, event}` messages.
   * Any module implementing the `Condukt.Sandbox.Net.Sink` behaviour.
 
-## Tier 2: making a workspace image cooperative
+## Cooperative workspace images
 
-For body capture the workspace image needs to trust the per-session
-CA. `mix condukt.workspace.prepare` derives a cooperative variant
-from any base image:
+The workspace image needs to trust the per-session CA.
+`mix condukt.workspace.prepare` derives a cooperative variant from any
+base image:
 
 ```
 mix condukt.workspace.prepare node:20-bookworm \
@@ -155,60 +225,38 @@ mix condukt.workspace.prepare node:20-bookworm \
   --push
 ```
 
-The derived image adds:
-
-  * `ca-certificates` (auto-detected across Debian/Alpine/RHEL).
-  * Env vars for runtimes that ignore the system trust store:
-    `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
-    `PIP_CERT`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`.
-  * An entrypoint shim that installs the mounted CA at
-    `/etc/condukt/ca.pem` into the system trust store at container
-    start, then `exec`s into the original `CMD`.
-
-If the base image had a non-trivial `ENTRYPOINT`, pass
-`--preserve-entrypoint "/path/to/it"` and the shim will exec into it
-after the install step.
-
-If an operator skips the `prepare` step, Tier 1 still works on the
-unmodified image; only the body inspection is unavailable.
+The derived image adds `ca-certificates`, environment variables for
+runtimes that ignore the system trust store (`NODE_EXTRA_CA_CERTS`,
+`REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, `PIP_CERT`, `CURL_CA_BUNDLE`,
+`GIT_SSL_CAINFO`), and an entrypoint shim that installs the mounted CA
+at session start.
 
 ## Sandbox support
 
 | Sandbox       | Net support              |
 | ------------- | ------------------------ |
 | `Local`       | Not supported. No reliable enforcement plane on the developer's host without privileged setup. |
-| `Virtual`     | Not yet (bashkit has no network surface today). The API will route through the NIF when bashkit gains net. |
-| `Kubernetes`  | Tier 1 always; Tier 2 with cooperative images. |
+| `Virtual`     | Not yet (bashkit has no network surface today). |
+| `Kubernetes`  | Supported with a cooperative workspace image. |
 
 Sandboxes that do not support net silently ignore the `:net` option so
 agent definitions stay portable across backends.
 
 ## Limitations
 
-  * **HTTP/2 mixed-protocol** connections fall back to byte-splice.
-    The proxy advertises both `h2` and `http/1.1` via ALPN. When
-    client and upstream negotiate the same protocol, body capture
-    works; when they negotiate different protocols (e.g. client picks
-    h2, upstream only does h1), the proxy falls through to the
-    Tier-1 splice path for that connection. In practice this is
-    extremely rare because modern servers offer both.
-  * **Non-HTTP TLS** (raw gRPC over h2c, custom protocols inside
-    TLS) flows through Tier 1 correctly (SNI audit + host policy)
-    but Tier 2 body capture expects HTTP framing inside the TLS
+  * **Mixed-protocol h2/h1** — the proxy advertises both `h2` and
+    `http/1.1` via ALPN. When client and upstream agree, body capture
+    works at the agreed protocol. When they disagree the connection
+    forwards bytes opaquely (no head capture). In practice this is
+    rare because modern servers offer both.
+  * **Non-HTTP TLS** — raw gRPC over h2c, custom protocols inside
+    TLS — the TLS handshake still succeeds and the connection
+    forwards, but body capture expects HTTP framing inside the
     tunnel.
-  * **Egress to ports other than 80/443** bypasses the proxy because
-    the iptables redirect only covers those two ports. The
-    NetworkPolicy denies them at the CNI layer instead, but the
-    decision is not surfaced as a `Net.Event`. If you need other
-    ports proxied, request them on the `:net` opt: a future revision
-    will accept a list of redirected ports.
-  * **BEAM-side event subscription** is not wired yet: the sidecar
-    emits NDJSON events over its control TCP channel, and
-    `Condukt.Sandbox.Net.K8s.ControlReader` decodes them, but the
-    K8s port-forward connecting the two has not landed. Until that
-    closes, events are visible via the sidecar's container logs (and
-    are deliverable to any caller that opens a port-forward to
-    `:15002` on the pod). The wire format is stable.
+  * **Egress to ports other than 80/443** is denied at the
+    NetworkPolicy layer but not surfaced as a `Net.Event`. If you
+    need other ports proxied, request them on the `:net` opt; a future
+    revision will accept a list of redirected ports.
 
 ## RBAC
 
@@ -247,8 +295,6 @@ Metadata: `%{request: Condukt.Sandbox.Net.Request.t(), reason: atom() | binary()
 The `condukt-egress` sidecar image is published to
 `ghcr.io/tuist/condukt-egress:<version>` (and `:latest`) on every
 Condukt release. By default `Condukt.Sandbox.Net.K8s.Manifests` pulls
-the tag that matches the installed Condukt version, so a Hex consumer
-of v1.5.0 automatically pulls
-`ghcr.io/tuist/condukt-egress:1.5.0`. Override with the `:image` key
-on the `:net` opts if you mirror the image internally or need to pin
-to a different version.
+the tag that matches the installed Condukt version. Override with the
+`:image` key on the `:net` opts if you mirror the image internally or
+need to pin to a different version.

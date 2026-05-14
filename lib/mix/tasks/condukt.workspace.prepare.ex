@@ -1,15 +1,16 @@
 defmodule Mix.Tasks.Condukt.Workspace.Prepare do
-  @shortdoc "Derive a cooperative workspace image for Sandbox.Net Tier 2"
+  @shortdoc "Derive a cooperative workspace image for Sandbox.Net"
 
   @moduledoc """
   Builds a derived image from `<input-image>` that trusts the per-session
-  CA mounted by `Condukt.Sandbox.Net` at runtime, enabling Tier 2 body
-  capture on `Condukt.Sandbox.Kubernetes` pods.
+  CA mounted by `Condukt.Sandbox.Net` at runtime, so the egress sidecar
+  can terminate TLS and capture method/path/headers/body for the HTTPS
+  traffic the agent makes on `Condukt.Sandbox.Kubernetes` pods.
 
-  Tier 1 audit + enforcement works on any image with no preparation.
-  This task is only needed when the operator wants the sidecar to see
-  method/path/headers (and, later, request/response bodies) for HTTPS
-  traffic the agent makes.
+  `Condukt.Sandbox.Net` requires a cooperative image: without one the
+  TLS handshake between the workspace and the sidecar fails and the
+  request emits a `tls_handshake_failed` event rather than flowing.
+  Run this task once per base image you want to ship under sandbox-net.
 
   ## Usage
 

@@ -1,8 +1,10 @@
 //! `condukt-egress proxy` subcommand.
 //!
-//! Tier 1 path: transparent forward with SNI/host visibility and
-//! per-host policy enforcement. Tier 2 (TLS termination + body capture
-//! using the per-session CA) lands in P6.
+//! Transparent egress proxy with per-session CA-based TLS termination
+//! (HTTPS) and head-capture forwarding (cleartext HTTP). A CA cert and
+//! key path are required; without them the proxy refuses to start
+//! because there is no useful audit it can perform on TLS without
+//! terminating it.
 
 use clap::Args as ClapArgs;
 use std::error::Error;
@@ -44,15 +46,13 @@ pub struct Args {
     )]
     pub policy_file: String,
 
-    /// Optional path to the per-session CA certificate, in PEM. When
-    /// set, the proxy attempts Tier 2 TLS termination using this CA in
-    /// P6 (no effect today).
+    /// Path to the per-session CA certificate, in PEM. Required.
     #[arg(long, env = "CONDUKT_EGRESS_CA_CERT")]
-    pub ca_cert_path: Option<String>,
+    pub ca_cert_path: String,
 
-    /// Optional path to the per-session CA private key, in PEM.
+    /// Path to the per-session CA private key, in PEM. Required.
     #[arg(long, env = "CONDUKT_EGRESS_CA_KEY")]
-    pub ca_key_path: Option<String>,
+    pub ca_key_path: String,
 
     /// Session id passed through on every emitted event.
     #[arg(long, env = "CONDUKT_EGRESS_SESSION_ID")]
@@ -74,21 +74,11 @@ async fn run_async(args: Args) -> Result<(), Box<dyn Error>> {
         .map_err(|e| format!("parsing policy {}: {}", args.policy_file, e))?;
     let policy = Arc::new(policy);
 
-    let ca = match (args.ca_cert_path.as_deref(), args.ca_key_path.as_deref()) {
-        (Some(cert), Some(key)) => {
-            let ctx = tls::CaContext::load(cert, key).await?;
-            eprintln!("condukt-egress proxy: Tier 2 enabled (CA loaded from {cert})");
-            Some(Arc::new(ctx))
-        }
-        _ => {
-            eprintln!("condukt-egress proxy: Tier 1 only (no CA configured)");
-            None
-        }
-    };
+    let ca = Arc::new(tls::CaContext::load(&args.ca_cert_path, &args.ca_key_path).await?);
 
     eprintln!(
-        "condukt-egress proxy: listen={} control={} policy={}",
-        args.listen, args.control_listen, args.policy_file
+        "condukt-egress proxy: listen={} control={} policy={} ca={}",
+        args.listen, args.control_listen, args.policy_file, args.ca_cert_path
     );
 
     let control = Arc::new(control::ControlChannel::start(&args.control_listen).await?);
@@ -107,7 +97,7 @@ async fn run_async(args: Args) -> Result<(), Box<dyn Error>> {
 
         let policy = Arc::clone(&policy);
         let control = Arc::clone(&control);
-        let ca = ca.as_ref().map(Arc::clone);
+        let ca = Arc::clone(&ca);
         let session_id = args.session_id.clone();
 
         tokio::spawn(async move {

@@ -13,7 +13,6 @@ pub struct RequestHead {
     pub method: String,
     pub path: String,
     pub headers: HashMap<String, String>,
-    pub head_len: usize,
 }
 
 /// Try to parse the head of an HTTP/1.1 request from `buf`. Returns
@@ -23,11 +22,10 @@ pub fn parse(buf: &[u8]) -> Result<Option<RequestHead>, httparse::Error> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
 
-    let status = req.parse(buf)?;
-    let head_len = match status {
-        Status::Complete(n) => n,
+    match req.parse(buf)? {
+        Status::Complete(_) => {}
         Status::Partial => return Ok(None),
-    };
+    }
 
     let method = req.method.unwrap_or("").to_string();
     let path = req.path.unwrap_or("/").to_string();
@@ -44,7 +42,6 @@ pub fn parse(buf: &[u8]) -> Result<Option<RequestHead>, httparse::Error> {
         method,
         path,
         headers: hmap,
-        head_len,
     }))
 }
 

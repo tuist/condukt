@@ -14,10 +14,10 @@ defmodule Condukt.Sandbox.Net.Policy do
       matches. Defaults to `:deny` to fail closed.
     * `:redact` — list of regular expressions; request/response body and
       header values that match are redacted by the sidecar before events
-      are emitted. Has no effect on Tier 1 (SNI-only) capture.
+      are emitted.
     * `:max_body_capture` — maximum number of bytes of request/response
       body to retain in each event (default `4096`). Set `0` to disable
-      body capture even on Tier 2.
+      body capture entirely.
     * `:sink` — `Condukt.Sandbox.Net.Sink` reference: a `pid()`, a
       registered name, or `{module, opts}` for a behaviour-backed sink.
       Defaults to `Condukt.Sandbox.Net.Sink.Log`.

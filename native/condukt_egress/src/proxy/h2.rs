@@ -13,7 +13,7 @@
 //! capture, mirroring the Tier 1 / HTTP/1 paths.
 
 use crate::proxy::control::ControlChannel;
-use crate::proxy::event::{Event, Kind, Request as EventRequest, Tier};
+use crate::proxy::event::{Event, Kind, Request as EventRequest};
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
@@ -117,7 +117,6 @@ async fn proxy_stream(
 ) -> Response<BoxedBody> {
     let mut event_req = base.clone();
     event_req.id = uuid::Uuid::new_v4().to_string();
-    event_req.tier = Tier::Body;
     event_req.method = Some(req.method().to_string());
     event_req.path = Some(
         req.uri()

@@ -7,22 +7,18 @@ defmodule Condukt.Sandbox.Net.Request do
   to the configured `Condukt.Sandbox.Net.Sink`. They flow into the session
   event stream alongside tool calls.
 
-  The `:tier` field records how much of the request the capture mechanism saw:
+  Method, path, request headers, request body sha256/preview, response
+  status, response headers, response body sha256/preview, and byte counts
+  are populated by the sidecar after MITM TLS termination. Fields the
+  sidecar could not derive (e.g. for cleartext or pre-handshake events)
+  remain `nil`.
 
-    * `:sni` — only the TLS Server Name Indication and connection metadata.
-      Always available on K8s when the egress sidecar is in place, regardless
-      of the workspace image.
-    * `:body` — full method, path, headers, and body. Only available when the
-      workspace image trusts the per-session CA (Tier 2; cooperative image).
-    * `:cleartext` — HTTP without TLS. Rare in practice but possible.
-
-  Bodies and headers may be partially redacted by the sidecar according to the
-  `Condukt.Sandbox.Net.Policy` redaction patterns.
+  Bodies and headers may be partially redacted by the sidecar according to
+  the `Condukt.Sandbox.Net.Policy` redaction patterns.
   """
 
   defstruct id: nil,
             session_id: nil,
-            tier: :sni,
             host: nil,
             port: 443,
             remote_addr: nil,
@@ -48,17 +44,15 @@ defmodule Condukt.Sandbox.Net.Request do
   Decodes a request from the NDJSON wire format emitted by `condukt-egress`.
 
   Unknown keys are ignored so the protocol can evolve forward-compatibly.
-  Required fields: `id`, `host`, `port`, `tier`, `started_at`.
+  Required fields: `id`, `host`, `port`, `started_at`.
   """
-  def from_json(%{"id" => id, "host" => host, "port" => port, "tier" => tier, "started_at" => started_at} = json) do
+  def from_json(%{"id" => id, "host" => host, "port" => port, "started_at" => started_at} = json) do
     with {:ok, started_at} <- parse_datetime(started_at),
-         {:ok, finished_at} <- parse_optional_datetime(Map.get(json, "finished_at")),
-         {:ok, tier} <- parse_tier(tier) do
+         {:ok, finished_at} <- parse_optional_datetime(Map.get(json, "finished_at")) do
       {:ok,
        %__MODULE__{
          id: id,
          session_id: Map.get(json, "session_id"),
-         tier: tier,
          host: host,
          port: port,
          remote_addr: Map.get(json, "remote_addr"),
@@ -84,11 +78,6 @@ defmodule Condukt.Sandbox.Net.Request do
   end
 
   def from_json(other), do: {:error, {:invalid_request, other}}
-
-  defp parse_tier("sni"), do: {:ok, :sni}
-  defp parse_tier("body"), do: {:ok, :body}
-  defp parse_tier("cleartext"), do: {:ok, :cleartext}
-  defp parse_tier(other), do: {:error, {:invalid_tier, other}}
 
   defp parse_datetime(value) when is_binary(value) do
     case DateTime.from_iso8601(value) do

@@ -1,13 +1,13 @@
 defmodule Condukt.Sandbox.Net.CA do
   @moduledoc """
   Per-session ephemeral Certificate Authority used by the egress sidecar
-  for Tier 2 (body capture) TLS interception.
+  for TLS interception.
 
   A CA is a self-signed root that the egress sidecar uses to mint per-host
   leaf certificates on the fly when intercepting TLS connections. The
   workspace image must trust this CA at session start for the handshake
-  to succeed; otherwise the sidecar transparently falls back to Tier 1
-  (SNI-only) and the request still flows.
+  to succeed; if it does not, the request fails with a
+  `tls_handshake_failed` event.
 
   ## Lifecycle
 

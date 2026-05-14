@@ -5,7 +5,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReaderTest do
   alias Condukt.Sandbox.Net.K8s.ControlReader
 
   describe "decode_line/1" do
-    test "decodes a full Tier 1 event" do
+    test "decodes a full event" do
       line =
         JSON.encode!(%{
           "kind" => "request_closed",
@@ -13,7 +13,6 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReaderTest do
             "id" => "r1",
             "host" => "api.github.com",
             "port" => 443,
-            "tier" => "sni",
             "started_at" => "2026-05-14T10:00:00Z",
             "finished_at" => "2026-05-14T10:00:01Z",
             "bytes_in" => 200,
@@ -37,7 +36,6 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReaderTest do
             "id" => "r2",
             "host" => "evil.com",
             "port" => 443,
-            "tier" => "sni",
             "started_at" => "2026-05-14T10:00:00Z"
           },
           "reason" => "no_allow_match"

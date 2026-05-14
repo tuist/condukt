@@ -1,24 +1,28 @@
 //! Per-connection handling.
 //!
-//! Two paths:
+//! Flow:
 //!
-//! - Tier 1 (no CA configured, or non-TLS traffic): peek bytes, get
-//!   SNI / Host header, evaluate policy, then transparently splice
-//!   bytes between client and upstream. The proxy never sees plaintext
-//!   bodies on TLS in this mode.
-//! - Tier 2 (CA configured AND traffic is TLS AND the client trusts
-//!   the CA): terminate TLS with a per-SNI leaf cert signed by our CA,
-//!   parse the HTTP/1.1 request line + headers on the cleartext side,
-//!   then forward the request to a fresh TLS connection to the real
-//!   destination. Method, path, and headers land in the
-//!   `request_closed` event. If the TLS handshake fails (client does
-//!   not trust the CA), the connection cannot be salvaged at that
-//!   point — the bytes have already been consumed by the rustls
-//!   accept attempt. Future enhancement: probe via a side channel
-//!   before consuming.
+//! 1. Accept a redirected TCP connection on the proxy's listen port.
+//! 2. Recover the original destination via `SO_ORIGINAL_DST`.
+//! 3. Peek the first bytes from the client to identify the hostname
+//!    (TLS SNI for port 443, `Host:` header for port 80; falls back
+//!    to the destination IP).
+//! 4. Build a `Request`, evaluate it against the policy. On deny,
+//!    emit `RequestDenied` and shutdown.
+//! 5. On allow, MITM:
+//!    - Port 443: TLS termination with the per-session CA, h2 or h1
+//!      depending on ALPN. Method/path/headers + bytes captured into
+//!      the event.
+//!    - Port 80: cleartext h1 head capture + forward.
+//!
+//! Handshake failures (workspace did not trust the CA) emit a
+//! `RequestClosed` event with reason `tls_handshake_failed`. There is
+//! no byte-splice fallback: a workspace that doesn't trust the CA is
+//! a misconfiguration the operator must fix (typically via
+//! `mix condukt.workspace.prepare`).
 
 use crate::proxy::control::ControlChannel;
-use crate::proxy::event::{Event, Kind, Request, Tier};
+use crate::proxy::event::{Event, Kind, Request};
 use crate::proxy::h2;
 use crate::proxy::http1;
 use crate::proxy::orig_dst;
@@ -36,7 +40,7 @@ pub async fn handle(
     mut client: TcpStream,
     policy: Arc<Policy>,
     control: Arc<ControlChannel>,
-    ca: Option<Arc<CaContext>>,
+    ca: Arc<CaContext>,
     session_id: Option<String>,
 ) {
     let remote = client.peer_addr().ok();
@@ -58,19 +62,18 @@ pub async fn handle(
     };
     let peeked_bytes = &peek_buf[..peeked];
 
-    let (initial_tier, host) = identify(peeked_bytes, dst.port(), dst.ip().to_string());
+    let host = identify_host(peeked_bytes, dst.port(), dst.ip().to_string());
 
-    let mut request = Request::new(
-        host.clone(),
-        dst.port(),
-        initial_tier.clone(),
-        remote,
-        session_id,
-    );
+    let mut request = Request::new(host.clone(), dst.port(), remote, session_id);
+    request.scheme = if dst.port() == 443 {
+        "https".into()
+    } else {
+        "http".into()
+    };
+
     control.emit(Event::new(Kind::RequestOpened, request.clone()));
 
-    let decision = policy.evaluate(&host);
-    if let Decision::Deny(reason) = decision {
+    if let Decision::Deny(reason) = policy.evaluate(&host) {
         let event = Event::new(Kind::RequestDenied, request.clone()).with_reason(reason.as_str());
         control.emit(event);
         let _ = client.shutdown().await;
@@ -78,72 +81,63 @@ pub async fn handle(
     }
     control.emit(Event::new(Kind::RequestAllowed, request.clone()));
 
-    let is_tls = matches!(initial_tier, Tier::Sni);
-    let should_mitm = is_tls && ca.is_some() && dst.port() == 443;
-
-    if should_mitm {
-        let ca = ca.as_ref().expect("ca presence checked").clone();
-        match mitm(client, &host, dst, ca, &mut request, Arc::clone(&control)).await {
-            Ok(()) => {
-                control.emit(Event::new(Kind::RequestClosed, request));
-                return;
-            }
-            Err(MitmError::HandshakeFailed) => {
-                let event =
-                    Event::new(Kind::RequestClosed, request).with_reason("tls_handshake_failed");
-                control.emit(event);
-                return;
-            }
-            Err(MitmError::Other(msg)) => {
-                let event = Event::new(Kind::RequestClosed, request)
-                    .with_reason(format!("mitm_error: {msg}"));
-                control.emit(event);
-                return;
-            }
-        }
-    }
-
-    let upstream = match TcpStream::connect(dst).await {
-        Ok(s) => s,
-        Err(err) => {
-            let event = Event::new(Kind::RequestClosed, request.clone())
-                .with_reason(format!("upstream_dial_failed: {err}"));
-            control.emit(event);
-            return;
-        }
+    let outcome = if dst.port() == 443 {
+        https_mitm(client, &host, dst, ca, &mut request, Arc::clone(&control)).await
+    } else {
+        http_forward(client, &host, dst, &mut request).await
     };
 
-    let (bytes_in, bytes_out) = splice(client, upstream).await;
-    request.bytes_in = bytes_in;
-    request.bytes_out = bytes_out;
-    request.finished_at = Some(chrono::Utc::now());
-
-    control.emit(Event::new(Kind::RequestClosed, request));
+    match outcome {
+        Ok(()) => {
+            control.emit(Event::new(Kind::RequestClosed, request));
+        }
+        Err(err) => {
+            let event = Event::new(Kind::RequestClosed, request).with_reason(err);
+            control.emit(event);
+        }
+    }
 }
 
-enum MitmError {
-    HandshakeFailed,
-    Other(String),
+fn identify_host(bytes: &[u8], port: u16, dst_ip: String) -> String {
+    if port == 443 || sni::looks_like_tls(bytes) {
+        sni::extract(bytes).unwrap_or(dst_ip)
+    } else {
+        parse_http_host(bytes).unwrap_or(dst_ip)
+    }
 }
 
-async fn mitm(
+fn parse_http_host(bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line
+            .strip_prefix("Host:")
+            .or_else(|| line.strip_prefix("host:"))
+            .or_else(|| line.strip_prefix("HOST:"))
+        {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+async fn https_mitm(
     client: TcpStream,
     host: &str,
     dst: std::net::SocketAddr,
     ca: Arc<CaContext>,
     request: &mut Request,
     control: Arc<ControlChannel>,
-) -> Result<(), MitmError> {
+) -> Result<(), String> {
     let server_cfg = ca
         .server_config_for(host)
         .await
-        .map_err(|e| MitmError::Other(format!("server_config: {e}")))?;
+        .map_err(|e| format!("server_config: {e}"))?;
     let acceptor = TlsAcceptor::from(server_cfg);
 
     let tls_client = acceptor
         .accept(client)
         .await
-        .map_err(|_| MitmError::HandshakeFailed)?;
+        .map_err(|_| "tls_handshake_failed".to_string())?;
 
     let client_alpn = tls_client
         .get_ref()
@@ -152,22 +146,17 @@ async fn mitm(
         .map(|p| p.to_vec())
         .unwrap_or_default();
 
-    // Upstream TLS client. We use the system default roots; in v1 the
-    // sidecar image bakes in webpki-roots-equivalent (gcr.io/distroless
-    // ships with /etc/ssl/certs).
-    let connector =
-        build_tls_connector().map_err(|e| MitmError::Other(format!("tls_connector: {e}")))?;
-    let server_name = ServerName::try_from(host.to_string())
-        .map_err(|e| MitmError::Other(format!("sni: {e}")))?;
+    let connector = build_tls_connector().map_err(|e| format!("tls_connector: {e}"))?;
+    let server_name = ServerName::try_from(host.to_string()).map_err(|e| format!("sni: {e}"))?;
 
     let upstream_tcp = TcpStream::connect(dst)
         .await
-        .map_err(|e| MitmError::Other(format!("upstream_connect: {e}")))?;
+        .map_err(|e| format!("upstream_connect: {e}"))?;
 
     let tls_upstream = connector
         .connect(server_name, upstream_tcp)
         .await
-        .map_err(|e| MitmError::Other(format!("upstream_tls: {e}")))?;
+        .map_err(|e| format!("upstream_tls: {e}"))?;
 
     let upstream_alpn = tls_upstream
         .get_ref()
@@ -176,18 +165,18 @@ async fn mitm(
         .map(|p| p.to_vec())
         .unwrap_or_default();
 
-    // If both sides negotiated HTTP/2, hand off to the h2 handler so we
-    // capture per-stream metadata. Otherwise fall through to the h1
-    // path which captures the head from the cleartext byte stream.
     if client_alpn == b"h2" && upstream_alpn == b"h2" {
-        request.tier = Tier::Body;
-        return h2::handle(tls_client, tls_upstream, control.clone(), request.clone())
-            .await
-            .map_err(MitmError::Other);
+        return h2::handle(tls_client, tls_upstream, control, request.clone()).await;
     }
 
-    // Read HTTP/1.1 request head, capture method/path/headers, then
-    // splice the rest of the bytes.
+    https_h1(tls_client, tls_upstream, request).await
+}
+
+async fn https_h1(
+    tls_client: tokio_rustls::server::TlsStream<TcpStream>,
+    tls_upstream: tokio_rustls::client::TlsStream<TcpStream>,
+    request: &mut Request,
+) -> Result<(), String> {
     let (mut cr, mut cw) = tokio::io::split(tls_client);
     let (mut ur, mut uw) = tokio::io::split(tls_upstream);
 
@@ -198,12 +187,11 @@ async fn mitm(
         let n = cr
             .read(&mut tmp)
             .await
-            .map_err(|e| MitmError::Other(format!("read_head: {e}")))?;
+            .map_err(|e| format!("read_head: {e}"))?;
         if n == 0 {
             break None;
         }
         head_buf.extend_from_slice(&tmp[..n]);
-
         match http1::parse(&head_buf) {
             Ok(Some(head)) => break Some(head),
             Ok(None) => continue,
@@ -212,19 +200,83 @@ async fn mitm(
     };
 
     if let Some(head) = head {
-        request.tier = Tier::Body;
-        request.method = Some(head.method.clone());
-        request.path = Some(head.path.clone());
+        request.method = Some(head.method);
+        request.path = Some(head.path);
         request.request_headers = Some(head.headers);
-        let _ = head.head_len;
     }
 
-    // Forward the buffer we already read.
     uw.write_all(&head_buf)
         .await
-        .map_err(|e| MitmError::Other(format!("forward_head: {e}")))?;
+        .map_err(|e| format!("forward_head: {e}"))?;
 
-    // From here, splice both directions.
+    let (bytes_in, bytes_out) = splice_pairs(&mut cr, &mut cw, &mut ur, &mut uw).await;
+    request.bytes_out = head_buf.len() as u64 + bytes_out;
+    request.bytes_in = bytes_in;
+    request.finished_at = Some(chrono::Utc::now());
+    Ok(())
+}
+
+async fn http_forward(
+    client: TcpStream,
+    _host: &str,
+    dst: std::net::SocketAddr,
+    request: &mut Request,
+) -> Result<(), String> {
+    let upstream = TcpStream::connect(dst)
+        .await
+        .map_err(|e| format!("upstream_connect: {e}"))?;
+
+    let (mut cr, mut cw) = client.into_split();
+    let (mut ur, mut uw) = upstream.into_split();
+
+    let mut head_buf = Vec::with_capacity(8 * 1024);
+    let mut tmp = [0u8; 4096];
+
+    let head = loop {
+        let n = cr
+            .read(&mut tmp)
+            .await
+            .map_err(|e| format!("read_head: {e}"))?;
+        if n == 0 {
+            break None;
+        }
+        head_buf.extend_from_slice(&tmp[..n]);
+        match http1::parse(&head_buf) {
+            Ok(Some(head)) => break Some(head),
+            Ok(None) => continue,
+            Err(_) => break None,
+        }
+    };
+
+    if let Some(head) = head {
+        request.method = Some(head.method);
+        request.path = Some(head.path);
+        request.request_headers = Some(head.headers);
+    }
+
+    uw.write_all(&head_buf)
+        .await
+        .map_err(|e| format!("forward_head: {e}"))?;
+
+    let (bytes_in, bytes_out) = splice_owned(&mut cr, &mut cw, &mut ur, &mut uw).await;
+    request.bytes_out = head_buf.len() as u64 + bytes_out;
+    request.bytes_in = bytes_in;
+    request.finished_at = Some(chrono::Utc::now());
+    Ok(())
+}
+
+async fn splice_pairs<C1, C2, U1, U2>(
+    cr: &mut C1,
+    cw: &mut C2,
+    ur: &mut U1,
+    uw: &mut U2,
+) -> (u64, u64)
+where
+    C1: tokio::io::AsyncRead + Unpin,
+    C2: tokio::io::AsyncWrite + Unpin,
+    U1: tokio::io::AsyncRead + Unpin,
+    U2: tokio::io::AsyncWrite + Unpin,
+{
     let client_to_up = async {
         let mut buf = [0u8; 16 * 1024];
         let mut total = 0u64;
@@ -263,11 +315,16 @@ async fn mitm(
         total
     };
 
-    let (out, inb) = tokio::join!(client_to_up, up_to_client);
-    request.bytes_out = head_buf.len() as u64 + out;
-    request.bytes_in = inb;
-    request.finished_at = Some(chrono::Utc::now());
-    Ok(())
+    tokio::join!(client_to_up, up_to_client)
+}
+
+async fn splice_owned(
+    cr: &mut tokio::net::tcp::OwnedReadHalf,
+    cw: &mut tokio::net::tcp::OwnedWriteHalf,
+    ur: &mut tokio::net::tcp::OwnedReadHalf,
+    uw: &mut tokio::net::tcp::OwnedWriteHalf,
+) -> (u64, u64) {
+    splice_pairs(cr, cw, ur, uw).await
 }
 
 fn build_tls_connector() -> Result<TlsConnector, String> {
@@ -282,9 +339,6 @@ fn build_tls_connector() -> Result<TlsConnector, String> {
             let mut cfg = ClientConfig::builder()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
-            // Advertise both so the upstream picks whichever it
-            // prefers; conn::mitm reads the negotiated protocol and
-            // routes traffic accordingly.
             cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             Arc::new(cfg)
         })
@@ -293,10 +347,6 @@ fn build_tls_connector() -> Result<TlsConnector, String> {
 }
 
 fn load_system_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
-    // Read /etc/ssl/certs/ca-certificates.crt (the Debian / distroless
-    // bundle our image is built on). On other platforms we'd want
-    // rustls-native-certs; v1 only runs in distroless so the well-known
-    // path is sufficient.
     let path = "/etc/ssl/certs/ca-certificates.crt";
     let Ok(bytes) = std::fs::read(path) else {
         return Vec::new();
@@ -309,83 +359,4 @@ fn load_system_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
         }
     }
     out
-}
-
-fn identify(bytes: &[u8], port: u16, dst_ip: String) -> (Tier, String) {
-    if sni::looks_like_tls(bytes) {
-        if let Some(host) = sni::extract(bytes) {
-            return (Tier::Sni, host);
-        }
-        return (Tier::Sni, dst_ip);
-    }
-
-    if let Some(host) = parse_http_host(bytes) {
-        return (Tier::Cleartext, host);
-    }
-
-    let scheme_hint_tier = if port == 443 {
-        Tier::Sni
-    } else {
-        Tier::Cleartext
-    };
-    (scheme_hint_tier, dst_ip)
-}
-
-fn parse_http_host(bytes: &[u8]) -> Option<String> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    for line in text.lines() {
-        if let Some(rest) = line
-            .strip_prefix("Host:")
-            .or_else(|| line.strip_prefix("host:"))
-            .or_else(|| line.strip_prefix("HOST:"))
-        {
-            return Some(rest.trim().to_string());
-        }
-    }
-    None
-}
-
-async fn splice(client: TcpStream, upstream: TcpStream) -> (u64, u64) {
-    let (mut client_r, mut client_w) = client.into_split();
-    let (mut up_r, mut up_w) = upstream.into_split();
-
-    let client_to_up = async {
-        let mut buf = [0u8; 16 * 1024];
-        let mut total = 0u64;
-        loop {
-            match client_r.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    total += n as u64;
-                    if up_w.write_all(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = up_w.shutdown().await;
-        total
-    };
-
-    let up_to_client = async {
-        let mut buf = [0u8; 16 * 1024];
-        let mut total = 0u64;
-        loop {
-            match up_r.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    total += n as u64;
-                    if client_w.write_all(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = client_w.shutdown().await;
-        total
-    };
-
-    tokio::join!(client_to_up, up_to_client)
 }

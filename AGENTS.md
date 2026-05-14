@@ -45,11 +45,11 @@
   published by the release workflow. `default_image/0` resolves to
   the tag matching the installed Condukt version; override with
   `:image` on the `:net` opts when mirroring or pinning.
-- Tier 1 (SNI + host policy enforcement) works on any workspace
-  image. Tier 2 (method + path + headers via TLS termination with
-  per-session CA) requires the workspace to trust the mounted CA.
-  Use `mix condukt.workspace.prepare <image> --output <ref>` to
-  derive a cooperative variant from any base image.
+- The workspace image must trust the per-session CA mounted at
+  `/etc/condukt/ca.pem`. Without trust, the MITM handshake fails and
+  the request emits a `tls_handshake_failed` event rather than
+  flowing. Use `mix condukt.workspace.prepare <image> --output <ref>`
+  to derive a cooperative variant from any base image.
 - The Rust sidecar lives under `native/condukt_egress/` and ships a
   single binary with two subcommands (`netfilter-setup` and
   `proxy`). Rust toolchain pinned in
@@ -58,10 +58,10 @@
 - ALPN advertises both `h2` and `http/1.1`; the sidecar terminates
   whichever the client picks and forwards over the matching protocol
   to the upstream. Mixed-protocol connections fall back to
-  byte-splice. See `guides/net.md` for the topology diagram, tier
-  model, configuration examples, policy syntax, sinks, and known
-  limitations (non-80/443 ports, BEAM-side event subscription
-  pending).
+  byte-splice. See `guides/net.md` for the topology diagram, policy
+  model (`allow_hosts` / `deny_hosts` / `decide` / `default`), decider
+  forms (function, MFA, agent), context snapshot shape, and known
+  limitations.
 
 ## MCP
 

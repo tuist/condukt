@@ -17,18 +17,9 @@ pub enum Kind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tier {
-    Sni,
-    Body,
-    Cleartext,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     pub id: String,
     pub session_id: Option<String>,
-    pub tier: Tier,
     pub host: String,
     pub port: u16,
     pub remote_addr: Option<String>,
@@ -53,14 +44,12 @@ impl Request {
     pub fn new(
         host: String,
         port: u16,
-        tier: Tier,
         remote: Option<SocketAddr>,
         session_id: Option<String>,
     ) -> Self {
         Request {
             id: uuid::Uuid::new_v4().to_string(),
             session_id,
-            tier,
             host,
             port,
             remote_addr: remote.map(|a| a.to_string()),

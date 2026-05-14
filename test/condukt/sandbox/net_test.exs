@@ -9,7 +9,6 @@ defmodule Condukt.Sandbox.NetTest do
       id: "r-#{System.unique_integer([:positive])}",
       host: host,
       port: 443,
-      tier: :sni,
       started_at: DateTime.utc_now()
     }
   end

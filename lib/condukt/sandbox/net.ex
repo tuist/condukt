@@ -4,20 +4,17 @@ defmodule Condukt.Sandbox.Net do
 
   `Sandbox.Net` is the BEAM-side counterpart to the `condukt-egress` sidecar
   that runs alongside `Condukt.Sandbox.Kubernetes` pods. It captures every
-  outbound TCP connection the agent makes, surfaces it as a structured event,
-  and enforces host-level allow/deny policy at the network layer.
+  outbound HTTP request the agent makes, surfaces it as a structured event,
+  and enforces per-request policy at the network layer.
 
-  Two capture tiers are supported:
-
-    * **Tier 1 (any image)** — the sidecar reads the TLS SNI, original
-      destination, and byte counts. Works on any workspace image, including
-      ones the operator did not build. Body inspection is unavailable; host
-      allowlists are fully enforced. See `guides/net.md` for details.
-    * **Tier 2 (cooperative image)** — the sidecar terminates TLS with a
-      per-session CA. Method, path, headers, and body are captured (subject
-      to `Condukt.Sandbox.Net.Policy` redaction). Requires the workspace
-      image to trust the per-session CA, which `mix condukt.workspace.prepare`
-      bakes in.
+  The sidecar terminates TLS for every outbound HTTPS connection using a
+  per-session ephemeral CA, then forwards the request to the real
+  destination. Method, path, headers, and body land in the
+  `Condukt.Sandbox.Net.Event` delivered to the configured sink. The
+  workspace image must trust the per-session CA at session start: use
+  `mix condukt.workspace.prepare <image>` to derive a cooperative variant
+  from any base image, or `FROM` one of the published
+  `ghcr.io/tuist/condukt-workspace:*` images.
 
   ## Configuring
 
@@ -27,13 +24,13 @@ defmodule Condukt.Sandbox.Net do
         Condukt.Sandbox.Kubernetes,
         net: %Condukt.Sandbox.Net.Policy{
           allow_hosts: ["api.github.com", "*.openai.com"],
-          default: :deny,
+          decide: {MyApp.NetGuard, timeout: 5_000},
           sink: {Condukt.Sandbox.Net.Sink.Process, to: self()}
         }
       }
 
-  Events flow into the configured sink as
-  `Condukt.Sandbox.Net.Event` structs.
+  Events flow into the configured sink as `Condukt.Sandbox.Net.Event`
+  structs.
 
   ## Sandbox support
 
@@ -41,7 +38,7 @@ defmodule Condukt.Sandbox.Net do
   | ------------- | ------------------------ |
   | `Local`       | Not supported (no enforcement plane on the host) |
   | `Virtual`     | Not yet (bashkit has no network surface today)   |
-  | `Kubernetes`  | Tier 1 always; Tier 2 with cooperative images    |
+  | `Kubernetes`  | Supported with a cooperative workspace image     |
 
   Sandboxes that do not support net silently ignore the `:net` option so
   agent definitions stay portable across backends.
