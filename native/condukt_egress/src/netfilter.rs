@@ -41,9 +41,14 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    // The redirect target is logged but the sidecar uid is not. The uid
+    // is operator-configurable but treated as a CodeQL "sensitive
+    // parameter" because of its name; rather than fight the rule we
+    // surface the proxy port (a fixed runtime invariant) and rely on
+    // `iptables -L -t nat` for full inspection inside the pod.
     eprintln!(
-        "condukt-egress netfilter-setup: redirect tcp/80,443 -> 127.0.0.1:{}, exempt uid={}",
-        args.proxy_port, args.sidecar_uid
+        "condukt-egress netfilter-setup: redirect tcp/80,443 -> 127.0.0.1:{}",
+        args.proxy_port
     );
 
     let rules: Vec<Vec<String>> = vec![
