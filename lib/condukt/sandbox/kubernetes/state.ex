@@ -12,6 +12,7 @@ defmodule Condukt.Sandbox.Kubernetes.State do
     :heartbeat_pid,
     :net_policy,
     :net_resource_names,
-    :net_bridge_pid
+    :net_bridge_pid,
+    :owner_pid
   ]
 end

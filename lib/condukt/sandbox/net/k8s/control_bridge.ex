@@ -54,6 +54,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
     pod_name = Keyword.fetch!(opts, :pod_name)
     session_id = Keyword.fetch!(opts, :session_id)
     policy = Keyword.fetch!(opts, :policy)
+    owner_pid = Keyword.get(opts, :owner_pid)
 
     Process.flag(:trap_exit, true)
 
@@ -76,6 +77,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
         state = %{
           session_id: session_id,
           policy: policy,
+          owner_pid: owner_pid,
           send_fn: send_fn,
           collector_pid: collector_pid,
           collector_ref: collector_ref,
@@ -175,11 +177,13 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
 
       {:ok, other} ->
         require Logger
+
         Logger.warning(fn -> "[sandbox.net.k8s] unknown frame type: #{inspect(other)}" end)
         state
 
       {:error, reason} ->
         require Logger
+
         Logger.warning(fn -> "[sandbox.net.k8s] bad frame: #{inspect(reason)} line=#{inspect(line)}" end)
         state
     end
@@ -210,7 +214,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
 
     context = %Context{
       session_id: state.session_id,
-      recent_messages: [],
+      recent_messages: recent_messages(state),
       request: request,
       metadata: state.policy.context_metadata || %{}
     }
@@ -219,6 +223,55 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
     send_decision(state.send_fn, id, decision)
     %{state | cache: cache}
   end
+
+  defp recent_messages(%{owner_pid: nil}), do: []
+
+  defp recent_messages(%{owner_pid: pid, policy: %{context_messages: limit}}) when is_pid(pid) do
+    if Process.alive?(pid), do: fetch_history(pid, limit), else: []
+  end
+
+  # Isolate the call: a session crash or timeout should not take the
+  # bridge down with it. We spawn a probe process that does the
+  # GenServer.call, then either get the result or fall through after a
+  # bounded wait.
+  defp fetch_history(pid, limit) do
+    parent = self()
+    ref = make_ref()
+
+    {probe_pid, monitor_ref} =
+      spawn_monitor(fn ->
+        result =
+          pid
+          |> Condukt.Session.history()
+          |> Enum.take(-limit)
+          |> Enum.map(&serialise_message/1)
+
+        send(parent, {ref, result})
+      end)
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(monitor_ref, [:flush])
+        result
+
+      {:DOWN, ^monitor_ref, :process, ^probe_pid, _reason} ->
+        []
+    after
+      1_000 ->
+        Process.exit(probe_pid, :kill)
+        []
+    end
+  end
+
+  defp serialise_message(%Condukt.Message{} = msg) do
+    %{
+      role: msg.role,
+      content: Condukt.Message.text(msg),
+      timestamp: msg.timestamp
+    }
+  end
+
+  defp serialise_message(other), do: other
 
   defp send_decision(send_fn, id, :allow) do
     payload =
