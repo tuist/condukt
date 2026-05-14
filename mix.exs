@@ -73,6 +73,10 @@ defmodule Condukt.MixProject do
       # on K8s don't pay for the HTTP stack at boot.
       {:k8s, "~> 2.8"},
 
+      # Per-session ephemeral CA generation for the Sandbox.Net egress
+      # MITM path. Pure Elixir, no native deps.
+      {:x509, "~> 0.9"},
+
       # Development & Testing
       {:quokka, "~> 2.12", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
