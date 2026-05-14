@@ -119,6 +119,7 @@ defmodule Condukt.Sandbox.Kubernetes do
   alias Condukt.Sandbox.Kubernetes.PodSpec
   alias Condukt.Sandbox.Kubernetes.State
   alias Condukt.Sandbox.Kubernetes.WorkspaceSource
+  alias Condukt.Sandbox.Net.K8s, as: NetK8s
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -157,9 +158,16 @@ defmodule Condukt.Sandbox.Kubernetes do
 
     if state.delete_on_shutdown do
       delete_pod(state.conn, state.namespace, state.pod_name)
+      teardown_net(state)
     end
 
     :ok
+  end
+
+  defp teardown_net(%State{net_resource_names: nil}), do: :ok
+
+  defp teardown_net(%State{conn: conn, namespace: namespace, net_resource_names: names}) do
+    NetK8s.teardown(conn, namespace, names)
   end
 
   @impl Sandbox
@@ -391,12 +399,34 @@ defmodule Condukt.Sandbox.Kubernetes do
   end
 
   defp create_and_wait(conn, config) do
-    manifest = PodSpec.build(config)
+    with {:ok, config} <- prepare_net(conn, config) do
+      labels = Map.put(config.labels, NetK8s.Manifests.session_label(), config.id)
+      manifest = PodSpec.build(%{config | labels: labels})
 
-    case K8s.Client.run(K8s.Client.put_conn(K8s.Client.create(manifest), conn)) do
-      {:ok, _pod} -> wait_until_ready(conn, config)
-      {:error, %{message: "already exists" <> _}} -> wait_until_ready(conn, config)
-      {:error, reason} -> {:error, format_api_error(reason)}
+      case K8s.Client.run(K8s.Client.put_conn(K8s.Client.create(manifest), conn)) do
+        {:ok, _pod} -> wait_until_ready(conn, config)
+        {:error, %{message: "already exists" <> _}} -> wait_until_ready(conn, config)
+        {:error, reason} -> {:error, format_api_error(reason)}
+      end
+    end
+  end
+
+  defp prepare_net(_conn, %{net: nil} = config), do: {:ok, config}
+
+  defp prepare_net(conn, %{net: net_opts} = config) when is_list(net_opts) or is_map(net_opts) do
+    with {:ok, prepared} <-
+           NetK8s.prepare(%{
+             session_id: config.id,
+             namespace: config.namespace,
+             net_opts: net_opts
+           }),
+         :ok <- NetK8s.apply(conn, prepared) do
+      {:ok,
+       Map.merge(config, %{
+         net: prepared,
+         net_policy: prepared.policy,
+         net_resource_names: prepared.names
+       })}
     end
   end
 
@@ -584,7 +614,8 @@ defmodule Condukt.Sandbox.Kubernetes do
          workspace_source_timeout: Keyword.get(opts, :workspace_source_timeout, @default_workspace_source_timeout),
          ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
          on_stale: Keyword.get(opts, :on_stale, :error),
-         delete_on_shutdown: delete_on_shutdown
+         delete_on_shutdown: delete_on_shutdown,
+         net: Keyword.get(opts, :net)
        }}
     end
   end
@@ -597,7 +628,9 @@ defmodule Condukt.Sandbox.Kubernetes do
       container: PodSpec.container_name(),
       base_cwd: config.cwd,
       id: config.id,
-      delete_on_shutdown: config.delete_on_shutdown
+      delete_on_shutdown: config.delete_on_shutdown,
+      net_policy: Map.get(config, :net_policy),
+      net_resource_names: Map.get(config, :net_resource_names)
     }
   end
 

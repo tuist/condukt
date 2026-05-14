@@ -12,43 +12,54 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
   # - `command: ["sleep", "infinity"]` keepalive so the pod never exits on its
   #   own. All real work happens via `kubectl exec`-style streaming.
   # - `activeDeadlineSeconds` as a K8s-side hard ceiling for abandoned pods.
+  #
+  # When `:net` is non-nil, the pod gains the Sandbox.Net init container,
+  # sidecar container, and Secret volume. The workspace container picks up
+  # an additional read-only volume mount that exposes the per-session CA
+  # so cooperative images can install it into their trust store at
+  # startup.
 
   @workspace_volume "condukt-workspace"
   @container_name "agent"
 
-  def build(%{
-        pod_name: pod_name,
-        namespace: namespace,
-        image: image,
-        cwd: cwd,
-        labels: labels,
-        annotations: annotations,
-        env: env,
-        resources: resources,
-        service_account: service_account,
-        active_deadline_seconds: deadline
-      }) do
-    container = %{
-      "name" => @container_name,
-      "image" => image,
-      "command" => ["sleep", "infinity"],
-      "workingDir" => cwd,
-      "volumeMounts" => [
-        %{"name" => @workspace_volume, "mountPath" => cwd}
-      ]
-    }
+  def build(
+        %{
+          pod_name: pod_name,
+          namespace: namespace,
+          image: image,
+          cwd: cwd,
+          labels: labels,
+          annotations: annotations,
+          env: env,
+          resources: resources,
+          service_account: service_account,
+          active_deadline_seconds: deadline
+        } = config
+      ) do
+    net = Map.get(config, :net)
+
+    container =
+      %{
+        "name" => @container_name,
+        "image" => image,
+        "command" => ["sleep", "infinity"],
+        "workingDir" => cwd,
+        "volumeMounts" => workspace_volume_mounts(net, cwd)
+      }
+      |> maybe_put_env(env)
+      |> maybe_put_resources(resources)
 
     spec = %{
       "restartPolicy" => "Always",
-      "containers" => [
-        container
-        |> maybe_put_env(env)
-        |> maybe_put_resources(resources)
-      ],
-      "volumes" => [
-        %{"name" => @workspace_volume, "emptyDir" => %{}}
-      ]
+      "containers" => containers_for(container, net),
+      "volumes" => volumes_for(net)
     }
+
+    spec =
+      case net do
+        nil -> spec
+        %{init_container: init} -> Map.put(spec, "initContainers", [init])
+      end
 
     %{
       "apiVersion" => "v1",
@@ -67,6 +78,25 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
   end
 
   def container_name, do: @container_name
+
+  defp containers_for(workspace, nil), do: [workspace]
+  defp containers_for(workspace, %{sidecar_container: sidecar}), do: [workspace, sidecar]
+
+  defp volumes_for(nil) do
+    [%{"name" => @workspace_volume, "emptyDir" => %{}}]
+  end
+
+  defp volumes_for(%{secret_volume: secret_volume}) do
+    [%{"name" => @workspace_volume, "emptyDir" => %{}}, secret_volume]
+  end
+
+  defp workspace_volume_mounts(nil, cwd) do
+    [%{"name" => @workspace_volume, "mountPath" => cwd}]
+  end
+
+  defp workspace_volume_mounts(%{workspace_volume_mount: mount}, cwd) do
+    [%{"name" => @workspace_volume, "mountPath" => cwd}, mount]
+  end
 
   defp maybe_put_env(container, env) when map_size(env) == 0, do: container
 
