@@ -1,0 +1,22 @@
+[package]
+name = "condukt_egress"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Egress sidecar for Condukt's Sandbox.Net layer: transparent proxy plus iptables setup"
+publish = false
+
+[[bin]]
+name = "condukt-egress"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+
+[profile.release]
+# Small, single binary for distroless containers. We trade compile time for
+# image size: thin-LTO, panic=abort, strip symbols.
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
