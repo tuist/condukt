@@ -2,47 +2,78 @@ defmodule Condukt.Sandbox.Net.Policy do
   @moduledoc """
   Per-session egress policy.
 
-  A policy declares:
+  Every outbound HTTP request the agent makes runs through the policy
+  pipeline in order:
 
-    * `:allow_hosts` — list of host glob patterns. `"*"` matches any single
-      DNS label; `"**"` matches multiple labels. `"api.github.com"`,
-      `"*.openai.com"`, and `"**.googleapis.com"` are all valid.
-    * `:deny_hosts` — list of host glob patterns evaluated before
-      `:allow_hosts`. A request matching a deny pattern is rejected even
-      if it would also match an allow pattern.
-    * `:default` — `:allow` or `:deny`. The action taken when neither list
-      matches. Defaults to `:deny` to fail closed.
-    * `:redact` — list of regular expressions; request/response body and
-      header values that match are redacted by the sidecar before events
-      are emitted.
-    * `:max_body_capture` — maximum number of bytes of request/response
-      body to retain in each event (default `4096`). Set `0` to disable
-      body capture entirely.
-    * `:sink` — `Condukt.Sandbox.Net.Sink` reference: a `pid()`, a
-      registered name, or `{module, opts}` for a behaviour-backed sink.
-      Defaults to `Condukt.Sandbox.Net.Sink.Log`.
+    1. `:deny_hosts` — if the parsed hostname matches any glob in the
+      deny list, the connection is RST at SNI immediately. Final.
+    2. `:allow_hosts` — if the hostname matches any glob in the allow
+      list, the connection proceeds with no further checks. Use for
+      hostnames you trust unconditionally for this session.
+    3. `:decide` — if set, the request and a session-context snapshot
+      are sent to the decider (function, MFA tuple, or `{module, opts}`
+      pair). The decider returns `:allow` or `{:deny, reason}`. On
+      timeout (`:decide_timeout`, default 5000ms) or error the
+      `:default` action applies.
+    4. `:default` — `:allow` or `:deny`. Applied when none of the above
+      matched. Defaults to `:deny` so the policy fails closed.
 
-  Policy is enforced at two layers: the egress sidecar refuses connections
-  that fail the host evaluation (RST at SNI), and the BEAM-side decoder
-  surfaces the outcome as `:request_denied` events for auditing.
+  Fields:
+
+    * `:allow_hosts` — list of host glob patterns. `"*"` matches one
+      DNS label; `"**"` matches one or more labels.
+    * `:deny_hosts` — list of host glob patterns, evaluated before
+      `:allow_hosts`.
+    * `:decide` — decider callable. Accepts:
+      - a 2-arity function `(context, request) -> :allow | {:deny, reason}`
+      - a `{module, function}` tuple called as `module.function(context, request)`
+      - a `{module, opts}` tuple for behaviour-backed deciders;
+        `module.decide(context, request, opts)` is invoked. The
+        Condukt-shipped `Condukt.Sandbox.Net.AgentDecider` wraps a
+        `Condukt`-defined agent module as a decider.
+    * `:decide_timeout` — milliseconds before the decider call is
+      considered failed. Default `5_000`.
+    * `:default` — `:allow` or `:deny`. Default `:deny`.
+    * `:redact` — list of regular expressions; matching content in
+      request/response bodies and headers is redacted by the sidecar
+      before events are emitted.
+    * `:max_body_capture` — maximum bytes of request/response body to
+      retain in each event (default `4096`). Set `0` to disable body
+      capture.
+    * `:context_messages` — maximum number of recent messages to
+      include in the decider's `Condukt.Sandbox.Net.Context`. Default
+      `5`.
+    * `:context_metadata` — per-session static metadata to attach to
+      every decider invocation. Map.
+    * `:decision_cache` — `true` (default) to cache decisions
+      per-session per-host; `false` to invoke the decider on every
+      connection.
+    * `:sink` — `Condukt.Sandbox.Net.Sink` reference for delivering
+      events. Defaults to `Condukt.Sandbox.Net.Sink.Log`.
+
+  Enforcement at the egress sidecar: failing the policy at any step
+  (deny list, decider deny, default deny) closes the connection at the
+  TCP layer before TLS termination. The workspace sees a connection
+  reset.
   """
 
   defstruct allow_hosts: [],
             deny_hosts: [],
+            decide: nil,
+            decide_timeout: 5_000,
             default: :deny,
             redact: [],
             max_body_capture: 4096,
+            context_messages: 5,
+            context_metadata: %{},
+            decision_cache: true,
             sink: Condukt.Sandbox.Net.Sink.Log
 
   @doc """
   Normalises arbitrary policy input into a `t()`.
 
-  Accepts:
-
-    * a `t()` (returned as-is)
-    * a keyword list (`[allow_hosts: [...], default: :allow]`)
-    * a map (`%{allow_hosts: [...]}`)
-    * `nil` (returns the default deny-all policy)
+  Accepts a `t()`, a keyword list, a map, or `nil` (returns the default
+  deny-all policy).
   """
   def new(nil), do: %__MODULE__{}
   def new(%__MODULE__{} = policy), do: policy
@@ -53,40 +84,48 @@ defmodule Condukt.Sandbox.Net.Policy do
     %__MODULE__{
       allow_hosts: Map.get(fields, :allow_hosts, []),
       deny_hosts: Map.get(fields, :deny_hosts, []),
+      decide: Map.get(fields, :decide),
+      decide_timeout: Map.get(fields, :decide_timeout, 5_000),
       default: Map.get(fields, :default, :deny),
       redact: Map.get(fields, :redact, []),
       max_body_capture: Map.get(fields, :max_body_capture, 4096),
+      context_messages: Map.get(fields, :context_messages, 5),
+      context_metadata: Map.get(fields, :context_metadata, %{}),
+      decision_cache: Map.get(fields, :decision_cache, true),
       sink: Map.get(fields, :sink, Condukt.Sandbox.Net.Sink.Log)
     }
   end
 
   @doc """
-  Evaluates a host name against the policy.
+  Evaluates a host name against the static portion of the policy
+  (`:deny_hosts`, `:allow_hosts`, `:default`). Does not invoke the
+  decider — that runs separately via `Condukt.Sandbox.Net.Decider`.
 
-  Returns `:allow` or `{:deny, reason}` where reason is one of
-  `:matched_deny_list`, `:no_allow_match`, or `:default_deny`.
+  Returns `:allow`, `:decide` (the caller should run the decider), or
+  `{:deny, reason}` where reason is one of `:matched_deny_list`,
+  `:no_allow_match`, or `:default_deny`.
   """
   def evaluate(%__MODULE__{} = policy, host) when is_binary(host) do
     cond do
       matches_any?(host, policy.deny_hosts) ->
         {:deny, :matched_deny_list}
 
-      policy.allow_hosts == [] ->
-        case policy.default do
-          :allow -> :allow
-          :deny -> {:deny, :default_deny}
-        end
-
       matches_any?(host, policy.allow_hosts) ->
         :allow
+
+      policy.decide != nil ->
+        :decide
 
       true ->
         case policy.default do
           :allow -> :allow
-          :deny -> {:deny, :no_allow_match}
+          :deny -> {:deny, default_deny_reason(policy)}
         end
     end
   end
+
+  defp default_deny_reason(%__MODULE__{allow_hosts: []}), do: :default_deny
+  defp default_deny_reason(%__MODULE__{}), do: :no_allow_match
 
   @doc """
   Returns whether `host` matches any of the given glob patterns.
