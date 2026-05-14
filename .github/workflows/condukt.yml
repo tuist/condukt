@@ -198,3 +198,62 @@ jobs:
 
       - name: Run K8s sandbox smoke tests
         run: mix test --only k8s_sandbox test/condukt/sandbox/kubernetes_test.exs
+
+  egress_rust:
+    name: condukt-egress Rust (test + clippy + fmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: native/condukt_egress
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/condukt_egress/target
+          key: condukt-egress-cargo-${{ hashFiles('native/condukt_egress/Cargo.lock') }}
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --release
+
+  egress_image_build:
+    name: condukt-egress image (build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: native/condukt_egress
+          file: native/condukt_egress/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=condukt-egress
+          cache-to: type=gha,scope=condukt-egress,mode=max

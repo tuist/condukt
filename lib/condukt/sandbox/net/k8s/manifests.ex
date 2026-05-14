@@ -13,7 +13,8 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   # the `Condukt.Sandbox.Kubernetes` `:net` option but resolve to the
   # values the release pipeline publishes to ghcr.io.
 
-  @default_image "ghcr.io/tuist/condukt-egress:latest"
+  @default_image "ghcr.io/tuist/condukt-egress:" <>
+                   (Mix.Project.config()[:version] || "latest")
   @default_proxy_port 15_001
   @default_control_port 15_002
   @default_sidecar_uid 1337
