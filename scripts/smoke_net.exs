@@ -44,8 +44,25 @@ kubeconfig = Path.expand("~/.kube/config")
 {:ok, conn} =
   K8s.Conn.from_file(kubeconfig, context: "kind-condukt-net-smoke")
 
+# A function decider that allows api.openai.com (not in the static
+# allowlist) and denies everything else. This forces the sidecar to
+# round-trip a `decision_request` over the control bridge.
+decider_pid = self()
+
+decider = fn _ctx, req ->
+  send(decider_pid, {:decider_invoked, req.host})
+
+  cond do
+    req.host == "api.openai.com" -> :allow
+    String.ends_with?(req.host, ".cloudflare.com") -> :allow
+    true -> {:deny, "denied by smoke decider"}
+  end
+end
+
 policy = %Policy{
-  allow_hosts: ["api.github.com", "example.com"],
+  allow_hosts: ["api.github.com"],
+  decide: decider,
+  decide_timeout: 5_000,
   default: :deny,
   sink: self()
 }
@@ -133,27 +150,41 @@ case start_result do
       System.cmd("kubectl", kubectl_argv, stderr_to_stdout: true)
     end
 
-    # Test 1: cooperative path. The workspace trusts the mounted CA so
-    # the MITM handshake succeeds and we see the HTTP/2 response.
-    IO.puts("==> allow + trust: curl --cacert /etc/condukt/ca.pem https://api.github.com")
-    {allow_out, allow_exit} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://api.github.com"])
-    IO.puts(allow_out)
-    IO.puts("    exit=#{allow_exit}")
+    # Wait a beat for the ControlBridge to attach.
+    Process.sleep(2_000)
 
-    # Test 2: deny path. example.org isn't in the allowlist; the
-    # sidecar should refuse at SNI before terminating TLS.
-    IO.puts("==> deny: curl --cacert /etc/condukt/ca.pem https://example.org")
-    {deny_out, deny_exit} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://example.org"])
-    IO.puts(deny_out)
-    IO.puts("    exit=#{deny_exit}")
+    # Test 1: static allowlist. api.github.com is in `allow_hosts`,
+    # short-circuits in the sidecar (no decider round-trip).
+    IO.puts("==> static allow: curl --cacert ... https://api.github.com")
+    {out1, exit1} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://api.github.com"])
+    IO.puts(out1 |> String.split("\n") |> Enum.take(20) |> Enum.join("\n"))
+    IO.puts("    exit=#{exit1}")
 
-    # Test 3: uncooperative workspace. Without --cacert curl rejects
-    # the leaf cert; we expect a request_closed event with reason
-    # tls_handshake_failed in the sidecar logs.
-    IO.puts("==> handshake fail (no cacert): curl https://api.github.com")
-    {fail_out, fail_exit} = exec_curl.(["https://api.github.com"])
-    IO.puts(fail_out)
-    IO.puts("    exit=#{fail_exit}")
+    # Test 2: decider allow. api.openai.com isn't in the static
+    # allowlist; the sidecar emits decision_request, the BEAM decider
+    # returns :allow, and the request flows.
+    IO.puts("==> decider allow: curl --cacert ... https://api.openai.com")
+    {out2, exit2} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://api.openai.com"])
+    IO.puts(out2 |> String.split("\n") |> Enum.take(15) |> Enum.join("\n"))
+    IO.puts("    exit=#{exit2}")
+
+    assert_receive_decider = fn host ->
+      receive do
+        {:decider_invoked, ^host} -> IO.puts("    [decider was invoked for #{host}]")
+      after
+        2_000 -> IO.puts("    [WARN: decider was NOT invoked for #{host}]")
+      end
+    end
+
+    assert_receive_decider.("api.openai.com")
+
+    # Test 3: decider deny. example.org isn't in static or in decider
+    # allow; decider denies; sidecar RSTs the connection.
+    IO.puts("==> decider deny: curl --cacert ... https://example.org")
+    {out3, exit3} = exec_curl.(["--cacert", "/etc/condukt/ca.pem", "https://example.org"])
+    IO.puts(out3 |> String.split("\n") |> Enum.take(15) |> Enum.join("\n"))
+    IO.puts("    exit=#{exit3}")
+    assert_receive_decider.("example.org")
 
     # Tail sidecar logs after the curl to see request_opened events
     {after_logs, _} =

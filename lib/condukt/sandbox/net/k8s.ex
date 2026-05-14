@@ -117,7 +117,9 @@ defmodule Condukt.Sandbox.Net.K8s do
       deny_hosts: policy.deny_hosts,
       default: Atom.to_string(policy.default),
       max_body_capture: policy.max_body_capture,
-      redact: Enum.map(policy.redact, &Regex.source/1)
+      redact: Enum.map(policy.redact, &Regex.source/1),
+      use_decider: policy.decide != nil,
+      decide_timeout_ms: policy.decide_timeout
     })
   end
 

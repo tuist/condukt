@@ -1,9 +1,22 @@
-//! Wire format for events the sidecar emits back to the BEAM. NDJSON,
-//! one event per line, decoded into `Condukt.Sandbox.Net.Request` /
-//! `Condukt.Sandbox.Net.Event` on the BEAM side.
+//! Wire format for messages between the sidecar and the BEAM-side
+//! `Condukt.Sandbox.Net.K8s.ControlBridge`. NDJSON, one frame per
+//! line. Tagged with `"type"` so the channel can carry multiple
+//! message kinds without ambiguity.
+//!
+//! Frame kinds:
+//!
+//!   * `event` — sidecar -> BEAM. A `Condukt.Sandbox.Net.Event`
+//!     wrapping a request's lifecycle step.
+//!   * `decision_request` — sidecar -> BEAM. Asks the BEAM to make a
+//!     policy decision about a request the sidecar is about to
+//!     forward. The sidecar holds the connection until a `decision`
+//!     comes back (or its `decide_timeout` fires).
+//!   * `decision` — BEAM -> sidecar. The decision the sidecar was
+//!     waiting on, keyed by `id`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 
 #[allow(clippy::enum_variant_names)]
@@ -29,7 +42,7 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_headers: Option<std::collections::HashMap<String, String>>,
+    pub request_headers: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_status: Option<i32>,
     #[serde(default)]
@@ -93,4 +106,42 @@ impl Event {
         self.reason = Some(reason.into());
         self
     }
+}
+
+/// Tagged outbound frame sent from the sidecar to the BEAM.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Outbound {
+    Event(Box<Event>),
+    DecisionRequest {
+        id: String,
+        session_id: Option<String>,
+        host: String,
+        port: u16,
+        scheme: String,
+    },
+}
+
+/// Tagged inbound frame received from the BEAM. Currently only
+/// `decision` is meaningful; additional shapes can be added without
+/// breaking existing senders thanks to `#[serde(other)]` on the
+/// fallthrough variant.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Inbound {
+    Decision {
+        id: String,
+        action: DecisionAction,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionAction {
+    Allow,
+    Deny,
 }

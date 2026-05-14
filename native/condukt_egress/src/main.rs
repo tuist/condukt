@@ -25,6 +25,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod control_bridge;
 mod netfilter;
 mod proxy;
 
@@ -45,6 +46,11 @@ enum Mode {
 
     /// Run the transparent proxy. Long-lived sidecar mode.
     Proxy(proxy::Args),
+
+    /// Bridge stdin/stdout with the proxy's control TCP port. Used by
+    /// the BEAM-side `Condukt.Sandbox.Net.K8s.ControlBridge` over a
+    /// `pods/exec` websocket to carry NDJSON event + decision traffic.
+    ControlBridge(control_bridge::Args),
 }
 
 fn main() -> std::process::ExitCode {
@@ -52,6 +58,7 @@ fn main() -> std::process::ExitCode {
     let result = match cli.mode {
         Mode::NetfilterSetup(args) => netfilter::run(args),
         Mode::Proxy(args) => proxy::run(args),
+        Mode::ControlBridge(args) => control_bridge::run(args),
     };
 
     match result {

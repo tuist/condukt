@@ -11,6 +11,7 @@ defmodule Condukt.Sandbox.Kubernetes.State do
     :delete_on_shutdown,
     :heartbeat_pid,
     :net_policy,
-    :net_resource_names
+    :net_resource_names,
+    :net_bridge_pid
   ]
 end

@@ -28,6 +28,20 @@ pub struct Policy {
 
     #[serde(default = "default_max_body_capture")]
     pub max_body_capture: usize,
+
+    /// When true, hosts that don't match the static allow/deny lists
+    /// trigger a `decision_request` over the control channel rather
+    /// than applying `default`. The BEAM's decider answers with a
+    /// `decision` frame. On timeout / channel unavailable, the
+    /// sidecar applies `default` as the fallback.
+    #[serde(default)]
+    pub use_decider: bool,
+
+    /// Maximum time (milliseconds) the sidecar waits for a
+    /// `decision` reply from the BEAM. Mirrors
+    /// `Condukt.Sandbox.Net.Policy.decide_timeout`.
+    #[serde(default = "default_decide_timeout_ms")]
+    pub decide_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -46,9 +60,14 @@ fn default_max_body_capture() -> usize {
     4096
 }
 
+fn default_decide_timeout_ms() -> u64 {
+    5_000
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Allow,
+    Decide,
     Deny(DenyReason),
 }
 
@@ -79,15 +98,19 @@ impl Policy {
             return Decision::Deny(DenyReason::MatchedDenyList);
         }
 
+        if matches_any(&host_lc, &self.allow_hosts) {
+            return Decision::Allow;
+        }
+
+        if self.use_decider {
+            return Decision::Decide;
+        }
+
         if self.allow_hosts.is_empty() {
             return match self.default {
                 Action::Allow => Decision::Allow,
                 Action::Deny => Decision::Deny(DenyReason::DefaultDeny),
             };
-        }
-
-        if matches_any(&host_lc, &self.allow_hosts) {
-            return Decision::Allow;
         }
 
         match self.default {

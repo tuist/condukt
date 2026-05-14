@@ -1,72 +1,145 @@
-//! Control channel client. Streams NDJSON events to the BEAM-side
-//! `Condukt.Sandbox.Net` decoder over a long-lived TCP connection.
+//! Bidirectional NDJSON control channel between the sidecar and the
+//! BEAM-side `ControlBridge`.
 //!
-//! In K8s the BEAM reaches this connection via the Kubernetes
-//! port-forward API: `Condukt.Sandbox.Kubernetes` opens a port-forward
-//! to the sidecar's `--control-port`, then dials the forwarded local
-//! port. The sidecar accepts a single inbound connection on startup; if
-//! it disconnects, events are buffered up to `BUFFER_CAP` then dropped
-//! (with a count surfaced in a periodic warning).
+//! Outbound traffic (sidecar -> BEAM): events that fire over a request's
+//! lifecycle (`request_opened`, `request_allowed`, `request_denied`,
+//! `request_closed`) and `decision_request` frames the sidecar emits
+//! when a connection's host isn't in the static deny/allow lists and
+//! the BEAM-side policy has a decider configured.
+//!
+//! Inbound traffic (BEAM -> sidecar): `decision` frames keyed by the
+//! `id` field of the decision_request the BEAM was answering.
+//!
+//! Each TCP peer that connects to the sidecar's `--control-listen`
+//! port gets a single bidirectional NDJSON stream over the lifetime
+//! of that connection. The sidecar accepts at most one peer at a
+//! time; new peers replace the old one (the BEAM typically opens a
+//! single long-lived control bridge per session).
 
-use crate::proxy::event::Event;
+use crate::proxy::event::{DecisionAction, Event, Inbound, Outbound};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, mpsc};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 const BUFFER_CAP: usize = 1024;
 
 pub struct ControlChannel {
-    sender: mpsc::Sender<Event>,
+    out_tx: mpsc::Sender<Outbound>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Decision>>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Decision {
+    pub action: DecisionAction,
+    pub reason: Option<String>,
 }
 
 impl ControlChannel {
-    /// Spawn a control channel that listens on `bind` (typically
-    /// `0.0.0.0:15002`) and accepts a single inbound connection from the
-    /// BEAM-side port-forward. Events submitted via `emit` are streamed
-    /// to the connected peer as NDJSON.
     pub async fn start(bind: &str) -> std::io::Result<Self> {
         let listener = TcpListener::bind(bind).await?;
-        let (tx, rx) = mpsc::channel::<Event>(BUFFER_CAP);
-        let rx = Arc::new(Mutex::new(rx));
+        let (out_tx, out_rx) = mpsc::channel::<Outbound>(BUFFER_CAP);
+        let pending: Arc<Mutex<HashMap<String, oneshot::Sender<Decision>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-        tokio::spawn(accept_loop(listener, rx));
+        let out_rx = Arc::new(Mutex::new(out_rx));
+        let pending_for_loop = Arc::clone(&pending);
+        tokio::spawn(accept_loop(listener, out_rx, pending_for_loop));
 
-        Ok(ControlChannel { sender: tx })
+        Ok(ControlChannel { out_tx, pending })
     }
 
-    /// Submit an event for delivery. Non-blocking; if the BEAM peer is
-    /// disconnected and the buffer is full, the event is dropped. This
-    /// keeps the data plane decoupled from the control plane.
+    /// Emit an event for delivery. Non-blocking; if the buffer is full
+    /// or no peer is connected, the event is dropped with a stderr
+    /// warning.
     pub fn emit(&self, event: Event) {
-        if let Err(err) = self.sender.try_send(event) {
-            // Buffer full or channel closed. Log once per drop.
+        if let Err(err) = self.out_tx.try_send(Outbound::Event(Box::new(event))) {
             eprintln!("condukt-egress control: dropped event ({err})");
+        }
+    }
+
+    /// Register a pending decision and emit the matching
+    /// `decision_request`. Returns a future that resolves when the
+    /// BEAM responds or when `timeout` elapses.
+    pub async fn request_decision(
+        &self,
+        id: String,
+        session_id: Option<String>,
+        host: String,
+        port: u16,
+        scheme: String,
+        timeout: Duration,
+    ) -> Option<Decision> {
+        let (tx, rx) = oneshot::channel::<Decision>();
+        {
+            let mut map = self.pending.lock().await;
+            map.insert(id.clone(), tx);
+        }
+
+        let frame = Outbound::DecisionRequest {
+            id: id.clone(),
+            session_id,
+            host,
+            port,
+            scheme,
+        };
+
+        if self.out_tx.try_send(frame).is_err() {
+            let mut map = self.pending.lock().await;
+            map.remove(&id);
+            return None;
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(decision)) => Some(decision),
+            _ => {
+                let mut map = self.pending.lock().await;
+                map.remove(&id);
+                None
+            }
         }
     }
 }
 
-async fn accept_loop(listener: TcpListener, rx: Arc<Mutex<mpsc::Receiver<Event>>>) {
+async fn accept_loop(
+    listener: TcpListener,
+    out_rx: Arc<Mutex<mpsc::Receiver<Outbound>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Decision>>>>,
+) {
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(pair) => pair,
             Err(err) => {
                 eprintln!("condukt-egress control: accept failed: {err}");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
         };
 
         eprintln!("condukt-egress control: peer connected from {peer}");
-        let mut rx = rx.lock().await;
-        write_loop(stream, &mut rx).await;
+        let (reader, writer) = stream.into_split();
+
+        let pending_for_reader = Arc::clone(&pending);
+        let read_task = tokio::spawn(read_loop(reader, pending_for_reader));
+
+        {
+            let mut rx = out_rx.lock().await;
+            write_loop(writer, &mut rx).await;
+        }
+
+        let _ = read_task.await;
         eprintln!("condukt-egress control: peer disconnected");
     }
 }
 
-async fn write_loop(mut stream: TcpStream, rx: &mut mpsc::Receiver<Event>) {
-    while let Some(event) = rx.recv().await {
-        let mut line = match serde_json::to_string(&event) {
+async fn write_loop(
+    mut writer: tokio::net::tcp::OwnedWriteHalf,
+    rx: &mut mpsc::Receiver<Outbound>,
+) {
+    while let Some(frame) = rx.recv().await {
+        let mut line = match serde_json::to_string(&frame) {
             Ok(json) => json,
             Err(err) => {
                 eprintln!("condukt-egress control: serialize failed: {err}");
@@ -75,9 +148,51 @@ async fn write_loop(mut stream: TcpStream, rx: &mut mpsc::Receiver<Event>) {
         };
         line.push('\n');
 
-        if let Err(err) = stream.write_all(line.as_bytes()).await {
+        if let Err(err) = writer.write_all(line.as_bytes()).await {
             eprintln!("condukt-egress control: write failed: {err}");
             return;
+        }
+    }
+}
+
+async fn read_loop(
+    reader: tokio::net::tcp::OwnedReadHalf,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Decision>>>>,
+) {
+    let mut buf = BufReader::new(reader).lines();
+    loop {
+        match buf.next_line().await {
+            Ok(Some(line)) if line.trim().is_empty() => continue,
+            Ok(Some(line)) => handle_line(&line, &pending).await,
+            Ok(None) => return,
+            Err(err) => {
+                eprintln!("condukt-egress control: read failed: {err}");
+                return;
+            }
+        }
+    }
+}
+
+async fn handle_line(line: &str, pending: &Mutex<HashMap<String, oneshot::Sender<Decision>>>) {
+    let parsed: Inbound = match serde_json::from_str(line) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("condukt-egress control: bad inbound frame: {err}");
+            return;
+        }
+    };
+
+    match parsed {
+        Inbound::Decision { id, action, reason } => {
+            let mut map = pending.lock().await;
+            if let Some(tx) = map.remove(&id) {
+                let _ = tx.send(Decision { action, reason });
+            } else {
+                eprintln!("condukt-egress control: decision for unknown id {id}");
+            }
+        }
+        Inbound::Unknown => {
+            eprintln!("condukt-egress control: ignoring unknown frame type");
         }
     }
 }
