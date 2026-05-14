@@ -19,6 +19,7 @@
 
 use crate::proxy::control::ControlChannel;
 use crate::proxy::event::{Event, Kind, Request, Tier};
+use crate::proxy::h2;
 use crate::proxy::http1;
 use crate::proxy::orig_dst;
 use crate::proxy::policy::{Decision, Policy};
@@ -82,7 +83,7 @@ pub async fn handle(
 
     if should_mitm {
         let ca = ca.as_ref().expect("ca presence checked").clone();
-        match mitm(client, &host, dst, ca, &mut request).await {
+        match mitm(client, &host, dst, ca, &mut request, Arc::clone(&control)).await {
             Ok(()) => {
                 control.emit(Event::new(Kind::RequestClosed, request));
                 return;
@@ -131,6 +132,7 @@ async fn mitm(
     dst: std::net::SocketAddr,
     ca: Arc<CaContext>,
     request: &mut Request,
+    control: Arc<ControlChannel>,
 ) -> Result<(), MitmError> {
     let server_cfg = ca
         .server_config_for(host)
@@ -142,6 +144,13 @@ async fn mitm(
         .accept(client)
         .await
         .map_err(|_| MitmError::HandshakeFailed)?;
+
+    let client_alpn = tls_client
+        .get_ref()
+        .1
+        .alpn_protocol()
+        .map(|p| p.to_vec())
+        .unwrap_or_default();
 
     // Upstream TLS client. We use the system default roots; in v1 the
     // sidecar image bakes in webpki-roots-equivalent (gcr.io/distroless
@@ -160,8 +169,25 @@ async fn mitm(
         .await
         .map_err(|e| MitmError::Other(format!("upstream_tls: {e}")))?;
 
-    // Read HTTP request head, capture method/path/headers, then splice
-    // the rest of the bytes.
+    let upstream_alpn = tls_upstream
+        .get_ref()
+        .1
+        .alpn_protocol()
+        .map(|p| p.to_vec())
+        .unwrap_or_default();
+
+    // If both sides negotiated HTTP/2, hand off to the h2 handler so we
+    // capture per-stream metadata. Otherwise fall through to the h1
+    // path which captures the head from the cleartext byte stream.
+    if client_alpn == b"h2" && upstream_alpn == b"h2" {
+        request.tier = Tier::Body;
+        return h2::handle(tls_client, tls_upstream, control.clone(), request.clone())
+            .await
+            .map_err(MitmError::Other);
+    }
+
+    // Read HTTP/1.1 request head, capture method/path/headers, then
+    // splice the rest of the bytes.
     let (mut cr, mut cw) = tokio::io::split(tls_client);
     let (mut ur, mut uw) = tokio::io::split(tls_upstream);
 
@@ -253,11 +279,14 @@ fn build_tls_connector() -> Result<TlsConnector, String> {
             for cert in load_system_roots() {
                 let _ = roots.add(cert);
             }
-            Arc::new(
-                ClientConfig::builder()
-                    .with_root_certificates(roots)
-                    .with_no_client_auth(),
-            )
+            let mut cfg = ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            // Advertise both so the upstream picks whichever it
+            // prefers; conn::mitm reads the negotiated protocol and
+            // routes traffic accordingly.
+            cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+            Arc::new(cfg)
         })
         .clone();
     Ok(TlsConnector::from(cfg))

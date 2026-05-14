@@ -39,6 +39,8 @@ pub struct Request {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_headers: Option<std::collections::HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_status: Option<i32>,
     #[serde(default)]
     pub bytes_in: u64,
     #[serde(default)]
@@ -70,6 +72,7 @@ impl Request {
             method: None,
             path: None,
             request_headers: None,
+            response_status: None,
             bytes_in: 0,
             bytes_out: 0,
             started_at: Utc::now(),

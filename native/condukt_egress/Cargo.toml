@@ -30,6 +30,14 @@ rcgen = { version = "0.13", features = ["x509-parser", "pem"] }
 httparse = "1.9"
 thiserror = "1"
 
+# HTTP/2 termination + forwarding. Hyper does the protocol work;
+# `hyper-util` provides the tokio executor/IO bridges; `http-body-util`
+# gives us a couple of body adapters we use when wrapping/unwrapping.
+hyper = { version = "1", features = ["server", "client", "http2"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
 [profile.release]
 # Small, single binary for distroless containers. We trade compile time for
 # image size: thin-LTO, panic=abort, strip symbols.

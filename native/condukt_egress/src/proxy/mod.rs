@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 mod conn;
 mod control;
 mod event;
+mod h2;
 mod http1;
 mod orig_dst;
 mod policy;

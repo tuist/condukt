@@ -122,10 +122,10 @@ impl CaContext {
             .with_no_client_auth()
             .with_single_cert(cert_chain, private_key)?;
 
-        // ALPN: signal we speak HTTP/1.1. h2 termination is not yet
-        // implemented; clients that require h2 fall through to passthrough
-        // (Tier 1) at the connection level when their handshake fails.
-        cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+        // ALPN: advertise both h2 and http/1.1 so clients can negotiate
+        // whichever they prefer. The conn handler routes on the
+        // negotiated protocol post-handshake.
+        cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         Ok(cfg)
     }
