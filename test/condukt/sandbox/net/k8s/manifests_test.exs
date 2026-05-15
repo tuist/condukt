@@ -4,15 +4,16 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
   alias Condukt.Sandbox.Net.K8s.Manifests
 
   describe "secret/1" do
-    test "builds a Secret with base64-encoded policy and cert" do
+    test "builds a Secret with base64-encoded policy, cert, and trust bundle" do
       manifest =
         Manifests.secret(%{
           name: "condukt-net-abc",
           namespace: "agents",
           session_id: "abc",
-          policy_json: ~s({"allow_hosts":[]}),
+          policy_json: ~s({"rules":[]}),
           ca_cert_pem: "CERT",
-          ca_key_pem: "KEY"
+          ca_key_pem: "KEY",
+          bundle_pem: "MOZILLA\nSESSION"
         })
 
       assert manifest["kind"] == "Secret"
@@ -20,9 +21,10 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
       assert manifest["metadata"]["namespace"] == "agents"
       assert manifest["type"] == "Opaque"
 
-      assert Base.decode64!(manifest["data"]["policy.json"]) == ~s({"allow_hosts":[]})
+      assert Base.decode64!(manifest["data"]["policy.json"]) == ~s({"rules":[]})
       assert Base.decode64!(manifest["data"]["ca.pem"]) == "CERT"
       assert Base.decode64!(manifest["data"]["ca-key.pem"]) == "KEY"
+      assert Base.decode64!(manifest["data"]["bundle.pem"]) == "MOZILLA\nSESSION"
     end
 
     test "omits ca-key.pem when key is nil" do
@@ -33,7 +35,8 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
           session_id: "s",
           policy_json: "{}",
           ca_cert_pem: "C",
-          ca_key_pem: nil
+          ca_key_pem: nil,
+          bundle_pem: "B"
         })
 
       refute Map.has_key?(manifest["data"], "ca-key.pem")
@@ -103,7 +106,7 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
     end
   end
 
-  describe "secret_volume/1 and workspace_secret_volume_mount/0" do
+  describe "secret_volume/1 and workspace_secret_volume_mounts/0" do
     test "volume references the named Secret" do
       vol = Manifests.secret_volume("condukt-net-abc")
       assert vol["name"] == Manifests.secret_volume_name()
@@ -111,10 +114,23 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
       assert vol["secret"]["defaultMode"] == 0o444
     end
 
-    test "workspace mount is read-only at /etc/condukt" do
-      mount = Manifests.workspace_secret_volume_mount()
-      assert mount["mountPath"] == Manifests.ca_mount_path()
-      assert mount["readOnly"] == true
+    test "workspace mounts the CA dir read-only at /etc/condukt" do
+      mounts = Manifests.workspace_secret_volume_mounts()
+      ca_mount = Enum.find(mounts, fn m -> m["mountPath"] == Manifests.ca_mount_path() end)
+      assert ca_mount["readOnly"] == true
+      refute Map.has_key?(ca_mount, "subPath")
+    end
+
+    test "workspace overlays the system trust bundle at every system path" do
+      mounts = Manifests.workspace_secret_volume_mounts()
+      overlays = Enum.filter(mounts, &Map.has_key?(&1, "subPath"))
+
+      for path <- Manifests.bundle_workspace_paths() do
+        overlay = Enum.find(overlays, fn m -> m["mountPath"] == path end)
+        assert overlay, "expected an overlay mount at #{path}"
+        assert overlay["subPath"] == Manifests.bundle_filename()
+        assert overlay["readOnly"] == true
+      end
     end
   end
 

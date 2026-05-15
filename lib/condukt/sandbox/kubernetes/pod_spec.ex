@@ -96,16 +96,16 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
     [%{"name" => @workspace_volume, "mountPath" => cwd}]
   end
 
-  defp workspace_volume_mounts(%{workspace_volume_mount: mount}, cwd) do
-    [%{"name" => @workspace_volume, "mountPath" => cwd}, mount]
+  defp workspace_volume_mounts(%{workspace_volume_mounts: extra}, cwd) when is_list(extra) do
+    [%{"name" => @workspace_volume, "mountPath" => cwd} | extra]
   end
 
   # Workspace env is the merge of two sources:
   #
   #   1. Sandbox.Net CA env vars (NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE,
   #      SSL_CERT_FILE, PIP_CERT, CURL_CA_BUNDLE, GIT_SSL_CAINFO), injected
-  #      when `:net` is configured so untouched base images can MITM
-  #      without rebuilding through `mix condukt.workspace.prepare`.
+  #      when `:net` is configured so untouched base images cooperate
+  #      with the MITM without any preparation step.
   #   2. The operator-supplied env map. Operator entries come last so a
   #      caller can override any CA env var if they really need to.
   defp put_env(container, env, net) do

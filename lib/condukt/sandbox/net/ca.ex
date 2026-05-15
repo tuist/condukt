@@ -44,6 +44,10 @@ defmodule Condukt.Sandbox.Net.CA do
   @default_validity_hours 24
   @default_skew_hours 1
 
+  @mozilla_bundle_path Path.expand("../../../../priv/ca-certificates/mozilla.pem", __DIR__)
+  @external_resource @mozilla_bundle_path
+  @mozilla_bundle File.read!(@mozilla_bundle_path)
+
   defstruct [
     :common_name,
     :cert_pem,
@@ -116,4 +120,23 @@ defmodule Condukt.Sandbox.Net.CA do
        not_after: not_after
      }}
   end
+
+  @doc """
+  Returns a PEM-encoded CA bundle suitable for mounting at
+  `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` on the
+  workspace container.
+
+  The bundle is the Mozilla / curl.se public root list (shipped under
+  `priv/ca-certificates/mozilla.pem`) with the per-session CA
+  appended. Any tool that reads the well-known bundle paths or
+  honours `SSL_CERT_FILE` ends up trusting both the public Internet
+  and the egress sidecar's leaf certs without the workspace image
+  needing any preparation.
+  """
+  def trust_bundle(%__MODULE__{cert_pem: cert_pem}) do
+    @mozilla_bundle <> "\n" <> cert_pem
+  end
+
+  @doc false
+  def mozilla_bundle, do: @mozilla_bundle
 end

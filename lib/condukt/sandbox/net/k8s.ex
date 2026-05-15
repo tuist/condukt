@@ -29,7 +29,7 @@ defmodule Condukt.Sandbox.Net.K8s do
 
   Returns `{:ok, %{policy: Policy, secret: map, network_policy: map,
   init_container: map, sidecar_container: map, secret_volume: map,
-  workspace_volume_mount: map, ca: CA.t(), names: %{...}}}`.
+  workspace_volume_mounts: [map], ca: CA.t(), names: %{...}}}`.
   """
   def prepare(%{session_id: session_id, namespace: namespace} = opts) do
     policy = Policy.new(Keyword.get(Map.get(opts, :net_opts, []), :policy, opts[:policy]))
@@ -50,7 +50,8 @@ defmodule Condukt.Sandbox.Net.K8s do
           session_id: session_id,
           policy_json: policy_json,
           ca_cert_pem: ca.cert_pem,
-          ca_key_pem: ca.key_pem
+          ca_key_pem: ca.key_pem,
+          bundle_pem: CA.trust_bundle(ca)
         })
 
       network_policy =
@@ -71,7 +72,7 @@ defmodule Condukt.Sandbox.Net.K8s do
       init_container = Manifests.init_container(shared)
       sidecar_container = Manifests.sidecar_container(shared)
       secret_volume = Manifests.secret_volume(secret_name)
-      workspace_volume_mount = Manifests.workspace_secret_volume_mount()
+      workspace_volume_mounts = Manifests.workspace_secret_volume_mounts()
 
       {:ok,
        %{
@@ -81,7 +82,7 @@ defmodule Condukt.Sandbox.Net.K8s do
          init_container: init_container,
          sidecar_container: sidecar_container,
          secret_volume: secret_volume,
-         workspace_volume_mount: workspace_volume_mount,
+         workspace_volume_mounts: workspace_volume_mounts,
          ca: ca,
          names: %{secret: secret_name, network_policy: netpol_name}
        }}

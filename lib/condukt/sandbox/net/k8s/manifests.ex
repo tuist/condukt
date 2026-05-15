@@ -22,6 +22,15 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   @policy_filename "policy.json"
   @ca_cert_filename "ca.pem"
   @ca_key_filename "ca-key.pem"
+  @bundle_filename "bundle.pem"
+  # System paths where untouched Linux base images look for the trust
+  # store. Overlaying these via `subPath` mounts hands every TLS client
+  # the Mozilla roots plus our per-session CA without the image having
+  # to install anything.
+  @bundle_workspace_paths [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/ssl/cert.pem"
+  ]
   @secret_volume_name "condukt-net"
   @init_container_name "condukt-net-init"
   @sidecar_container_name "condukt-net-egress"
@@ -35,6 +44,9 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
     * the JSON-encoded egress policy at `policy.json`
     * the per-session CA certificate at `ca.pem`
     * the per-session CA private key at `ca-key.pem` (omitted if `nil`)
+    * the synthesized trust bundle (Mozilla roots + per-session CA)
+      at `bundle.pem`, which the workspace mounts at the system trust
+      paths so untouched base images cooperate without preparation
   """
   def secret(%{
         name: name,
@@ -42,11 +54,13 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
         session_id: session_id,
         policy_json: policy_json,
         ca_cert_pem: ca_cert_pem,
-        ca_key_pem: ca_key_pem
+        ca_key_pem: ca_key_pem,
+        bundle_pem: bundle_pem
       }) do
     data = %{
       @policy_filename => Base.encode64(policy_json),
-      @ca_cert_filename => Base.encode64(ca_cert_pem || "")
+      @ca_cert_filename => Base.encode64(ca_cert_pem || ""),
+      @bundle_filename => Base.encode64(bundle_pem || "")
     }
 
     data =
@@ -229,16 +243,38 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   end
 
   @doc """
-  Returns the workspace VolumeMount that exposes the CA cert (read-only,
-  no key) so the workspace can install it into its trust store. Mounted
-  at `/etc/condukt/ca.pem`.
+  Returns the workspace VolumeMounts that wire the per-session CA into
+  the workspace container.
+
+  Three mounts are produced:
+
+    * The full secret at `/etc/condukt/` (read-only) for any tool that
+      wants the raw CA file or the policy.
+    * The synthesized trust bundle at the two system paths every Linux
+      distro respects (`/etc/ssl/certs/ca-certificates.crt` and
+      `/etc/ssl/cert.pem`) via `subPath`. The mounts overlay the
+      image's bundled file with one that contains the Mozilla public
+      roots plus our per-session CA, so curl, openssl, git, static Go
+      binaries, distroless images, and anything else that reads the
+      system trust store cooperate with the MITM without any image
+      preparation.
   """
-  def workspace_secret_volume_mount do
-    %{
-      "name" => @secret_volume_name,
-      "mountPath" => @ca_mount_path,
-      "readOnly" => true
-    }
+  def workspace_secret_volume_mounts do
+    [
+      %{
+        "name" => @secret_volume_name,
+        "mountPath" => @ca_mount_path,
+        "readOnly" => true
+      }
+      | Enum.map(@bundle_workspace_paths, fn path ->
+          %{
+            "name" => @secret_volume_name,
+            "mountPath" => path,
+            "subPath" => @bundle_filename,
+            "readOnly" => true
+          }
+        end)
+    ]
   end
 
   @doc """
@@ -249,10 +285,11 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   git, npm, python, etc.) can MITM cleanly without any image rebuild.
 
   The list intentionally covers the env vars the most common agent
-  toolchains honour. Java keystores and a few system-OpenSSL paths are
-  not addressed by this map and remain the operator's responsibility
-  (`mix condukt.workspace.prepare` is the convenience path for those
-  cases).
+  toolchains honour. Combined with the synthesized trust bundle the
+  workspace mounts at the system trust-store paths, this covers the
+  practical universe of TLS clients an agent uses. The only stack
+  that still needs image-side handling is Java keystores, which use a
+  format the bundle overlay cannot satisfy.
   """
   def workspace_ca_env do
     path = "#{@ca_mount_path}/#{@ca_cert_filename}"
@@ -275,6 +312,8 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   def policy_filename, do: @policy_filename
   def ca_cert_filename, do: @ca_cert_filename
   def ca_key_filename, do: @ca_key_filename
+  def bundle_filename, do: @bundle_filename
+  def bundle_workspace_paths, do: @bundle_workspace_paths
   def default_image, do: @default_image
   def default_proxy_port, do: @default_proxy_port
   def default_control_port, do: @default_control_port
