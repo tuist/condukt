@@ -31,5 +31,9 @@ defmodule Condukt.Sandbox.Net.Rule do
   the opts the rule was configured with.
   """
 
-  @callback evaluate(any, any, any) :: any
+  @callback evaluate(
+              context :: Condukt.Sandbox.Net.Context.t(),
+              request :: Condukt.Sandbox.Net.Request.t(),
+              opts :: keyword()
+            ) :: :allow | {:deny, term()} | :continue
 end

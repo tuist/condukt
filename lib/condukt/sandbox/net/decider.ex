@@ -38,7 +38,8 @@ defmodule Condukt.Sandbox.Net.Decider do
   let the request through or `{:deny, reason}` to RST it at the
   sidecar, where `reason` is anything renderable for the event log.
   """
-  @callback decide(any, any, any) :: any
+  @callback decide(context :: Context.t(), request :: Request.t(), opts :: keyword()) ::
+              :allow | {:deny, term()}
 
   @doc """
   Invokes a decider once, in an isolated process with the policy's
