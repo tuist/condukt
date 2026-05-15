@@ -45,11 +45,17 @@
   published by the release workflow. `default_image/0` resolves to
   the tag matching the installed Condukt version; override with
   `:image` on the `:net` opts when mirroring or pinning.
-- The workspace image must trust the per-session CA mounted at
-  `/etc/condukt/ca.pem`. Without trust, the MITM handshake fails and
-  the request emits a `tls_handshake_failed` event rather than
-  flowing. Use `mix condukt.workspace.prepare <image> --output <ref>`
-  to derive a cooperative variant from any base image.
+- The workspace cooperates with the MITM without any image
+  preparation. The K8s pod spec injects the canonical TLS-client env
+  vars (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
+  `PIP_CERT`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`) pointing at
+  `/etc/condukt/ca.pem`, and overlays a synthesized trust bundle
+  (Mozilla public roots plus the per-session CA, shipped under
+  `priv/ca-certificates/mozilla.pem` and assembled by
+  `Condukt.Sandbox.Net.CA.trust_bundle/1`) at
+  `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` via
+  `subPath` mounts. The only stack that still needs image-side
+  cooperation is Java keystores.
 - The Rust sidecar lives under `native/condukt_egress/` and ships a
   single binary with two subcommands (`netfilter-setup` and
   `proxy`). Rust toolchain pinned in

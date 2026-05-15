@@ -190,25 +190,38 @@ observability stack you already run.
 ## Workspace images
 
 The sidecar terminates TLS with a per-session ephemeral CA, so the
-workspace's HTTPS client has to trust that CA. By default, the
-Kubernetes sandbox mounts the CA at `/etc/condukt/ca.pem` and sets
-the standard TLS-client env vars on the workspace container:
+workspace's HTTPS client has to trust that CA. The Kubernetes sandbox
+arranges that without asking the workspace image to do anything.
 
-  * `NODE_EXTRA_CA_CERTS`
-  * `REQUESTS_CA_BUNDLE`
-  * `SSL_CERT_FILE`
-  * `PIP_CERT`
-  * `CURL_CA_BUNDLE`
-  * `GIT_SSL_CAINFO`
+Two complementary mechanisms ship CA trust into the pod:
 
-For the great majority of agent toolchains (curl, git, npm, python,
-node) that is enough. The image does not need to be rebuilt.
+  1. **Env vars** for language stacks that consult them at runtime.
+     The pod spec sets `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
+     `SSL_CERT_FILE`, `PIP_CERT`, `CURL_CA_BUNDLE`, and
+     `GIT_SSL_CAINFO`, all pointed at `/etc/condukt/ca.pem`. Node,
+     Python (`requests`, `httpx`), pip, curl, git, Ruby `Net::HTTP`,
+     and others honour these without any image cooperation.
 
-For workloads where the runtime ignores those env vars and only reads
-the system trust store (system OpenSSL CLI paths, Java keystores),
-`mix condukt.workspace.prepare <image> --output <ref>` produces a
-derived image with the CA installed at the system level. Treat it as
-the convenience path for the edge cases rather than a required step.
+  2. **System-bundle overlay** for tools that read the OS trust
+     store directly. The sandbox synthesises a bundle that is the
+     Mozilla public CA list plus the per-session CA (assembled by
+     `Condukt.Sandbox.Net.CA.trust_bundle/1` from the snapshot
+     shipped under `priv/ca-certificates/mozilla.pem`) and mounts it
+     via `subPath` at `/etc/ssl/certs/ca-certificates.crt` and
+     `/etc/ssl/cert.pem`. Those are the two paths every mainstream
+     Linux distro and distroless image use, so static Go binaries,
+     OpenSSL CLI tools, and any client falling back to the system
+     bundle see Mozilla's roots plus the session CA at the location
+     they already expect.
+
+Between the two paths there is no image preparation step. Operators
+point `:image` at whatever they were already using (`debian:bookworm-slim`,
+`python:3.13-slim`, `node:20-bookworm`, an internal base, a distroless
+runtime) and `Sandbox.Net` works.
+
+The one stack still not addressed is Java. JVM HTTPS clients read a
+JKS truststore, not PEM files. If you need JVM cooperation, install
+the CA into the JVM keystore at image build time.
 
 ## Sandbox support
 
