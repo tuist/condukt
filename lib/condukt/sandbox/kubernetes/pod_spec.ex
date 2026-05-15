@@ -1,6 +1,8 @@
 defmodule Condukt.Sandbox.Kubernetes.PodSpec do
   @moduledoc false
 
+  alias Condukt.Sandbox.Net.K8s.Manifests
+
   # Builds the Pod manifest map handed to `K8s.Client.create/1`.
   #
   # Choices baked in:
@@ -46,7 +48,7 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
         "workingDir" => cwd,
         "volumeMounts" => workspace_volume_mounts(net, cwd)
       }
-      |> maybe_put_env(env)
+      |> put_env(env, net)
       |> maybe_put_resources(resources)
 
     spec = %{
@@ -98,10 +100,27 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
     [%{"name" => @workspace_volume, "mountPath" => cwd}, mount]
   end
 
-  defp maybe_put_env(container, env) when map_size(env) == 0, do: container
+  # Workspace env is the merge of two sources:
+  #
+  #   1. Sandbox.Net CA env vars (NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE,
+  #      SSL_CERT_FILE, PIP_CERT, CURL_CA_BUNDLE, GIT_SSL_CAINFO), injected
+  #      when `:net` is configured so untouched base images can MITM
+  #      without rebuilding through `mix condukt.workspace.prepare`.
+  #   2. The operator-supplied env map. Operator entries come last so a
+  #      caller can override any CA env var if they really need to.
+  defp put_env(container, env, net) do
+    operator = Enum.map(env, fn {k, v} -> %{"name" => k, "value" => v} end)
 
-  defp maybe_put_env(container, env) do
-    Map.put(container, "env", Enum.map(env, fn {k, v} -> %{"name" => k, "value" => v} end))
+    entries =
+      case net do
+        nil -> operator
+        _ -> Manifests.workspace_ca_env() ++ operator
+      end
+
+    case entries do
+      [] -> container
+      list -> Map.put(container, "env", list)
+    end
   end
 
   defp maybe_put_resources(container, resources) when map_size(resources) == 0, do: container

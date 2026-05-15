@@ -117,4 +117,21 @@ defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
       assert mount["readOnly"] == true
     end
   end
+
+  describe "workspace_ca_env/0" do
+    test "points the canonical TLS-client env vars at the mounted CA" do
+      env = Manifests.workspace_ca_env()
+      names = Enum.map(env, & &1["name"])
+      path = Manifests.ca_mount_path() <> "/" <> Manifests.ca_cert_filename()
+
+      for required <- ~w(
+            NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE SSL_CERT_FILE
+            PIP_CERT CURL_CA_BUNDLE GIT_SSL_CAINFO
+          ) do
+        assert required in names
+      end
+
+      assert Enum.all?(env, fn entry -> entry["value"] == path end)
+    end
+  end
 end

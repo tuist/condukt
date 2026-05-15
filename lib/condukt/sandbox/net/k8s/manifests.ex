@@ -241,6 +241,32 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
     }
   end
 
+  @doc """
+  Environment variables that point common HTTPS clients at the mounted
+  CA without requiring the workspace image to install the cert into its
+  system trust store. We inject these into every workspace container
+  whose pod has `Sandbox.Net` enabled so untouched base images (curl,
+  git, npm, python, etc.) can MITM cleanly without any image rebuild.
+
+  The list intentionally covers the env vars the most common agent
+  toolchains honour. Java keystores and a few system-OpenSSL paths are
+  not addressed by this map and remain the operator's responsibility
+  (`mix condukt.workspace.prepare` is the convenience path for those
+  cases).
+  """
+  def workspace_ca_env do
+    path = "#{@ca_mount_path}/#{@ca_cert_filename}"
+
+    [
+      %{"name" => "NODE_EXTRA_CA_CERTS", "value" => path},
+      %{"name" => "REQUESTS_CA_BUNDLE", "value" => path},
+      %{"name" => "SSL_CERT_FILE", "value" => path},
+      %{"name" => "PIP_CERT", "value" => path},
+      %{"name" => "CURL_CA_BUNDLE", "value" => path},
+      %{"name" => "GIT_SSL_CAINFO", "value" => path}
+    ]
+  end
+
   def session_label, do: @session_label
   def init_container_name, do: @init_container_name
   def sidecar_container_name, do: @sidecar_container_name
