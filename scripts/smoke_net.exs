@@ -35,6 +35,7 @@ Application.ensure_all_started(:k8s)
 Application.ensure_all_started(:logger)
 
 alias Condukt.Sandbox.Net.Policy
+alias Condukt.Sandbox.Net.Rule
 
 session_id = "smoke-" <> (System.unique_integer([:positive]) |> Integer.to_string())
 namespace = "default"
@@ -60,11 +61,12 @@ decider = fn _ctx, req ->
 end
 
 policy = %Policy{
-  allow_hosts: ["api.github.com"],
-  decide: decider,
+  rules: [
+    {Rule.AllowHosts, hosts: ["api.github.com"]},
+    {Rule.Decide, fun: decider}
+  ],
   decide_timeout: 5_000,
-  default: :deny,
-  sink: self()
+  default: :deny
 }
 
 IO.puts("==> Initialising Sandbox.Kubernetes session_id=#{session_id} ns=#{namespace}")

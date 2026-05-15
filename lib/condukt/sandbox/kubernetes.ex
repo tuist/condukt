@@ -453,22 +453,32 @@ defmodule Condukt.Sandbox.Kubernetes do
 
   defp start_net_bridge(%State{net_policy: nil} = state, _config), do: {:ok, state}
 
-  defp start_net_bridge(%State{net_policy: %Condukt.Sandbox.Net.Policy{decide: nil}} = state, _config), do: {:ok, state}
-
   defp start_net_bridge(%State{net_policy: policy} = state, _config) do
-    bridge_opts = [
-      conn: state.conn,
-      namespace: state.namespace,
-      pod_name: state.pod_name,
-      session_id: state.id,
-      policy: policy,
-      owner_pid: state.owner_pid
-    ]
+    if has_decide_rule?(policy) do
+      bridge_opts = [
+        conn: state.conn,
+        namespace: state.namespace,
+        pod_name: state.pod_name,
+        session_id: state.id,
+        policy: policy,
+        owner_pid: state.owner_pid
+      ]
 
-    case ControlBridge.start_link(bridge_opts) do
-      {:ok, pid} -> {:ok, %{state | net_bridge_pid: pid}}
-      {:error, reason} -> {:error, {:net_bridge_failed, reason}}
+      case ControlBridge.start_link(bridge_opts) do
+        {:ok, pid} -> {:ok, %{state | net_bridge_pid: pid}}
+        {:error, reason} -> {:error, {:net_bridge_failed, reason}}
+      end
+    else
+      {:ok, state}
     end
+  end
+
+  defp has_decide_rule?(%Condukt.Sandbox.Net.Policy{rules: rules}) do
+    Enum.any?(rules, fn
+      {Condukt.Sandbox.Net.Rule.Decide, _opts} -> true
+      Condukt.Sandbox.Net.Rule.Decide -> true
+      _ -> false
+    end)
   end
 
   defp cleanup_failed_init(%State{delete_on_shutdown: true} = state) do

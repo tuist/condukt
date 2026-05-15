@@ -204,9 +204,13 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox.Net.Policy,
           Condukt.Sandbox.Net.Request,
           Condukt.Sandbox.Net.Event,
-          Condukt.Sandbox.Net.Sink,
-          Condukt.Sandbox.Net.Sink.Log,
-          Condukt.Sandbox.Net.Sink.Process,
+          Condukt.Sandbox.Net.Context,
+          Condukt.Sandbox.Net.Rule,
+          Condukt.Sandbox.Net.Rule.AllowHosts,
+          Condukt.Sandbox.Net.Rule.DenyHosts,
+          Condukt.Sandbox.Net.Rule.Decide,
+          Condukt.Sandbox.Net.Decider,
+          Condukt.Sandbox.Net.AgentDecider,
           Condukt.Sandbox.Net.CA
         ],
         "Session Stores": [

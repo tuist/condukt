@@ -3,7 +3,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReader do
 
   # GenServer that reads NDJSON events from the `condukt-egress` sidecar's
   # control channel and dispatches them into the configured
-  # `Condukt.Sandbox.Net.Sink`.
+  # configured telemetry events.
   #
   # The wire format is one JSON-encoded `Event` per line. Lines arrive
   # over a `gen_tcp`-style socket that the caller is expected to have

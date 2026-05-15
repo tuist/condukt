@@ -113,14 +113,38 @@ defmodule Condukt.Sandbox.Net.K8s do
 
   defp encode_policy(%Policy{} = policy) do
     JSON.encode!(%{
-      allow_hosts: policy.allow_hosts,
-      deny_hosts: policy.deny_hosts,
+      rules: Enum.map(policy.rules, &encode_rule/1),
       default: Atom.to_string(policy.default),
       max_body_capture: policy.max_body_capture,
       redact: Enum.map(policy.redact, &Regex.source/1),
-      use_decider: policy.decide != nil,
       decide_timeout_ms: policy.decide_timeout
     })
+  end
+
+  # The sidecar evaluates `allow_hosts` and `deny_hosts` locally. Any
+  # `Rule.Decide` entry becomes a wire signal that tells the sidecar to
+  # round-trip to the BEAM; the bridge resolves the actual decider on
+  # its side, so the wire form carries no opts.
+  defp encode_rule(entry) do
+    {mod, opts} = normalise_rule(entry)
+    rule_type = rule_wire_type(mod)
+    encode_rule(rule_type, opts)
+  end
+
+  defp encode_rule(:allow_hosts, opts), do: %{type: "allow_hosts", hosts: Keyword.get(opts, :hosts, [])}
+  defp encode_rule(:deny_hosts, opts), do: %{type: "deny_hosts", hosts: Keyword.get(opts, :hosts, [])}
+  defp encode_rule(:decide, _opts), do: %{type: "decide"}
+
+  defp normalise_rule({mod, opts}) when is_atom(mod) and is_list(opts), do: {mod, opts}
+  defp normalise_rule(mod) when is_atom(mod), do: {mod, []}
+
+  defp rule_wire_type(Condukt.Sandbox.Net.Rule.AllowHosts), do: :allow_hosts
+  defp rule_wire_type(Condukt.Sandbox.Net.Rule.DenyHosts), do: :deny_hosts
+  defp rule_wire_type(Condukt.Sandbox.Net.Rule.Decide), do: :decide
+
+  defp rule_wire_type(other) do
+    raise ArgumentError,
+          "unknown Sandbox.Net rule module #{inspect(other)}; the sidecar wire only supports the built-in rules"
   end
 
   defp create_or_replace(conn, manifest) do

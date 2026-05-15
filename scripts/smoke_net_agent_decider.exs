@@ -51,13 +51,15 @@ end
 
 alias Condukt.Sandbox.Net.AgentDecider
 alias Condukt.Sandbox.Net.Policy
+alias Condukt.Sandbox.Net.Rule
 
 policy = %Policy{
-  allow_hosts: ["api.github.com"],
-  decide: {AgentDecider, agent: SmokeAgent.NetGuard},
+  rules: [
+    {Rule.AllowHosts, hosts: ["api.github.com"]},
+    {Rule.Decide, module: AgentDecider, opts: [agent: SmokeAgent.NetGuard]}
+  ],
   decide_timeout: 30_000,
-  default: :deny,
-  sink: self()
+  default: :deny
 }
 
 session_id = "agent-smoke-" <> (System.unique_integer([:positive]) |> Integer.to_string())

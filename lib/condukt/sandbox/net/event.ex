@@ -1,6 +1,6 @@
 defmodule Condukt.Sandbox.Net.Event do
   @moduledoc """
-  An event delivered to a `Condukt.Sandbox.Net.Sink`.
+  An event the egress runtime emits as telemetry per request lifecycle.
 
   The egress sidecar emits an event when a request starts (`:request_opened`),
   when its outcome is known (`:request_closed`), and when policy decides on the

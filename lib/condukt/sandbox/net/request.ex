@@ -3,9 +3,9 @@ defmodule Condukt.Sandbox.Net.Request do
   A single outbound network request observed by the sandbox egress layer.
 
   Requests are emitted by `Condukt.Sandbox.Net`-capable sandboxes (today,
-  `Condukt.Sandbox.Kubernetes` via the `condukt-egress` sidecar) and delivered
-  to the configured `Condukt.Sandbox.Net.Sink`. They flow into the session
-  event stream alongside tool calls.
+  `Condukt.Sandbox.Kubernetes` via the `condukt-egress` sidecar) and
+  surfaced through telemetry on the BEAM side. See
+  `Condukt.Sandbox.Net` for the event taxonomy.
 
   Method, path, request headers, request body sha256/preview, response
   status, response headers, response body sha256/preview, and byte counts

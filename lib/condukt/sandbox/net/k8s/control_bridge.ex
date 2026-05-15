@@ -16,8 +16,8 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
   # stream (events + decision_requests). Stdin is the BEAM's responses
   # (decisions). The `:k8s` library's exec helper provides both halves.
   #
-  # Per-host decision caching, decider invocation, sink delivery, and
-  # context assembly all live here. The owning K8s sandbox starts one
+  # Per-host decision caching, decider invocation, telemetry emission,
+  # and context assembly all live here. The owning K8s sandbox starts one
   # bridge per session at init and tears it down on shutdown.
 
   use GenServer

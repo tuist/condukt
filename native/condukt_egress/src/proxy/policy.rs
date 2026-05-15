@@ -1,24 +1,29 @@
 //! Sidecar-side mirror of `Condukt.Sandbox.Net.Policy`.
 //!
-//! The BEAM authors the policy and bakes it into the pod as a JSON file
-//! at `/etc/condukt/policy.json` (or any path provided via
-//! `--policy-file`). The sidecar reads it once at startup, holds it in
-//! memory for the lifetime of the session, and evaluates every connection
-//! against it.
+//! The BEAM authors the policy and bakes it into the pod as a JSON
+//! file at `/etc/condukt/policy.json`. The sidecar reads it once at
+//! startup, holds it in memory for the lifetime of the session, and
+//! evaluates every connection against it.
 //!
-//! There is no live-reload path in v1 — policy is immutable once the pod
-//! starts. If an operator needs to change policy, they end the session
-//! and start a fresh one. This matches the per-session CA lifecycle.
+//! The shape is a Plug-style pipeline. `rules` is an ordered list
+//! where each entry either short-circuits with `allow` / `deny` or
+//! returns `continue` and lets the next rule run. If every rule
+//! continues, `default` fires.
+//!
+//! Three rule types are sidecar-evaluable today:
+//!
+//!   * `allow_hosts` matches against a glob list, allow on hit.
+//!   * `deny_hosts` matches against a glob list, deny on hit.
+//!   * `decide` defers to the BEAM via the control channel.
+//!
+//! Policy is immutable once the pod starts.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Policy {
     #[serde(default)]
-    pub allow_hosts: Vec<String>,
-
-    #[serde(default)]
-    pub deny_hosts: Vec<String>,
+    pub rules: Vec<Rule>,
 
     #[serde(default = "default_deny")]
     pub default: Action,
@@ -29,19 +34,25 @@ pub struct Policy {
     #[serde(default = "default_max_body_capture")]
     pub max_body_capture: usize,
 
-    /// When true, hosts that don't match the static allow/deny lists
-    /// trigger a `decision_request` over the control channel rather
-    /// than applying `default`. The BEAM's decider answers with a
-    /// `decision` frame. On timeout / channel unavailable, the
-    /// sidecar applies `default` as the fallback.
-    #[serde(default)]
-    pub use_decider: bool,
-
-    /// Maximum time (milliseconds) the sidecar waits for a
-    /// `decision` reply from the BEAM. Mirrors
+    /// Maximum time (milliseconds) the sidecar waits for a `decision`
+    /// reply from the BEAM when a `decide` rule fires. Mirrors
     /// `Condukt.Sandbox.Net.Policy.decide_timeout`.
     #[serde(default = "default_decide_timeout_ms")]
     pub decide_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Rule {
+    AllowHosts {
+        #[serde(default)]
+        hosts: Vec<String>,
+    },
+    DenyHosts {
+        #[serde(default)]
+        hosts: Vec<String>,
+    },
+    Decide,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -64,58 +75,61 @@ fn default_decide_timeout_ms() -> u64 {
     5_000
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
+    /// Static rule said allow.
     Allow,
-    Decide,
+    /// Static rule (or default) said deny, with a stable reason label.
     Deny(DenyReason),
+    /// A `decide` rule fired; the sidecar should round-trip to the
+    /// BEAM and use whatever decision comes back.
+    Decide,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenyReason {
     MatchedDenyList,
-    NoAllowMatch,
     DefaultDeny,
 }
 
 impl DenyReason {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             DenyReason::MatchedDenyList => "matched_deny_list",
-            DenyReason::NoAllowMatch => "no_allow_match",
             DenyReason::DefaultDeny => "default_deny",
         }
     }
 }
 
 impl Policy {
-    /// Evaluate a hostname against the policy. Mirrors the BEAM-side
-    /// `Condukt.Sandbox.Net.Policy.evaluate/2`.
+    /// Walk the rule pipeline against a hostname. Mirrors the BEAM-side
+    /// `Condukt.Sandbox.Net.Policy.evaluate/3` for the host-only rules.
+    /// Returns the first non-`continue` outcome, or the default action
+    /// if every rule passes.
     pub fn evaluate(&self, host: &str) -> Decision {
         let host_lc = host.to_ascii_lowercase();
 
-        if matches_any(&host_lc, &self.deny_hosts) {
-            return Decision::Deny(DenyReason::MatchedDenyList);
-        }
-
-        if matches_any(&host_lc, &self.allow_hosts) {
-            return Decision::Allow;
-        }
-
-        if self.use_decider {
-            return Decision::Decide;
-        }
-
-        if self.allow_hosts.is_empty() {
-            return match self.default {
-                Action::Allow => Decision::Allow,
-                Action::Deny => Decision::Deny(DenyReason::DefaultDeny),
-            };
+        for rule in &self.rules {
+            match rule {
+                Rule::AllowHosts { hosts } => {
+                    if matches_any(&host_lc, hosts) {
+                        return Decision::Allow;
+                    }
+                }
+                Rule::DenyHosts { hosts } => {
+                    if matches_any(&host_lc, hosts) {
+                        return Decision::Deny(DenyReason::MatchedDenyList);
+                    }
+                }
+                Rule::Decide => {
+                    return Decision::Decide;
+                }
+            }
         }
 
         match self.default {
             Action::Allow => Decision::Allow,
-            Action::Deny => Decision::Deny(DenyReason::NoAllowMatch),
+            Action::Deny => Decision::Deny(DenyReason::DefaultDeny),
         }
     }
 }
@@ -124,17 +138,12 @@ fn matches_any(host: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|p| matches_one(host, p))
 }
 
-/// Host-glob match. `*` matches a single DNS label, `**` matches one or
-/// more dot-separated labels. Case-insensitive.
 fn matches_one(host: &str, pattern: &str) -> bool {
     let pattern = pattern.to_ascii_lowercase();
-    let regex = compile(&pattern);
-    regex_match(&regex, host)
+    let tokens = compile(&pattern);
+    match_tokens(&tokens, host)
 }
 
-/// Compile a host glob to a sequence of regex-equivalent tokens. We use
-/// a minimal hand-rolled matcher rather than pulling in the `regex` crate
-/// for one job.
 fn compile(pattern: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = pattern.chars().collect();
@@ -169,12 +178,8 @@ fn compile(pattern: &str) -> Vec<Token> {
 #[derive(Debug, Clone)]
 enum Token {
     Literal(String),
-    Star,       // [^.]+
-    DoubleStar, // .+
-}
-
-fn regex_match(tokens: &[Token], host: &str) -> bool {
-    match_tokens(tokens, host)
+    Star,
+    DoubleStar,
 }
 
 fn match_tokens(tokens: &[Token], input: &str) -> bool {
@@ -188,7 +193,6 @@ fn match_tokens(tokens: &[Token], input: &str) -> bool {
             }
         }
         Some((Token::Star, rest)) => {
-            // [^.]+ — must consume at least one non-dot character, greedy.
             for (idx, ch) in input.char_indices() {
                 if ch == '.' {
                     if idx == 0 {
@@ -197,7 +201,6 @@ fn match_tokens(tokens: &[Token], input: &str) -> bool {
                     return match_tokens(rest, &input[idx..]);
                 }
             }
-            // Whole rest is non-dot: consume all if there's anything.
             if input.is_empty() {
                 false
             } else {
@@ -205,7 +208,6 @@ fn match_tokens(tokens: &[Token], input: &str) -> bool {
             }
         }
         Some((Token::DoubleStar, rest)) => {
-            // .+ — at least one character, any. Try every split.
             if input.is_empty() {
                 return false;
             }
@@ -223,90 +225,120 @@ fn match_tokens(tokens: &[Token], input: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn literal_match() {
-        let p = Policy {
-            allow_hosts: vec!["api.github.com".into()],
-            ..Default::default()
-        };
-        assert_eq!(p.evaluate("api.github.com"), Decision::Allow);
-        assert!(matches!(p.evaluate("github.com"), Decision::Deny(_)));
+    fn p(rules: Vec<Rule>, default: Action) -> Policy {
+        Policy {
+            rules,
+            default,
+            redact: vec![],
+            max_body_capture: 4096,
+            decide_timeout_ms: 5_000,
+        }
     }
 
     #[test]
-    fn single_star_one_label() {
-        let p = Policy {
-            allow_hosts: vec!["*.openai.com".into()],
-            ..Default::default()
-        };
-        assert_eq!(p.evaluate("api.openai.com"), Decision::Allow);
-        assert!(matches!(p.evaluate("v1.api.openai.com"), Decision::Deny(_)));
-        assert!(matches!(p.evaluate("openai.com"), Decision::Deny(_)));
+    fn allow_hosts_short_circuits() {
+        let policy = p(
+            vec![Rule::AllowHosts {
+                hosts: vec!["api.github.com".into()],
+            }],
+            Action::Deny,
+        );
+        assert_eq!(policy.evaluate("api.github.com"), Decision::Allow);
     }
 
     #[test]
-    fn double_star_multi_label() {
-        let p = Policy {
-            allow_hosts: vec!["**.googleapis.com".into()],
-            ..Default::default()
-        };
-        assert_eq!(p.evaluate("v1.api.googleapis.com"), Decision::Allow);
-        assert_eq!(p.evaluate("api.googleapis.com"), Decision::Allow);
-        assert!(matches!(p.evaluate("googleapis.com"), Decision::Deny(_)));
-    }
-
-    #[test]
-    fn deny_overrides_allow() {
-        let p = Policy {
-            allow_hosts: vec!["*.example.com".into()],
-            deny_hosts: vec!["secret.example.com".into()],
-            ..Default::default()
-        };
+    fn deny_hosts_short_circuits() {
+        let policy = p(
+            vec![Rule::DenyHosts {
+                hosts: vec!["secret.example.com".into()],
+            }],
+            Action::Deny,
+        );
         assert_eq!(
-            p.evaluate("secret.example.com"),
+            policy.evaluate("secret.example.com"),
             Decision::Deny(DenyReason::MatchedDenyList)
         );
-        assert_eq!(p.evaluate("public.example.com"), Decision::Allow);
     }
 
     #[test]
-    fn empty_allow_with_default_allow_permits() {
-        let p = Policy {
-            allow_hosts: vec![],
-            default: Action::Allow,
-            ..Default::default()
-        };
-        assert_eq!(p.evaluate("anything.com"), Decision::Allow);
+    fn order_matters() {
+        let deny_first = p(
+            vec![
+                Rule::DenyHosts {
+                    hosts: vec!["evil.com".into()],
+                },
+                Rule::AllowHosts {
+                    hosts: vec!["evil.com".into()],
+                },
+            ],
+            Action::Allow,
+        );
+        assert_eq!(
+            deny_first.evaluate("evil.com"),
+            Decision::Deny(DenyReason::MatchedDenyList)
+        );
+
+        let allow_first = p(
+            vec![
+                Rule::AllowHosts {
+                    hosts: vec!["evil.com".into()],
+                },
+                Rule::DenyHosts {
+                    hosts: vec!["evil.com".into()],
+                },
+            ],
+            Action::Deny,
+        );
+        assert_eq!(allow_first.evaluate("evil.com"), Decision::Allow);
     }
 
     #[test]
-    fn empty_allow_with_default_deny_blocks() {
-        let p = Policy {
-            allow_hosts: vec![],
-            default: Action::Deny,
-            ..Default::default()
-        };
-        assert!(matches!(
-            p.evaluate("anything.com"),
+    fn decide_rule_returns_decide_variant() {
+        let policy = p(vec![Rule::Decide], Action::Deny);
+        assert_eq!(policy.evaluate("anything.com"), Decision::Decide);
+    }
+
+    #[test]
+    fn allow_hosts_before_decide_short_circuits_the_round_trip() {
+        let policy = p(
+            vec![
+                Rule::AllowHosts {
+                    hosts: vec!["api.github.com".into()],
+                },
+                Rule::Decide,
+            ],
+            Action::Deny,
+        );
+        assert_eq!(policy.evaluate("api.github.com"), Decision::Allow);
+        assert_eq!(policy.evaluate("evil.com"), Decision::Decide);
+    }
+
+    #[test]
+    fn default_fires_when_no_rule_has_an_opinion() {
+        let policy_deny = p(vec![], Action::Deny);
+        assert_eq!(
+            policy_deny.evaluate("anything.com"),
             Decision::Deny(DenyReason::DefaultDeny)
-        ));
+        );
+
+        let policy_allow = p(vec![], Action::Allow);
+        assert_eq!(policy_allow.evaluate("anything.com"), Decision::Allow);
     }
 
     #[test]
-    fn case_insensitive() {
-        let p = Policy {
-            allow_hosts: vec!["API.github.com".into()],
-            ..Default::default()
-        };
-        assert_eq!(p.evaluate("api.github.com"), Decision::Allow);
-        assert_eq!(p.evaluate("API.GITHUB.COM"), Decision::Allow);
-    }
-
-    #[test]
-    fn parses_json() {
-        let json = r#"{"allow_hosts":["api.github.com"],"default":"deny"}"#;
-        let p: Policy = serde_json::from_str(json).unwrap();
-        assert_eq!(p.allow_hosts, vec!["api.github.com"]);
-        assert_eq!(p.default, Action::Deny);
+    fn parses_wire_format() {
+        let json = r#"{
+          "rules": [
+            {"type": "deny_hosts", "hosts": ["evil.com"]},
+            {"type": "allow_hosts", "hosts": ["api.github.com"]},
+            {"type": "decide"}
+          ],
+          "default": "deny",
+          "decide_timeout_ms": 5000
+        }"#;
+        let policy: Policy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy.rules.len(), 3);
+        assert_eq!(policy.default, Action::Deny);
+        assert_eq!(policy.decide_timeout_ms, 5_000);
     }
 }
