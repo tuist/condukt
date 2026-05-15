@@ -73,7 +73,7 @@ defmodule Condukt.MixProject do
       # on K8s don't pay for the HTTP stack at boot.
       {:k8s, "~> 2.8"},
 
-      # Per-session ephemeral CA generation for the Sandbox.Net egress
+      # Per-session ephemeral CA generation for the network policy egress
       # MITM path. Pure Elixir, no native deps.
       {:x509, "~> 0.9"},
 
@@ -101,7 +101,7 @@ defmodule Condukt.MixProject do
         "guides/mcp.md": [title: "MCP"],
         "guides/http_routes.md": [title: "HTTP Routes"],
         "guides/sandbox.md": [title: "Sandbox"],
-        "guides/net.md": [title: "Sandbox Net"],
+        "guides/network_policy.md": [title: "Network Policy"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
         "guides/compaction.md": [title: "Compaction"],
@@ -133,7 +133,7 @@ defmodule Condukt.MixProject do
         ],
         Guides: [
           "guides/sandbox.md",
-          "guides/net.md",
+          "guides/network_policy.md",
           "guides/streaming_and_events.md",
           "guides/sessions_and_persistence.md",
           "guides/compaction.md",
@@ -200,18 +200,13 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox.Virtual,
           Condukt.Sandbox.Virtual.Tools.Mount,
           Condukt.Sandbox.Kubernetes,
-          Condukt.Sandbox.Net,
-          Condukt.Sandbox.Net.Policy,
-          Condukt.Sandbox.Net.Request,
-          Condukt.Sandbox.Net.Event,
-          Condukt.Sandbox.Net.Context,
-          Condukt.Sandbox.Net.Rule,
-          Condukt.Sandbox.Net.Rule.AllowHosts,
-          Condukt.Sandbox.Net.Rule.DenyHosts,
-          Condukt.Sandbox.Net.Rule.Decide,
-          Condukt.Sandbox.Net.Decider,
-          Condukt.Sandbox.Net.AgentDecider,
-          Condukt.Sandbox.Net.CA
+          Condukt.Sandbox.NetworkPolicy,
+          Condukt.Sandbox.NetworkPolicy.Request,
+          Condukt.Sandbox.NetworkPolicy.Event,
+          Condukt.Sandbox.NetworkPolicy.Context,
+          Condukt.Sandbox.NetworkPolicy.Decider,
+          Condukt.Sandbox.NetworkPolicy.AgentDecider,
+          Condukt.Sandbox.NetworkPolicy.CA
         ],
         "Session Stores": [
           Condukt.SessionStore,

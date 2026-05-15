@@ -38,7 +38,7 @@ pub struct Args {
     pub control_listen: String,
 
     /// Path to the session's egress policy JSON file. Mirrors the BEAM
-    /// `Condukt.Sandbox.Net.Policy` struct (snake-cased keys).
+    /// `Condukt.Sandbox.NetworkPolicy` struct (snake-cased keys).
     #[arg(
         long,
         env = "CONDUKT_EGRESS_POLICY_FILE",

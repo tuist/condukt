@@ -1,42 +1,55 @@
-defmodule Condukt.Sandbox.Net.K8s do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s do
   @moduledoc """
-  Kubernetes-specific glue for the `Condukt.Sandbox.Net` egress layer.
+  Kubernetes-specific glue for the `Condukt.Sandbox.NetworkPolicy`
+  egress layer.
 
   `Condukt.Sandbox.Kubernetes` calls into this module when an agent's
-  sandbox spec sets `:net`. The module owns:
+  sandbox spec sets `:network_policy`. The module owns:
 
-    * Generating a per-session ephemeral CA (`Condukt.Sandbox.Net.CA`)
+    * Generating a per-session ephemeral CA (`Condukt.Sandbox.NetworkPolicy.CA`)
     * Creating and deleting the K8s `Secret` that delivers the CA and
       the policy JSON to the sidecar
     * Creating and deleting the `NetworkPolicy` that restricts pod
-      egress so the sidecar is the only thing that can reach the outside
-      world
+      egress so the sidecar is the only thing that can reach the
+      outside world
     * Augmenting the pod spec with the `condukt-egress` init container
-      and sidecar plus the secret volume mount on the workspace container
+      and sidecar plus the secret/bundle volume mounts on the
+      workspace container
     * Starting and stopping the BEAM-side control reader that decodes
       NDJSON events from the sidecar
 
   See `guides/net.md` for the full picture.
   """
 
-  alias Condukt.Sandbox.Net.CA
-  alias Condukt.Sandbox.Net.K8s.Manifests
-  alias Condukt.Sandbox.Net.Policy
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.CA
+  alias Condukt.Sandbox.NetworkPolicy.K8s.Manifests
 
   @doc """
   Builds the per-session manifests and resolved options. Called by
   `Condukt.Sandbox.Kubernetes` before pod creation.
 
-  Returns `{:ok, %{policy: Policy, secret: map, network_policy: map,
-  init_container: map, sidecar_container: map, secret_volume: map,
-  workspace_volume_mounts: [map], ca: CA.t(), names: %{...}}}`.
+  Returns `{:ok, %{policy: NetworkPolicy.t(), secret: map,
+  network_policy: map, init_container: map, sidecar_container: map,
+  secret_volume: map, workspace_volume_mounts: [map], ca: CA.t(),
+  names: %{...}}}`.
+
+  Input opts:
+
+    * `:session_id` — required.
+    * `:namespace` — required.
+    * `:policy` — the `Condukt.Sandbox.NetworkPolicy` struct.
+    * `:image`, `:proxy_port`, `:control_port`, `:sidecar_uid` —
+      optional knobs for the sidecar container.
   """
-  def prepare(%{session_id: session_id, namespace: namespace} = opts) do
-    policy = Policy.new(Keyword.get(Map.get(opts, :net_opts, []), :policy, opts[:policy]))
-    image = Keyword.get(Map.get(opts, :net_opts, []), :image, Manifests.default_image())
-    proxy_port = Keyword.get(Map.get(opts, :net_opts, []), :proxy_port, Manifests.default_proxy_port())
-    control_port = Keyword.get(Map.get(opts, :net_opts, []), :control_port, Manifests.default_control_port())
-    sidecar_uid = Keyword.get(Map.get(opts, :net_opts, []), :sidecar_uid, Manifests.default_sidecar_uid())
+  def prepare(opts) do
+    session_id = Map.fetch!(opts, :session_id)
+    namespace = Map.fetch!(opts, :namespace)
+    policy = NetworkPolicy.new(Map.get(opts, :policy))
+    image = Map.get(opts, :image) || Manifests.default_image()
+    proxy_port = Map.get(opts, :proxy_port) || Manifests.default_proxy_port()
+    control_port = Map.get(opts, :control_port) || Manifests.default_control_port()
+    sidecar_uid = Map.get(opts, :sidecar_uid) || Manifests.default_sidecar_uid()
 
     with {:ok, ca} <- CA.generate(common_name: session_id) do
       policy_json = encode_policy(policy)
@@ -90,9 +103,9 @@ defmodule Condukt.Sandbox.Net.K8s do
   end
 
   @doc """
-  Applies the prepared manifests to the cluster: creates the Secret and
-  the NetworkPolicy. The pod spec gets the sidecar added by the caller;
-  this function does not create the pod.
+  Applies the prepared manifests to the cluster: creates the Secret
+  and the NetworkPolicy. The pod spec gets the sidecar added by the
+  caller; this function does not create the pod.
   """
   def apply(conn, %{secret: secret, network_policy: netpol}) do
     with {:ok, _} <- create_or_replace(conn, secret),
@@ -102,9 +115,10 @@ defmodule Condukt.Sandbox.Net.K8s do
   end
 
   @doc """
-  Removes the Secret and NetworkPolicy associated with a session. Called
-  during `Condukt.Sandbox.Kubernetes` shutdown when `:delete_on_shutdown`
-  is true. Errors are swallowed; teardown is best-effort.
+  Removes the Secret and NetworkPolicy associated with a session.
+  Called during `Condukt.Sandbox.Kubernetes` shutdown when
+  `:delete_on_shutdown` is true. Errors are swallowed; teardown is
+  best-effort.
   """
   def teardown(conn, namespace, %{secret: secret_name, network_policy: netpol_name}) do
     delete_resource(conn, "v1", "Secret", namespace, secret_name)
@@ -112,7 +126,7 @@ defmodule Condukt.Sandbox.Net.K8s do
     :ok
   end
 
-  defp encode_policy(%Policy{} = policy) do
+  defp encode_policy(%NetworkPolicy{} = policy) do
     JSON.encode!(%{
       rules: Enum.map(policy.rules, &encode_rule/1),
       default: Atom.to_string(policy.default),
@@ -122,30 +136,25 @@ defmodule Condukt.Sandbox.Net.K8s do
     })
   end
 
-  # The sidecar evaluates `allow_hosts` and `deny_hosts` locally. Any
-  # `Rule.Decide` entry becomes a wire signal that tells the sidecar to
-  # round-trip to the BEAM; the bridge resolves the actual decider on
-  # its side, so the wire form carries no opts.
-  defp encode_rule(entry) do
-    {mod, opts} = normalise_rule(entry)
-    rule_type = rule_wire_type(mod)
-    encode_rule(rule_type, opts)
+  # The sidecar evaluates `allow` and `deny` rules locally. `:decide`
+  # becomes the wire signal that tells the sidecar to round-trip to
+  # the BEAM; the bridge resolves the actual decider on its side, so
+  # the wire form carries no decider payload.
+  defp encode_rule({:allow, hosts}) when is_list(hosts) do
+    %{type: "allow", hosts: hosts}
   end
 
-  defp encode_rule(:allow_hosts, opts), do: %{type: "allow_hosts", hosts: Keyword.get(opts, :hosts, [])}
-  defp encode_rule(:deny_hosts, opts), do: %{type: "deny_hosts", hosts: Keyword.get(opts, :hosts, [])}
-  defp encode_rule(:decide, _opts), do: %{type: "decide"}
+  defp encode_rule({:deny, hosts}) when is_list(hosts) do
+    %{type: "deny", hosts: hosts}
+  end
 
-  defp normalise_rule({mod, opts}) when is_atom(mod) and is_list(opts), do: {mod, opts}
-  defp normalise_rule(mod) when is_atom(mod), do: {mod, []}
+  defp encode_rule({:decide, _callable}) do
+    %{type: "decide"}
+  end
 
-  defp rule_wire_type(Condukt.Sandbox.Net.Rule.AllowHosts), do: :allow_hosts
-  defp rule_wire_type(Condukt.Sandbox.Net.Rule.DenyHosts), do: :deny_hosts
-  defp rule_wire_type(Condukt.Sandbox.Net.Rule.Decide), do: :decide
-
-  defp rule_wire_type(other) do
+  defp encode_rule(other) do
     raise ArgumentError,
-          "unknown Sandbox.Net rule module #{inspect(other)}; the sidecar wire only supports the built-in rules"
+          "unsupported NetworkPolicy rule for sidecar wire: #{inspect(other)}"
   end
 
   defp create_or_replace(conn, manifest) do

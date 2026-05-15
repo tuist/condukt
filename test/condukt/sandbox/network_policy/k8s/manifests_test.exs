@@ -1,7 +1,7 @@
-defmodule Condukt.Sandbox.Net.K8s.ManifestsTest do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s.ManifestsTest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Sandbox.Net.K8s.Manifests
+  alias Condukt.Sandbox.NetworkPolicy.K8s.Manifests
 
   describe "secret/1" do
     test "builds a Secret with base64-encoded policy, cert, and trust bundle" do

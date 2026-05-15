@@ -1,7 +1,7 @@
-defmodule Condukt.Sandbox.Net.K8s.Manifests do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s.Manifests do
   @moduledoc false
 
-  # Pure manifest builders for the Sandbox.Net K8s integration:
+  # Pure manifest builders for the NetworkPolicy K8s integration:
   #
   #   - Secret carrying the per-session policy JSON + CA cert + CA key
   #   - NetworkPolicy locking pod egress to the sidecar container
@@ -281,7 +281,7 @@ defmodule Condukt.Sandbox.Net.K8s.Manifests do
   Environment variables that point common HTTPS clients at the mounted
   CA without requiring the workspace image to install the cert into its
   system trust store. We inject these into every workspace container
-  whose pod has `Sandbox.Net` enabled so untouched base images (curl,
+  whose pod has a NetworkPolicy enabled so untouched base images (curl,
   git, npm, python, etc.) can MITM cleanly without any image rebuild.
 
   The list intentionally covers the env vars the most common agent

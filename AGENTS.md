@@ -29,12 +29,20 @@
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.
 
-## Sandbox Net
+## Network Policy
 
-- `Condukt.Sandbox.Net` is the per-session egress audit + policy layer.
-  Configured via `net: [policy: %Condukt.Sandbox.Net.Policy{...}]` on
-  the `Condukt.Sandbox.Kubernetes` sandbox spec. Other sandboxes
-  silently ignore the option (no enforcement plane available).
+- `Condukt.Sandbox.NetworkPolicy` is the per-session egress audit +
+  policy layer. Configured via
+  `network_policy: %Condukt.Sandbox.NetworkPolicy{...}` on the
+  `Condukt.Sandbox.Kubernetes` sandbox spec. Other sandboxes silently
+  ignore the option (no enforcement plane available).
+- `rules` is a keyword list whose entries are walked top to bottom.
+  Three kinds ship in the runtime: `allow: [host_globs]`,
+  `deny: [host_globs]`, and `decide: callable`. The decider callable
+  can be a 2-arity function, `{module, function}`, a module alone
+  (calling `module.decide(ctx, req, [])`), or `{module, opts}`.
+  `Condukt.Sandbox.NetworkPolicy.AgentDecider` wraps a `Condukt`
+  agent as a decider.
 - The K8s integration adds an init container (writes iptables NAT
   rules with CAP_NET_ADMIN, then exits) and a sidecar
   (`condukt-egress proxy`) to the pod, plus a per-session `Secret`
@@ -43,8 +51,9 @@
   shutdown when `:delete_on_shutdown` is true.
 - The sidecar image is `ghcr.io/tuist/condukt-egress:<version>`,
   published by the release workflow. `default_image/0` resolves to
-  the tag matching the installed Condukt version; override with
-  `:image` on the `:net` opts when mirroring or pinning.
+  the tag matching the installed Condukt version; override with the
+  top-level `:network_policy_image` option on
+  `Condukt.Sandbox.Kubernetes` when mirroring or pinning.
 - The workspace cooperates with the MITM without any image
   preparation. The K8s pod spec injects the canonical TLS-client env
   vars (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
@@ -52,7 +61,7 @@
   `/etc/condukt/ca.pem`, and overlays a synthesized trust bundle
   (Mozilla public roots plus the per-session CA, shipped under
   `priv/ca-certificates/mozilla.pem` and assembled by
-  `Condukt.Sandbox.Net.CA.trust_bundle/1`) at
+  `Condukt.Sandbox.NetworkPolicy.CA.trust_bundle/1`) at
   `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` via
   `subPath` mounts. The only stack that still needs image-side
   cooperation is Java keystores.
@@ -64,10 +73,10 @@
 - ALPN advertises both `h2` and `http/1.1`; the sidecar terminates
   whichever the client picks and forwards over the matching protocol
   to the upstream. Mixed-protocol connections fall back to
-  byte-splice. See `guides/net.md` for the topology diagram, policy
-  model (`allow_hosts` / `deny_hosts` / `decide` / `default`), decider
-  forms (function, MFA, agent), context snapshot shape, and known
-  limitations.
+  byte-splice. See `guides/network_policy.md` for the topology
+  diagram, policy model (`allow` / `deny` / `decide` / `default`),
+  decider forms (function, MFA, module, agent), context snapshot
+  shape, and known limitations.
 
 ## MCP
 

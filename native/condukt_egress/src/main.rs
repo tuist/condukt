@@ -16,7 +16,7 @@
 //!   per-session policy, and either forwards bytes through transparently
 //!   (Tier 1) or terminates TLS with a per-session CA-signed leaf to
 //!   capture method/path/headers/body (Tier 2). Events stream back to the
-//!   BEAM-side `Condukt.Sandbox.Net` over a length-prefixed JSON control
+//!   BEAM-side `Condukt.Sandbox.NetworkPolicy` over a length-prefixed JSON control
 //!   channel.
 //!
 //! The two modes share the same image so K8s pulls one artifact for both
@@ -29,7 +29,7 @@ mod control_bridge;
 mod netfilter;
 mod proxy;
 
-/// Egress sidecar for Condukt's Sandbox.Net layer.
+/// Egress sidecar for Condukt's network policy layer.
 #[derive(Parser, Debug)]
 #[command(name = "condukt-egress", version, about, long_about = None)]
 struct Cli {
@@ -48,7 +48,7 @@ enum Mode {
     Proxy(proxy::Args),
 
     /// Bridge stdin/stdout with the proxy's control TCP port. Used by
-    /// the BEAM-side `Condukt.Sandbox.Net.K8s.ControlBridge` over a
+    /// the BEAM-side `Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge` over a
     /// `pods/exec` websocket to carry NDJSON event + decision traffic.
     ControlBridge(control_bridge::Args),
 }

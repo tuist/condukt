@@ -1,11 +1,11 @@
-defmodule Condukt.Sandbox.Net.Request do
+defmodule Condukt.Sandbox.NetworkPolicy.Request do
   @moduledoc """
   A single outbound network request observed by the sandbox egress layer.
 
-  Requests are emitted by `Condukt.Sandbox.Net`-capable sandboxes (today,
-  `Condukt.Sandbox.Kubernetes` via the `condukt-egress` sidecar) and
+  Requests are emitted by `Condukt.Sandbox.NetworkPolicy`-capable sandboxes
+  (today, `Condukt.Sandbox.Kubernetes` via the `condukt-egress` sidecar) and
   surfaced through telemetry on the BEAM side. See
-  `Condukt.Sandbox.Net` for the event taxonomy.
+  `Condukt.Sandbox.NetworkPolicy` for the event taxonomy.
 
   Method, path, request headers, request body sha256/preview, response
   status, response headers, response body sha256/preview, and byte counts
@@ -14,7 +14,7 @@ defmodule Condukt.Sandbox.Net.Request do
   remain `nil`.
 
   Bodies and headers may be partially redacted by the sidecar according to
-  the `Condukt.Sandbox.Net.Policy` redaction patterns.
+  the `Condukt.Sandbox.NetworkPolicy` redaction patterns.
   """
 
   defstruct id: nil,

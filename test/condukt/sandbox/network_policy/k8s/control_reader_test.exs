@@ -1,8 +1,8 @@
-defmodule Condukt.Sandbox.Net.K8s.ControlReaderTest do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReaderTest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Sandbox.Net.Event
-  alias Condukt.Sandbox.Net.K8s.ControlReader
+  alias Condukt.Sandbox.NetworkPolicy.Event
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlReader
 
   describe "decode_line/1" do
     test "decodes a full event" do

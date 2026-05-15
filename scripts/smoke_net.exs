@@ -1,4 +1,4 @@
-# Smoke test for `Condukt.Sandbox.Net` end-to-end against a kind cluster.
+# Smoke test for `Condukt.Sandbox.NetworkPolicy` end-to-end against a kind cluster.
 #
 # Prereqs:
 #
@@ -13,7 +13,7 @@
 #
 # What it checks:
 #
-#   1. The Condukt.Sandbox.Net.K8s integration applies a Secret +
+#   1. The Condukt.Sandbox.NetworkPolicy.K8s integration applies a Secret +
 #      NetworkPolicy + augmented pod spec to the cluster.
 #   2. The pod's init container (`condukt-net-init`) runs the iptables
 #      rules and exits 0.
@@ -34,8 +34,7 @@ Mix.start()
 Application.ensure_all_started(:k8s)
 Application.ensure_all_started(:logger)
 
-alias Condukt.Sandbox.Net.Policy
-alias Condukt.Sandbox.Net.Rule
+alias Condukt.Sandbox.NetworkPolicy
 
 session_id = "smoke-" <> (System.unique_integer([:positive]) |> Integer.to_string())
 namespace = "default"
@@ -60,10 +59,10 @@ decider = fn _ctx, req ->
   end
 end
 
-policy = %Policy{
+policy = %NetworkPolicy{
   rules: [
-    {Rule.AllowHosts, hosts: ["api.github.com"]},
-    {Rule.Decide, fun: decider}
+    allow: ["api.github.com"],
+    decide: decider
   ],
   decide_timeout: 5_000,
   default: :deny
@@ -80,10 +79,8 @@ start_result =
     conn: conn,
     ready_timeout: 120_000,
     heartbeat_interval: false,
-    net: [
-      policy: policy,
-      image: "condukt-egress:smoke"
-    ]
+    network_policy: policy,
+    network_policy_image: "condukt-egress:smoke"
   )
 
 case start_result do

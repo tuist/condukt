@@ -1,7 +1,7 @@
-defmodule Condukt.Sandbox.Net.RequestTest do
+defmodule Condukt.Sandbox.NetworkPolicy.RequestTest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Sandbox.Net.Request
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
   describe "from_json/1" do
     test "decodes a minimal request" do

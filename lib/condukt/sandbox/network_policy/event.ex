@@ -1,4 +1,4 @@
-defmodule Condukt.Sandbox.Net.Event do
+defmodule Condukt.Sandbox.NetworkPolicy.Event do
   @moduledoc """
   An event the egress runtime emits as telemetry per request lifecycle.
 
@@ -11,12 +11,12 @@ defmodule Condukt.Sandbox.Net.Event do
   decision) can surface live in-flight requests to a UI or human reviewer.
   """
 
-  alias Condukt.Sandbox.Net.Request
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
   defstruct [:kind, :request, :reason, at: nil]
 
   @doc """
-  Builds an event from a decoded `Condukt.Sandbox.Net.Request` plus kind.
+  Builds an event from a decoded `Condukt.Sandbox.NetworkPolicy.Request` plus kind.
   """
   def new(kind, %Request{} = request, opts \\ []) do
     %__MODULE__{

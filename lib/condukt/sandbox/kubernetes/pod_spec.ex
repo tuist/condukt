@@ -1,7 +1,7 @@
 defmodule Condukt.Sandbox.Kubernetes.PodSpec do
   @moduledoc false
 
-  alias Condukt.Sandbox.Net.K8s.Manifests
+  alias Condukt.Sandbox.NetworkPolicy.K8s.Manifests
 
   # Builds the Pod manifest map handed to `K8s.Client.create/1`.
   #
@@ -15,11 +15,12 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
   #   own. All real work happens via `kubectl exec`-style streaming.
   # - `activeDeadlineSeconds` as a K8s-side hard ceiling for abandoned pods.
   #
-  # When `:net` is non-nil, the pod gains the Sandbox.Net init container,
-  # sidecar container, and Secret volume. The workspace container picks up
-  # an additional read-only volume mount that exposes the per-session CA
-  # so cooperative images can install it into their trust store at
-  # startup.
+  # When `:net` is non-nil (already resolved from the
+  # `:network_policy` option), the pod gains the network-policy init
+  # container, sidecar container, and Secret volume. The workspace
+  # container picks up an additional read-only volume mount that
+  # exposes the per-session CA so untouched images cooperate with the
+  # MITM at startup.
 
   @workspace_volume "condukt-workspace"
   @container_name "agent"
@@ -102,7 +103,7 @@ defmodule Condukt.Sandbox.Kubernetes.PodSpec do
 
   # Workspace env is the merge of two sources:
   #
-  #   1. Sandbox.Net CA env vars (NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE,
+  #   1. NetworkPolicy CA env vars (NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE,
   #      SSL_CERT_FILE, PIP_CERT, CURL_CA_BUNDLE, GIT_SSL_CAINFO), injected
   #      when `:net` is configured so untouched base images cooperate
   #      with the MITM without any preparation step.

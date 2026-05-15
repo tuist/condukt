@@ -1,11 +1,10 @@
-defmodule Condukt.Sandbox.Net.DeciderTest do
+defmodule Condukt.Sandbox.NetworkPolicy.DeciderTest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Sandbox.Net.Context
-  alias Condukt.Sandbox.Net.Decider
-  alias Condukt.Sandbox.Net.Policy
-  alias Condukt.Sandbox.Net.Request
-  alias Condukt.Sandbox.Net.Rule
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.Context
+  alias Condukt.Sandbox.NetworkPolicy.Decider
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
   defp request(host \\ "evil.com") do
     %Request{id: "r1", host: host, port: 443, started_at: DateTime.utc_now()}
@@ -15,9 +14,9 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
     %Context{session_id: session_id, recent_messages: [], request: request(), metadata: %{}}
   end
 
-  defp policy_with(decider_opts, extra \\ []) do
-    %Policy{
-      rules: [{Rule.Decide, decider_opts}],
+  defp policy_with(decider, extra \\ []) do
+    %NetworkPolicy{
+      rules: [decide: decider],
       decide_timeout: Keyword.get(extra, :decide_timeout, 5_000),
       decision_cache: Keyword.get(extra, :decision_cache, true),
       default: Keyword.get(extra, :default, :deny)
@@ -26,12 +25,12 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
 
   describe "decide/4 with function decider" do
     test "allow" do
-      policy = policy_with(fun: fn _, _ -> :allow end)
+      policy = policy_with(fn _, _ -> :allow end)
       assert {:allow, %{}} = Decider.decide(policy, context(), request(), %{})
     end
 
     test "deny passes reason through" do
-      policy = policy_with(fun: fn _, _ -> {:deny, :nope} end)
+      policy = policy_with(fn _, _ -> {:deny, :nope} end)
       assert {{:deny, :nope}, _} = Decider.decide(policy, context(), request(), %{})
     end
 
@@ -39,12 +38,10 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
       test_pid = self()
 
       policy =
-        policy_with(
-          fun: fn ctx, req ->
-            send(test_pid, {:invoked, ctx, req})
-            :allow
-          end
-        )
+        policy_with(fn ctx, req ->
+          send(test_pid, {:invoked, ctx, req})
+          :allow
+        end)
 
       Decider.decide(policy, context("s99"), request("api.example.com"), %{})
 
@@ -52,24 +49,24 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
     end
   end
 
-  describe "decide/4 with MF tuple" do
+  describe "decide/4 with {Mod, fun} tuple" do
     defmodule Allower do
       def allow_all(_ctx, _req), do: :allow
       def deny_all(_ctx, _req), do: {:deny, :nope_mf}
     end
 
     test "calls the named function" do
-      policy = policy_with(mf: {Allower, :allow_all})
+      policy = policy_with({Allower, :allow_all})
       assert {:allow, _} = Decider.decide(policy, context(), request(), %{})
 
-      policy = policy_with(mf: {Allower, :deny_all})
+      policy = policy_with({Allower, :deny_all})
       assert {{:deny, :nope_mf}, _} = Decider.decide(policy, context(), request(), %{})
     end
   end
 
   describe "decide/4 with behaviour-backed decider" do
     defmodule BehaviourDecider do
-      @behaviour Condukt.Sandbox.Net.Decider
+      @behaviour Condukt.Sandbox.NetworkPolicy.Decider
 
       @impl true
       def decide(_ctx, _req, opts) do
@@ -77,12 +74,24 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
       end
     end
 
-    test "calls module.decide/3 with opts" do
-      policy = policy_with(module: BehaviourDecider, opts: [result: :allow])
+    test "calls module.decide/3 with opts when given {module, opts}" do
+      policy = policy_with({BehaviourDecider, result: :allow})
       assert {:allow, _} = Decider.decide(policy, context(), request(), %{})
 
-      policy = policy_with(module: BehaviourDecider, opts: [result: {:deny, :foo}])
+      policy = policy_with({BehaviourDecider, result: {:deny, :foo}})
       assert {{:deny, :foo}, _} = Decider.decide(policy, context(), request(), %{})
+    end
+
+    test "calls module.decide/3 with [] when the module is given alone" do
+      defmodule NoOpts do
+        @behaviour Condukt.Sandbox.NetworkPolicy.Decider
+
+        @impl true
+        def decide(_ctx, _req, []), do: :allow
+      end
+
+      policy = policy_with(NoOpts)
+      assert {:allow, _} = Decider.decide(policy, context(), request(), %{})
     end
   end
 
@@ -90,12 +99,10 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
     test "denies with :decider_timeout when the decider exceeds the limit" do
       policy =
         policy_with(
-          [
-            fun: fn _, _ ->
-              Process.sleep(200)
-              :allow
-            end
-          ],
+          fn _, _ ->
+            Process.sleep(200)
+            :allow
+          end,
           decide_timeout: 50,
           default: :deny
         )
@@ -109,12 +116,10 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
       counter = :counters.new(1, [])
 
       policy =
-        policy_with(
-          fun: fn _, _ ->
-            :counters.add(counter, 1, 1)
-            :allow
-          end
-        )
+        policy_with(fn _, _ ->
+          :counters.add(counter, 1, 1)
+          :allow
+        end)
 
       {decision, cache} = Decider.decide(policy, context(), request(), %{})
       assert decision == :allow
@@ -130,12 +135,10 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
 
       policy =
         policy_with(
-          [
-            fun: fn _, _ ->
-              :counters.add(counter, 1, 1)
-              :allow
-            end
-          ],
+          fn _, _ ->
+            :counters.add(counter, 1, 1)
+            :allow
+          end,
           decision_cache: false
         )
 
@@ -148,26 +151,22 @@ defmodule Condukt.Sandbox.Net.DeciderTest do
 
   describe "decide/4 error handling" do
     test "crashing decider denies with :decider_error" do
-      policy =
-        policy_with(fun: fn _, _ -> raise "boom" end)
-
+      policy = policy_with(fn _, _ -> raise "boom" end)
       assert {{:deny, :decider_error}, _} = Decider.decide(policy, context(), request(), %{})
     end
 
     test "non-decision return denies with :decider_bad_return" do
-      policy =
-        policy_with(fun: fn _, _ -> :not_a_decision end)
-
+      policy = policy_with(fn _, _ -> :not_a_decision end)
       assert {{:deny, :decider_bad_return}, _} = Decider.decide(policy, context(), request(), %{})
     end
   end
 
   describe "decide/4 with no decide rule" do
     test "returns the default action immediately" do
-      policy = %Policy{rules: [], default: :allow}
+      policy = %NetworkPolicy{rules: [], default: :allow}
       assert {:allow, _} = Decider.decide(policy, context(), request(), %{})
 
-      policy = %Policy{rules: [], default: :deny}
+      policy = %NetworkPolicy{rules: [], default: :deny}
       assert {{:deny, :default_deny}, _} = Decider.decide(policy, context(), request(), %{})
     end
   end

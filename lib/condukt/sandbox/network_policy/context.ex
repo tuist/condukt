@@ -1,6 +1,6 @@
-defmodule Condukt.Sandbox.Net.Context do
+defmodule Condukt.Sandbox.NetworkPolicy.Context do
   @moduledoc """
-  Snapshot of session state handed to a `Condukt.Sandbox.Net.Policy`
+  Snapshot of session state handed to a `Condukt.Sandbox.NetworkPolicy`
   `:decide` callback per outbound request.
 
   The runtime assembles this struct when an outbound connection does not
@@ -15,7 +15,7 @@ defmodule Condukt.Sandbox.Net.Context do
       from the session, oldest first. Redaction (`Condukt.Redactor`)
       is applied before they leave the session, so the decider sees
       whatever the rest of the system would.
-    * `:request` — the `Condukt.Sandbox.Net.Request` the agent is about
+    * `:request` — the `Condukt.Sandbox.NetworkPolicy.Request` the agent is about
       to make. Method, path, and request headers are populated where
       the sidecar derived them pre-decision. Body is not in the
       context (kept out to bound the decider's input cost).

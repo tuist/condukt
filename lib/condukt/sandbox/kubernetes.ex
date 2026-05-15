@@ -119,8 +119,9 @@ defmodule Condukt.Sandbox.Kubernetes do
   alias Condukt.Sandbox.Kubernetes.PodSpec
   alias Condukt.Sandbox.Kubernetes.State
   alias Condukt.Sandbox.Kubernetes.WorkspaceSource
-  alias Condukt.Sandbox.Net.K8s, as: NetK8s
-  alias Condukt.Sandbox.Net.K8s.ControlBridge
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.K8s, as: NetK8s
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -420,15 +421,18 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
-  defp prepare_net(_conn, %{net: nil} = config), do: {:ok, config}
+  defp prepare_net(_conn, %{network_policy: nil} = config), do: {:ok, config}
 
-  defp prepare_net(conn, %{net: net_opts} = config) when is_list(net_opts) or is_map(net_opts) do
-    with {:ok, prepared} <-
-           NetK8s.prepare(%{
-             session_id: config.id,
-             namespace: config.namespace,
-             net_opts: net_opts
-           }),
+  defp prepare_net(conn, %{network_policy: %NetworkPolicy{} = policy} = config) do
+    prepare_opts =
+      %{
+        session_id: config.id,
+        namespace: config.namespace,
+        policy: policy
+      }
+      |> maybe_put(:image, Map.get(config, :network_policy_image))
+
+    with {:ok, prepared} <- NetK8s.prepare(prepare_opts),
          :ok <- NetK8s.apply(conn, prepared) do
       {:ok,
        Map.merge(config, %{
@@ -438,6 +442,13 @@ defmodule Condukt.Sandbox.Kubernetes do
        })}
     end
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp normalize_network_policy(nil), do: nil
+  defp normalize_network_policy(%NetworkPolicy{} = policy), do: policy
+  defp normalize_network_policy(opts), do: NetworkPolicy.new(opts)
 
   defp prepare_and_start(state, config) do
     with {:ok, state} <- WorkspaceSource.prepare(state, config),
@@ -473,10 +484,9 @@ defmodule Condukt.Sandbox.Kubernetes do
     end
   end
 
-  defp has_decide_rule?(%Condukt.Sandbox.Net.Policy{rules: rules}) do
+  defp has_decide_rule?(%NetworkPolicy{rules: rules}) do
     Enum.any?(rules, fn
-      {Condukt.Sandbox.Net.Rule.Decide, _opts} -> true
-      Condukt.Sandbox.Net.Rule.Decide -> true
+      {:decide, _callable} -> true
       _ -> false
     end)
   end
@@ -655,7 +665,8 @@ defmodule Condukt.Sandbox.Kubernetes do
          ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
          on_stale: Keyword.get(opts, :on_stale, :error),
          delete_on_shutdown: delete_on_shutdown,
-         net: Keyword.get(opts, :net),
+         network_policy: normalize_network_policy(Keyword.get(opts, :network_policy)),
+         network_policy_image: Keyword.get(opts, :network_policy_image),
          owner_pid: Keyword.get(opts, :owner_pid)
        }}
     end

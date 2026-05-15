@@ -1,7 +1,7 @@
 //! `condukt-egress control-bridge` subcommand.
 //!
 //! Pumps NDJSON between stdin/stdout and the running sidecar proxy's
-//! control TCP port. The BEAM-side `Condukt.Sandbox.Net.K8s.ControlBridge`
+//! control TCP port. The BEAM-side `Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge`
 //! invokes this subcommand via the Kubernetes `pods/exec` API so the
 //! existing exec websocket plumbing in `:k8s` carries the wire without
 //! needing a port-forward implementation.

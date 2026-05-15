@@ -1,4 +1,4 @@
-defmodule Condukt.Sandbox.Net.CA do
+defmodule Condukt.Sandbox.NetworkPolicy.CA do
   @moduledoc """
   Per-session ephemeral Certificate Authority used by the egress sidecar
   for TLS interception.
@@ -13,7 +13,7 @@ defmodule Condukt.Sandbox.Net.CA do
 
   One CA is generated per session at pod creation:
 
-      {:ok, ca} = Condukt.Sandbox.Net.CA.generate(common_name: "session-abc")
+      {:ok, ca} = Condukt.Sandbox.NetworkPolicy.CA.generate(common_name: "session-abc")
       ca.cert_pem  # mounted as a K8s Secret to the sidecar
       ca.key_pem   # mounted as a K8s Secret to the sidecar
       ca.cert_pem  # also mounted (read-only) to the workspace at /etc/condukt/ca.pem

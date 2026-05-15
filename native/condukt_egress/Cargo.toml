@@ -3,7 +3,7 @@ name = "condukt_egress"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Egress sidecar for Condukt's Sandbox.Net layer: transparent proxy plus iptables setup"
+description = "Egress sidecar for Condukt's network policy layer: transparent proxy plus iptables setup"
 publish = false
 
 [[bin]]

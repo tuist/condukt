@@ -1,7 +1,7 @@
-defmodule Condukt.Sandbox.Net.CATest do
+defmodule Condukt.Sandbox.NetworkPolicy.CATest do
   use ExUnit.Case, async: true
 
-  alias Condukt.Sandbox.Net.CA
+  alias Condukt.Sandbox.NetworkPolicy.CA
 
   describe "generate/1" do
     test "returns a struct with PEM-encoded cert and key" do

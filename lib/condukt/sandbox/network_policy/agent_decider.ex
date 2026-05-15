@@ -1,13 +1,13 @@
-defmodule Condukt.Sandbox.Net.AgentDecider do
+defmodule Condukt.Sandbox.NetworkPolicy.AgentDecider do
   @moduledoc """
-  `Condukt.Sandbox.Net.Decider` implementation that delegates to a
+  `Condukt.Sandbox.NetworkPolicy.Decider` implementation that delegates to a
   `Condukt`-defined agent module.
 
   Use this when you want the decision to come from a model with the
   session context in front of it:
 
-      %Condukt.Sandbox.Net.Policy{
-        decide: {Condukt.Sandbox.Net.AgentDecider, agent: MyApp.NetGuard}
+      %Condukt.Sandbox.NetworkPolicy{
+        decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}
       }
 
   Required option:
@@ -31,10 +31,10 @@ defmodule Condukt.Sandbox.Net.AgentDecider do
   model provider without going through the same gate they decide on.
   """
 
-  @behaviour Condukt.Sandbox.Net.Decider
+  @behaviour Condukt.Sandbox.NetworkPolicy.Decider
 
-  alias Condukt.Sandbox.Net.Context
-  alias Condukt.Sandbox.Net.Request
+  alias Condukt.Sandbox.NetworkPolicy.Context
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
   @impl true
   def decide(%Context{} = context, %Request{} = request, opts) do

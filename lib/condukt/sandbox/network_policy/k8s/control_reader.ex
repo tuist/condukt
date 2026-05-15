@@ -1,4 +1,4 @@
-defmodule Condukt.Sandbox.Net.K8s.ControlReader do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   @moduledoc false
 
   # GenServer that reads NDJSON events from the `condukt-egress` sidecar's
@@ -16,9 +16,9 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReader do
 
   use GenServer
 
-  alias Condukt.Sandbox.Net
-  alias Condukt.Sandbox.Net.Event
-  alias Condukt.Sandbox.Net.Request
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.Event
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
   # ============================================================================
   # API
@@ -29,7 +29,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReader do
   end
 
   @doc """
-  Decode a single NDJSON event line into a `Condukt.Sandbox.Net.Event`.
+  Decode a single NDJSON event line into a `Condukt.Sandbox.NetworkPolicy.Event`.
 
   The kind field is converted from the snake_case wire format
   (`request_opened`, `request_closed`, etc.) to the matching atom.
@@ -106,11 +106,11 @@ defmodule Condukt.Sandbox.Net.K8s.ControlReader do
   defp log_drop(reason) do
     require Logger
 
-    Logger.warning(fn -> "[sandbox.net.k8s] dropping malformed event line: #{inspect(reason)}" end)
+    Logger.warning(fn -> "[sandbox.network_policy.k8s] dropping malformed event line: #{inspect(reason)}" end)
   end
 
   defp deliver(policy, event) do
-    Net.deliver(policy, event.kind, event.request, reason: event.reason, at: event.at)
+    NetworkPolicy.deliver(policy, event.kind, event.request, reason: event.reason, at: event.at)
   end
 
   defp split_lines(buffer) do

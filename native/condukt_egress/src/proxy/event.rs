@@ -1,11 +1,11 @@
 //! Wire format for messages between the sidecar and the BEAM-side
-//! `Condukt.Sandbox.Net.K8s.ControlBridge`. NDJSON, one frame per
+//! `Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge`. NDJSON, one frame per
 //! line. Tagged with `"type"` so the channel can carry multiple
 //! message kinds without ambiguity.
 //!
 //! Frame kinds:
 //!
-//!   * `event` — sidecar -> BEAM. A `Condukt.Sandbox.Net.Event`
+//!   * `event` — sidecar -> BEAM. A `Condukt.Sandbox.NetworkPolicy.Event`
 //!     wrapping a request's lifecycle step.
 //!   * `decision_request` — sidecar -> BEAM. Asks the BEAM to make a
 //!     policy decision about a request the sidecar is about to

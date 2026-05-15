@@ -1,8 +1,8 @@
 # condukt-egress
 
-Sidecar binary for the `Condukt.Sandbox.Net` egress layer. Used by
-`Condukt.Sandbox.Kubernetes` when an agent session declares an egress
-policy.
+Sidecar binary for the `Condukt.Sandbox.NetworkPolicy` egress layer.
+Used by `Condukt.Sandbox.Kubernetes` when an agent session declares
+a network policy.
 
 ## Subcommands
 

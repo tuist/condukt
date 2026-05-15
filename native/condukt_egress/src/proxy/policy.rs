@@ -1,4 +1,4 @@
-//! Sidecar-side mirror of `Condukt.Sandbox.Net.Policy`.
+//! Sidecar-side mirror of `Condukt.Sandbox.NetworkPolicy`.
 //!
 //! The BEAM authors the policy and bakes it into the pod as a JSON
 //! file at `/etc/condukt/policy.json`. The sidecar reads it once at
@@ -12,8 +12,8 @@
 //!
 //! Three rule types are sidecar-evaluable today:
 //!
-//!   * `allow_hosts` matches against a glob list, allow on hit.
-//!   * `deny_hosts` matches against a glob list, deny on hit.
+//!   * `allow` matches against a host glob list, allow on hit.
+//!   * `deny` matches against a host glob list, deny on hit.
 //!   * `decide` defers to the BEAM via the control channel.
 //!
 //! Policy is immutable once the pod starts.
@@ -36,19 +36,19 @@ pub struct Policy {
 
     /// Maximum time (milliseconds) the sidecar waits for a `decision`
     /// reply from the BEAM when a `decide` rule fires. Mirrors
-    /// `Condukt.Sandbox.Net.Policy.decide_timeout`.
+    /// `Condukt.Sandbox.NetworkPolicy.decide_timeout`.
     #[serde(default = "default_decide_timeout_ms")]
     pub decide_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum Rule {
-    AllowHosts {
+    Allow {
         #[serde(default)]
         hosts: Vec<String>,
     },
-    DenyHosts {
+    Deny {
         #[serde(default)]
         hosts: Vec<String>,
     },
@@ -103,20 +103,20 @@ impl DenyReason {
 
 impl Policy {
     /// Walk the rule pipeline against a hostname. Mirrors the BEAM-side
-    /// `Condukt.Sandbox.Net.Policy.evaluate/3` for the host-only rules.
-    /// Returns the first non-`continue` outcome, or the default action
-    /// if every rule passes.
+    /// `Condukt.Sandbox.NetworkPolicy.evaluate/3` for the host-only
+    /// rules. Returns the first non-`continue` outcome, or the default
+    /// action if every rule passes.
     pub fn evaluate(&self, host: &str) -> Decision {
         let host_lc = host.to_ascii_lowercase();
 
         for rule in &self.rules {
             match rule {
-                Rule::AllowHosts { hosts } => {
+                Rule::Allow { hosts } => {
                     if matches_any(&host_lc, hosts) {
                         return Decision::Allow;
                     }
                 }
-                Rule::DenyHosts { hosts } => {
+                Rule::Deny { hosts } => {
                     if matches_any(&host_lc, hosts) {
                         return Decision::Deny(DenyReason::MatchedDenyList);
                     }
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn allow_hosts_short_circuits() {
         let policy = p(
-            vec![Rule::AllowHosts {
+            vec![Rule::Allow {
                 hosts: vec!["api.github.com".into()],
             }],
             Action::Deny,
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn deny_hosts_short_circuits() {
         let policy = p(
-            vec![Rule::DenyHosts {
+            vec![Rule::Deny {
                 hosts: vec!["secret.example.com".into()],
             }],
             Action::Deny,
@@ -264,10 +264,10 @@ mod tests {
     fn order_matters() {
         let deny_first = p(
             vec![
-                Rule::DenyHosts {
+                Rule::Deny {
                     hosts: vec!["evil.com".into()],
                 },
-                Rule::AllowHosts {
+                Rule::Allow {
                     hosts: vec!["evil.com".into()],
                 },
             ],
@@ -280,10 +280,10 @@ mod tests {
 
         let allow_first = p(
             vec![
-                Rule::AllowHosts {
+                Rule::Allow {
                     hosts: vec!["evil.com".into()],
                 },
-                Rule::DenyHosts {
+                Rule::Deny {
                     hosts: vec!["evil.com".into()],
                 },
             ],
@@ -302,7 +302,7 @@ mod tests {
     fn allow_hosts_before_decide_short_circuits_the_round_trip() {
         let policy = p(
             vec![
-                Rule::AllowHosts {
+                Rule::Allow {
                     hosts: vec!["api.github.com".into()],
                 },
                 Rule::Decide,
@@ -329,8 +329,8 @@ mod tests {
     fn parses_wire_format() {
         let json = r#"{
           "rules": [
-            {"type": "deny_hosts", "hosts": ["evil.com"]},
-            {"type": "allow_hosts", "hosts": ["api.github.com"]},
+            {"type": "deny", "hosts": ["evil.com"]},
+            {"type": "allow", "hosts": ["api.github.com"]},
             {"type": "decide"}
           ],
           "default": "deny",

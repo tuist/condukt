@@ -1,4 +1,4 @@
-defmodule Condukt.Sandbox.Net.Hosts do
+defmodule Condukt.Sandbox.NetworkPolicy.Hosts do
   @moduledoc """
   Host glob matching shared by the `AllowHosts` and `DenyHosts` rules.
 

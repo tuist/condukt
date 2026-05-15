@@ -1,4 +1,4 @@
-defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
+defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   @moduledoc false
 
   # GenServer that owns the bidirectional NDJSON control channel between
@@ -22,14 +22,13 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
 
   use GenServer
 
-  alias Condukt.Sandbox.Net
-  alias Condukt.Sandbox.Net.Context
-  alias Condukt.Sandbox.Net.Decider
-  alias Condukt.Sandbox.Net.Event
-  alias Condukt.Sandbox.Net.Policy
-  alias Condukt.Sandbox.Net.Request
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.Context
+  alias Condukt.Sandbox.NetworkPolicy.Decider
+  alias Condukt.Sandbox.NetworkPolicy.Event
+  alias Condukt.Sandbox.NetworkPolicy.Request
 
-  @sidecar_container Condukt.Sandbox.Net.K8s.Manifests.sidecar_container_name()
+  @sidecar_container Condukt.Sandbox.NetworkPolicy.K8s.Manifests.sidecar_container_name()
 
   # ============================================================================
   # API
@@ -90,7 +89,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
       {:error, reason} ->
         require Logger
 
-        Logger.warning(fn -> "[sandbox.net.k8s] control bridge exec failed: #{inspect(reason)}" end)
+        Logger.warning(fn -> "[sandbox.network_policy.k8s] control bridge exec failed: #{inspect(reason)}" end)
         {:stop, {:exec_failed, reason}}
     end
   end
@@ -134,7 +133,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
       {:stderr, data} when is_binary(data) ->
         require Logger
 
-        Logger.debug(fn -> "[sandbox.net.k8s] bridge stderr: #{inspect(data)}" end)
+        Logger.debug(fn -> "[sandbox.network_policy.k8s] bridge stderr: #{inspect(data)}" end)
         collector_loop(parent, ref)
 
       :close ->
@@ -178,13 +177,13 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
       {:ok, other} ->
         require Logger
 
-        Logger.warning(fn -> "[sandbox.net.k8s] unknown frame type: #{inspect(other)}" end)
+        Logger.warning(fn -> "[sandbox.network_policy.k8s] unknown frame type: #{inspect(other)}" end)
         state
 
       {:error, reason} ->
         require Logger
 
-        Logger.warning(fn -> "[sandbox.net.k8s] bad frame: #{inspect(reason)} line=#{inspect(line)}" end)
+        Logger.warning(fn -> "[sandbox.network_policy.k8s] bad frame: #{inspect(reason)} line=#{inspect(line)}" end)
         state
     end
   end
@@ -192,7 +191,7 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
   defp deliver_event(policy, frame) do
     with {:ok, request} <- Request.from_json(frame["request"] || %{}),
          {:ok, kind} <- decode_kind(frame["kind"]) do
-      Net.deliver(policy, kind, request, reason: frame["reason"])
+      NetworkPolicy.deliver(policy, kind, request, reason: frame["reason"])
     end
   end
 
@@ -314,7 +313,4 @@ defmodule Condukt.Sandbox.Net.K8s.ControlBridge do
         {:error, {:unexpected_frame, other}}
     end
   end
-
-  # Suppress unused-alias warning
-  _ = Policy
 end

@@ -1,10 +1,10 @@
-# Sandbox Net
+# Network Policy
 
-`Condukt.Sandbox.Net` is the per-session outbound egress audit and
-policy layer for the Kubernetes sandbox. Every HTTPS request the
-workspace makes is intercepted, evaluated against a policy, and either
-forwarded to the real destination or refused. Method, path, headers,
-and body show up as telemetry on the BEAM side.
+`Condukt.Sandbox.NetworkPolicy` is the per-session outbound egress
+audit and policy layer for the Kubernetes sandbox. Every HTTPS request
+the workspace makes is intercepted, evaluated against a policy, and
+either forwarded to the real destination or refused. Method, path,
+headers, and body show up as telemetry on the BEAM side.
 
 The runtime is shaped like a `Plug` pipeline. You declare an ordered
 list of rules, and a per-request walk through the pipeline produces a
@@ -23,18 +23,14 @@ defmodule MyApp.CodingAgent do
       Condukt.Sandbox.Kubernetes,
       namespace: "agents",
       image: "ghcr.io/myorg/agent:1.4",
-      net: [
-        policy: %Condukt.Sandbox.Net.Policy{
-          rules: [
-            {Condukt.Sandbox.Net.Rule.DenyHosts, hosts: ["*.internal.example.com"]},
-            {Condukt.Sandbox.Net.Rule.AllowHosts, hosts: ["api.github.com", "*.openai.com"]},
-            {Condukt.Sandbox.Net.Rule.Decide,
-             module: Condukt.Sandbox.Net.AgentDecider,
-             opts: [agent: MyApp.NetGuard]}
-          ],
-          default: :deny
-        }
-      ]
+      network_policy: %Condukt.Sandbox.NetworkPolicy{
+        rules: [
+          deny: ["*.internal.example.com"],
+          allow: ["api.github.com", "*.openai.com"],
+          decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}
+        ],
+        default: :deny
+      }
     }
   end
 end
@@ -45,7 +41,7 @@ That is the whole API surface most callers need to know about.
 ## Policy
 
 ```elixir
-%Condukt.Sandbox.Net.Policy{
+%Condukt.Sandbox.NetworkPolicy{
   rules: [...],
   default: :deny,
   decide_timeout: 5_000,
@@ -55,68 +51,53 @@ That is the whole API surface most callers need to know about.
 }
 ```
 
-`:rules` is the ordered pipeline. The runtime walks it from top to
-bottom, asking each rule for an opinion on the current request. Each
-rule returns one of:
+`:rules` is the ordered pipeline, expressed as a keyword list. The
+runtime walks it from top to bottom; the first rule that matches
+returns the decision. If no rule matches, the policy's `:default`
+action fires. The default is `:deny`, which fails closed.
 
-  * `:allow` — let the request through, stop walking.
-  * `{:deny, reason}` — refuse the request, stop walking.
-  * `:continue` — pass to the next rule.
+Three rule kinds ship out of the box.
 
-If every rule returns `:continue`, the policy's `:default` action
-fires. The default is `:deny`, which fails closed.
-
-Three rule modules ship out of the box.
-
-### `Rule.AllowHosts` and `Rule.DenyHosts`
+### `:allow` and `:deny`
 
 ```elixir
-{Condukt.Sandbox.Net.Rule.AllowHosts, hosts: ["api.github.com", "*.openai.com"]}
-{Condukt.Sandbox.Net.Rule.DenyHosts, hosts: ["*.internal.example.com"]}
+allow: ["api.github.com", "*.openai.com"]
+deny: ["*.internal.example.com"]
 ```
 
 Both match the request's host against a list of glob patterns. `*`
-matches a single DNS label, `**` matches one or more. `AllowHosts`
-returns `:allow` on a hit and `:continue` otherwise; `DenyHosts` is
-the symmetric deny.
+matches a single DNS label, `**` matches one or more.
 
-Because order matters, you can pin per-policy preferences. A
-`DenyHosts` for `evil.example.com` followed by an `AllowHosts` for
-`*.example.com` denies the one host you care about and allows the
-rest. Swap the order and the deny wins for everyone.
+Because order matters, you can pin per-policy preferences. A `:deny`
+for `evil.example.com` followed by an `:allow` for `*.example.com`
+denies the one host you care about and allows the rest. Swap the order
+and the deny wins for everyone.
 
-### `Rule.Decide`
+### `:decide`
 
 ```elixir
-{Condukt.Sandbox.Net.Rule.Decide, fun: fn _ctx, _req -> :allow end}
-{Condukt.Sandbox.Net.Rule.Decide, mf: {MyApp.Guard, :decide}}
-{Condukt.Sandbox.Net.Rule.Decide,
- module: Condukt.Sandbox.Net.AgentDecider,
- opts: [agent: MyApp.NetGuard]}
+decide: fn _ctx, _req -> :allow end
+decide: {MyApp.Guard, :decide}
+decide: MyApp.Decider
+decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}
 ```
 
-The decide rule defers to a callable. Three shapes are accepted: a
-2-arity function under `:fun`, an `{module, function}` MFA tuple under
-`:mf`, or a behaviour-backed `:module` with `:opts`. The behaviour is
-`Condukt.Sandbox.Net.Decider`.
+The decide rule defers to a callable. Four shapes are accepted: a
+2-arity function, `{module, function}`, a module alone (calls
+`module.decide(ctx, req, [])`), and `{module, opts}` (calls
+`module.decide(ctx, req, opts)`). The behaviour is
+`Condukt.Sandbox.NetworkPolicy.Decider`.
 
-The decide rule never returns `:continue`. Whatever the callable
-returns becomes the request's decision. If you want a tiered policy
-where the agent only sees uncertain hosts, put your narrower rules
-ahead of the decide rule.
-
-### Custom rules
-
-Any module implementing the `Condukt.Sandbox.Net.Rule` behaviour can
-appear in the pipeline. The callback receives the session context, the
-request, and the opts the rule was configured with. Returns must be
-`:allow`, `{:deny, reason}`, or `:continue`.
+The decide rule is terminal. Whatever the callable returns becomes the
+request's decision. If you want a tiered policy where the decider only
+sees uncertain hosts, put the narrower `:allow` and `:deny` rules
+ahead of `decide:`.
 
 ## The decider context
 
-When `Rule.Decide` invokes a callable, it hands the callable a
-`Condukt.Sandbox.Net.Context` struct alongside the request. The context
-carries:
+When a `:decide` rule fires, the runtime hands the callable a
+`Condukt.Sandbox.NetworkPolicy.Context` struct alongside the request.
+The context carries:
 
   * `:session_id` — the gated session's id.
   * `:recent_messages` — the last `policy.context_messages` entries
@@ -128,10 +109,10 @@ carries:
 
 ## Agent deciders
 
-`Condukt.Sandbox.Net.AgentDecider` is a thin wrapper that runs a
-`Condukt`-defined agent as a decider. The agent receives the context
-and the request as JSON and is expected to return structured output of
-the form `%{"decision" => "allow" | "deny", "reason" => "..."}`.
+`Condukt.Sandbox.NetworkPolicy.AgentDecider` is a thin wrapper that
+runs a `Condukt`-defined agent as a decider. The agent receives the
+context and the request as JSON and is expected to return structured
+output of the form `%{"decision" => "allow" | "deny", "reason" => "..."}`.
 
 ```elixir
 defmodule MyApp.NetGuard do
@@ -173,19 +154,19 @@ The sidecar reports every request lifecycle step over telemetry on the
 BEAM side. Attach handlers with `:telemetry.attach/4`:
 
 ```
-[:condukt, :sandbox, :net, :request_opened]
-[:condukt, :sandbox, :net, :request_allowed]
-[:condukt, :sandbox, :net, :request_denied]
-[:condukt, :sandbox, :net, :request_closed]
+[:condukt, :sandbox, :network_policy, :request_opened]
+[:condukt, :sandbox, :network_policy, :request_allowed]
+[:condukt, :sandbox, :network_policy, :request_denied]
+[:condukt, :sandbox, :network_policy, :request_closed]
 ```
 
 Measurements: `%{bytes_in: integer, bytes_out: integer}`.
-Metadata: `%{request: Condukt.Sandbox.Net.Request.t(), reason: atom() | binary() | nil}`.
+Metadata: `%{request: Condukt.Sandbox.NetworkPolicy.Request.t(), reason: atom() | binary() | nil}`.
 
-`:request` carries the full `Condukt.Sandbox.Net.Request`, including
-method, path, request headers, response status, and timestamps where
-the sidecar could derive them. Pipe these events into whatever
-observability stack you already run.
+`:request` carries the full `Condukt.Sandbox.NetworkPolicy.Request`,
+including method, path, request headers, response status, and
+timestamps where the sidecar could derive them. Pipe these events into
+whatever observability stack you already run.
 
 ## Workspace images
 
@@ -205,7 +186,7 @@ Two complementary mechanisms ship CA trust into the pod:
   2. **System-bundle overlay** for tools that read the OS trust
      store directly. The sandbox synthesises a bundle that is the
      Mozilla public CA list plus the per-session CA (assembled by
-     `Condukt.Sandbox.Net.CA.trust_bundle/1` from the snapshot
+     `Condukt.Sandbox.NetworkPolicy.CA.trust_bundle/1` from the snapshot
      shipped under `priv/ca-certificates/mozilla.pem`) and mounts it
      via `subPath` at `/etc/ssl/certs/ca-certificates.crt` and
      `/etc/ssl/cert.pem`. Those are the two paths every mainstream
@@ -215,9 +196,9 @@ Two complementary mechanisms ship CA trust into the pod:
      they already expect.
 
 Between the two paths there is no image preparation step. Operators
-point `:image` at whatever they were already using (`debian:bookworm-slim`,
-`python:3.13-slim`, `node:20-bookworm`, an internal base, a distroless
-runtime) and `Sandbox.Net` works.
+point `:image` at whatever they were already using
+(`debian:bookworm-slim`, `python:3.13-slim`, `node:20-bookworm`, an
+internal base, a distroless runtime) and the policy works.
 
 The one stack still not addressed is Java. JVM HTTPS clients read a
 JKS truststore, not PEM files. If you need JVM cooperation, install
@@ -225,14 +206,15 @@ the CA into the JVM keystore at image build time.
 
 ## Sandbox support
 
-| Sandbox       | Net support              |
-| ------------- | ------------------------ |
+| Sandbox       | Network policy support |
+| ------------- | ---------------------- |
 | `Local`       | Not supported. No reliable enforcement plane on the host. |
 | `Virtual`     | Not yet. Will hook into the same layer at the Rust boundary when bashkit gains a network surface. |
 | `Kubernetes`  | Supported via the egress sidecar. |
 
-Sandboxes that do not support net silently ignore the `:net` option so
-agent definitions stay portable across backends.
+Sandboxes that do not support the network policy silently ignore the
+`:network_policy` option so agent definitions stay portable across
+backends.
 
 ## Limitations
 
@@ -241,14 +223,15 @@ agent definitions stay portable across backends.
     connection. Body capture degrades to bytes-only for that request.
   * **Non-HTTP TLS** flows through correctly at the TCP layer but
     method/path/header capture expects HTTP framing.
-  * **Egress to ports other than 80/443** is denied at the
-    NetworkPolicy layer but not surfaced as a telemetry event.
+  * **Egress to ports other than 80/443** is denied at the Kubernetes
+    `NetworkPolicy` layer but not surfaced as a telemetry event.
 
 ## RBAC
 
 In addition to the existing pod / pods/exec verbs the Kubernetes
-sandbox needs, `:net` requires the cluster identity to create and
-delete `secrets` and `networkpolicies` in the target namespace:
+sandbox needs, `:network_policy` requires the cluster identity to
+create and delete `secrets` and `networkpolicies` in the target
+namespace:
 
 ```yaml
 - apiGroups: [""]
@@ -265,6 +248,7 @@ See `guides/sandbox.md` for the base RBAC bundle.
 
 The `condukt-egress` sidecar image is published to
 `ghcr.io/tuist/condukt-egress:<version>` on every Condukt release.
-`Condukt.Sandbox.Net.K8s.Manifests.default_image/0` resolves to the
-tag matching the installed Condukt version. Override with the `:image`
-key on `:net` opts when mirroring or pinning.
+`Condukt.Sandbox.NetworkPolicy.K8s.Manifests.default_image/0` resolves
+to the tag matching the installed Condukt version. Override with the
+`:network_policy_image` option on `Condukt.Sandbox.Kubernetes` when
+mirroring or pinning.

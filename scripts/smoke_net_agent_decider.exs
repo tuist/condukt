@@ -1,4 +1,4 @@
-# End-to-end smoke for the `Condukt.Sandbox.Net.AgentDecider` form.
+# End-to-end smoke for the `Condukt.Sandbox.NetworkPolicy.AgentDecider` form.
 #
 # Same kind cluster setup as `smoke_net.exs`. The difference: the
 # policy's `:decide` field points at `AgentDecider` wrapping a Condukt
@@ -49,14 +49,13 @@ defmodule SmokeAgent.NetGuard do
   end
 end
 
-alias Condukt.Sandbox.Net.AgentDecider
-alias Condukt.Sandbox.Net.Policy
-alias Condukt.Sandbox.Net.Rule
+alias Condukt.Sandbox.NetworkPolicy
+alias Condukt.Sandbox.NetworkPolicy.AgentDecider
 
-policy = %Policy{
+policy = %NetworkPolicy{
   rules: [
-    {Rule.AllowHosts, hosts: ["api.github.com"]},
-    {Rule.Decide, module: AgentDecider, opts: [agent: SmokeAgent.NetGuard]}
+    allow: ["api.github.com"],
+    decide: {AgentDecider, agent: SmokeAgent.NetGuard}
   ],
   decide_timeout: 30_000,
   default: :deny
@@ -79,10 +78,8 @@ IO.puts("==> Initialising Sandbox.Kubernetes session_id=#{session_id}")
     conn: conn,
     ready_timeout: 120_000,
     heartbeat_interval: false,
-    net: [
-      policy: policy,
-      image: "condukt-egress:smoke"
-    ]
+    network_policy: policy,
+    network_policy_image: "condukt-egress:smoke"
   )
 
 IO.puts("==> Pod up: #{state.pod_name}")
