@@ -30,10 +30,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
 
   @sidecar_container Condukt.Sandbox.NetworkPolicy.K8s.Manifests.sidecar_container_name()
 
-  # ============================================================================
-  # API
-  # ============================================================================
-
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
   end
@@ -41,10 +37,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   def stop(pid) do
     if Process.alive?(pid), do: GenServer.stop(pid, :normal, 5_000), else: :ok
   end
-
-  # ============================================================================
-  # GenServer
-  # ============================================================================
 
   @impl true
   def init(opts) do
@@ -117,10 +109,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
     :ok
   end
 
-  # ============================================================================
-  # Collector
-  # ============================================================================
-
   defp collector_loop(parent, ref) do
     receive do
       {:open, true} ->
@@ -149,10 +137,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         collector_loop(parent, ref)
     end
   end
-
-  # ============================================================================
-  # Frame handling
-  # ============================================================================
 
   defp drain_lines(state, data) do
     combined = state.buffer <> data

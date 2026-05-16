@@ -2,8 +2,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   @moduledoc false
 
   # GenServer that reads NDJSON events from the `condukt-egress` sidecar's
-  # control channel and dispatches them into the configured
-  # configured telemetry events.
+  # control channel and dispatches them into telemetry events.
   #
   # The wire format is one JSON-encoded `Event` per line. Lines arrive
   # over a `gen_tcp`-style socket that the caller is expected to have
@@ -19,10 +18,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   alias Condukt.Sandbox.NetworkPolicy
   alias Condukt.Sandbox.NetworkPolicy.Event
   alias Condukt.Sandbox.NetworkPolicy.Request
-
-  # ============================================================================
-  # API
-  # ============================================================================
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -53,10 +48,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   defp ensure_shape(%{"kind" => _, "request" => _} = json), do: {:ok, json}
   defp ensure_shape(other), do: {:error, {:missing_event_fields, other}}
 
-  # ============================================================================
-  # GenServer
-  # ============================================================================
-
   @impl true
   def init(opts) do
     state = %{
@@ -82,10 +73,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
-
-  # ============================================================================
-  # Implementation
-  # ============================================================================
 
   defp consume(state, data) when is_binary(data) do
     full = state.buffer <> data
