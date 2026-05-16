@@ -125,29 +125,32 @@ The context carries:
 ## Agent deciders
 
 `Condukt.Sandbox.NetworkPolicy.AgentDecider` is a thin wrapper that
-runs a `Condukt`-defined agent as a decider. The agent receives the
-context and the request as JSON and is expected to return structured
-output of the form `%{"decision" => "allow" | "deny", "reason" => "..."}`.
+runs a `Condukt`-defined agent as a decider. It injects the decision
+output schema into the run, so the agent never has to describe a wire
+format in its prompt. The agent receives the context and the request
+as JSON and the wrapper validates a structured
+`%{decision: "allow" | "deny", reason: "..."}` answer:
 
 ```elixir
 defmodule MyApp.NetGuard do
-  use Condukt, runtime: Condukt.AgentRuntimes.Claude
+  use Condukt
 
   @impl true
   def system_prompt do
     """
-    You gate outbound network requests for an AI coding agent.
-
-    You will receive a JSON object with `request.host`, `request.port`,
-    `request.scheme`, `recent_messages`, and `metadata`. Decide whether
-    to allow this connection.
-
-    Reply with ONLY a JSON object, no prose, no code fences:
-      {"decision": "allow" | "deny", "reason": "..."}
+    You gate outbound network requests for an AI coding agent. You
+    receive the request and recent session context. Allow well-known
+    reputable API hosts the task plausibly needs; deny everything else.
     """
   end
 end
 ```
+
+The decision contract (`decision`/`reason`) lives in `AgentDecider`,
+not in the prompt: it is passed to `Condukt.run/3` as `:output` and
+enforced by structured-output validation. Structured enforcement
+requires the native runtime; a non-native runtime adapter ignores the
+schema and the decider falls back to JSON-decoding the agent's text.
 
 The decider agent runs as a sub-agent of the gated session, so its
 own outbound traffic does not route through the same policy it is

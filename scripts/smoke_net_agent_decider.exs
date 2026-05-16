@@ -1,17 +1,18 @@
 # End-to-end smoke for the `Condukt.Sandbox.NetworkPolicy.AgentDecider` form.
 #
 # Same kind cluster setup as `smoke_net.exs`. The difference: the
-# policy's `:decide` field points at `AgentDecider` wrapping a Condukt
-# agent module that uses the local `claude` runtime. When the workspace
-# makes an HTTPS request to a host not in the static allowlist, the
-# sidecar emits `decision_request`, the bridge invokes the agent, the
-# agent's structured output decides allow/deny, and the decision flows
-# back through the wire.
+# policy's `:decide` rule points at `AgentDecider` wrapping a native
+# Condukt agent. When the workspace makes an HTTPS request to a host
+# not in the static allowlist, the sidecar emits `decision_request`,
+# the bridge invokes the agent, the agent's structured output (a
+# schema injected by AgentDecider, not described in the prompt)
+# decides allow/deny, and the decision flows back through the wire.
 #
 # Prereqs (same as smoke_net.exs) plus:
 #
-#   - `claude` CLI installed and authenticated. Quick check:
-#     `echo "say pong" | claude --print` should return "pong".
+#   - A model API key available to the native runtime (e.g.
+#     `ANTHROPIC_API_KEY`), since structured output runs the native
+#     tool loop.
 #
 # Usage:
 #
@@ -21,30 +22,20 @@ Mix.start()
 Application.ensure_all_started(:k8s)
 Application.ensure_all_started(:logger)
 
-# Small Condukt agent that decides whether to allow a network request.
-# The system prompt pins its output to a strict JSON envelope so the
-# AgentDecider's `parse_decision/1` can decode it.
+# Small native Condukt agent that decides whether to allow a network
+# request. AgentDecider injects the decision output schema, so the
+# system prompt only describes the policy, not a wire format.
 defmodule SmokeAgent.NetGuard do
-  use Condukt,
-    runtime: Condukt.AgentRuntimes.Claude
+  use Condukt
 
   @impl true
   def system_prompt do
     """
     You are gating outbound network requests for an AI coding agent.
-
-    You will receive a JSON object with `request.host`, `request.port`,
-    `request.scheme`, recent_messages, and metadata. Decide whether to
-    allow this connection.
-
-    Reply with ONLY a JSON object, no prose, no code fences, no
-    surrounding text. The object MUST have these two keys:
-      - "decision": exactly "allow" or "deny"
-      - "reason": short string
+    You receive the request and recent session context.
 
     Allow well-known reputable API hosts (github.com, openai.com,
-    anthropic.com, googleapis.com, cloudflare.com).
-    Deny anything else.
+    anthropic.com, googleapis.com, cloudflare.com). Deny anything else.
     """
   end
 end

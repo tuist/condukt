@@ -7,19 +7,29 @@ defmodule Condukt.Sandbox.NetworkPolicy.AgentDecider do
   session context in front of it:
 
       %Condukt.Sandbox.NetworkPolicy{
-        decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}
+        rules: [decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}]
       }
+
+  The decider does not ask the agent's prompt to describe a wire
+  format. It injects a strict `:output` JSON Schema into
+  `Condukt.run/3` (`decision: "allow" | "deny"`, `reason: string`) so
+  the model's answer is validated structured output, not parsed prose.
+  The wrapped agent only needs a system prompt that describes the
+  *policy*. Structured enforcement requires the native runtime; a
+  non-native runtime adapter ignores the schema and the decider falls
+  back to JSON-decoding the agent's text.
 
   Required option:
 
     * `:agent` — a module that `use`s `Condukt` (or is a runnable
-      Condukt agent). Must declare an output schema with `decision`
-      (`"allow" | "deny"`) and `reason` (`string`) fields.
+      Condukt agent).
 
   Optional options:
 
     * `:api_key` / `:base_url` / `:model` / `:system_prompt` — passed
       to `Condukt.run/3`, override the agent module's declared values.
+    * `:output` — override the injected decision schema (rarely
+      needed; `parse_decision/1` still expects `decision`/`reason`).
     * `:context_keys` — list of context-snapshot keys to render into
       the prompt. Defaults to `[:recent_messages, :request, :metadata]`.
 
@@ -27,7 +37,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.AgentDecider do
 
   The decider agent's own outbound traffic does NOT route through the
   gated session's policy. Configure the decider agent with its own
-  `:net` policy (or with `:net` unset) so its API calls reach the
+  `:network_policy` (or with it unset) so its API calls reach the
   model provider without going through the same gate they decide on.
   """
 
@@ -36,10 +46,23 @@ defmodule Condukt.Sandbox.NetworkPolicy.AgentDecider do
   alias Condukt.Sandbox.NetworkPolicy.Context
   alias Condukt.Sandbox.NetworkPolicy.Request
 
+  @decision_schema %{
+    type: "object",
+    properties: %{
+      decision: %{type: "string", enum: ["allow", "deny"]},
+      reason: %{type: "string"}
+    },
+    required: ["decision"]
+  }
+
   @impl true
   def decide(%Context{} = context, %Request{} = request, opts) do
     agent = Keyword.fetch!(opts, :agent)
-    run_opts = Keyword.drop(opts, [:agent, :context_keys])
+
+    run_opts =
+      opts
+      |> Keyword.drop([:agent, :context_keys])
+      |> Keyword.put_new(:output, @decision_schema)
 
     prompt = render_prompt(context, request, opts)
 
