@@ -15,11 +15,13 @@
 //!      the event.
 //!    - Port 80: cleartext h1 head capture + forward.
 //!
-//! Handshake failures (workspace did not trust the CA) emit a
-//! `RequestClosed` event with reason `tls_handshake_failed`. There is
-//! no byte-splice fallback: a workspace that doesn't trust the CA is
-//! a misconfiguration the operator must fix (typically via
-//! `mix condukt.workspace.prepare`).
+//! A request that was allowed but never completed cleanly emits a
+//! `RequestFailed` event carrying a failure label in `reason`
+//! (`tls_client_rejected_ca`, `upstream_unreachable: ...`, etc.).
+//! There is no byte-splice fallback: a workspace that doesn't trust
+//! the session CA is a misconfiguration the operator must fix. The
+//! K8s sandbox injects CA trust into the pod, so this should not
+//! happen with a stock image.
 
 use crate::proxy::control::ControlChannel;
 use crate::proxy::event::{DecisionAction, Event, Kind, Request};
@@ -74,7 +76,8 @@ pub async fn handle(
 
     control.emit(Event::new(Kind::RequestOpened, request.clone()));
 
-    let denial_reason: Option<String> = match policy.evaluate(&host) {
+    let (decision, matched_rule) = policy.evaluate(&host);
+    let denial_reason: Option<String> = match decision {
         Decision::Allow => None,
         Decision::Deny(reason) => Some(reason.as_str().to_string()),
         Decision::Decide => {
@@ -101,12 +104,20 @@ pub async fn handle(
     };
 
     if let Some(reason) = denial_reason {
-        let event = Event::new(Kind::RequestDenied, request.clone()).with_reason(reason);
+        let mut event = Event::new(Kind::RequestDenied, request.clone()).with_reason(reason);
+        if let Some(rule) = matched_rule.clone() {
+            event = event.with_matched_rule(rule);
+        }
         control.emit(event);
         let _ = client.shutdown().await;
         return;
     }
-    control.emit(Event::new(Kind::RequestAllowed, request.clone()));
+
+    let mut allowed = Event::new(Kind::RequestAllowed, request.clone());
+    if let Some(rule) = matched_rule {
+        allowed = allowed.with_matched_rule(rule);
+    }
+    control.emit(allowed);
 
     let outcome = if dst.port() == 443 {
         https_mitm(client, &host, dst, ca, &mut request, Arc::clone(&control)).await
@@ -119,7 +130,7 @@ pub async fn handle(
             control.emit(Event::new(Kind::RequestClosed, request));
         }
         Err(err) => {
-            let event = Event::new(Kind::RequestClosed, request).with_reason(err);
+            let event = Event::new(Kind::RequestFailed, request).with_reason(err);
             control.emit(event);
         }
     }
@@ -164,7 +175,7 @@ async fn https_mitm(
     let tls_client = acceptor
         .accept(client)
         .await
-        .map_err(|_| "tls_handshake_failed".to_string())?;
+        .map_err(|_| "tls_client_rejected_ca".to_string())?;
 
     let client_alpn = tls_client
         .get_ref()
@@ -178,7 +189,7 @@ async fn https_mitm(
 
     let upstream_tcp = TcpStream::connect(dst)
         .await
-        .map_err(|e| format!("upstream_connect: {e}"))?;
+        .map_err(|e| format!("upstream_unreachable: {e}"))?;
 
     let tls_upstream = connector
         .connect(server_name, upstream_tcp)
@@ -251,7 +262,7 @@ async fn http_forward(
 ) -> Result<(), String> {
     let upstream = TcpStream::connect(dst)
         .await
-        .map_err(|e| format!("upstream_connect: {e}"))?;
+        .map_err(|e| format!("upstream_unreachable: {e}"))?;
 
     let (mut cr, mut cw) = client.into_split();
     let (mut ur, mut uw) = upstream.into_split();

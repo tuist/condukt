@@ -45,6 +45,56 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReaderTest do
                ControlReader.decode_line(line)
     end
 
+    test "decodes a request_failed event" do
+      line =
+        JSON.encode!(%{
+          "kind" => "request_failed",
+          "request" => %{
+            "id" => "r3",
+            "host" => "api.github.com",
+            "port" => 443,
+            "started_at" => "2026-05-14T10:00:00Z"
+          },
+          "reason" => "tls_client_rejected_ca"
+        })
+
+      assert {:ok, %Event{kind: :request_failed, reason: "tls_client_rejected_ca"}} =
+               ControlReader.decode_line(line)
+    end
+
+    test "decodes matched_rule provenance" do
+      line =
+        JSON.encode!(%{
+          "kind" => "request_denied",
+          "request" => %{
+            "id" => "r4",
+            "host" => "evil.com",
+            "port" => 443,
+            "started_at" => "2026-05-14T10:00:00Z"
+          },
+          "reason" => "matched_deny_list",
+          "matched_rule" => %{"index" => 2, "kind" => "deny"}
+        })
+
+      assert {:ok, %Event{matched_rule: %{index: 2, kind: :deny}}} =
+               ControlReader.decode_line(line)
+    end
+
+    test "matched_rule is nil when absent" do
+      line =
+        JSON.encode!(%{
+          "kind" => "request_allowed",
+          "request" => %{
+            "id" => "r5",
+            "host" => "api.github.com",
+            "port" => 443,
+            "started_at" => "2026-05-14T10:00:00Z"
+          }
+        })
+
+      assert {:ok, %Event{matched_rule: nil}} = ControlReader.decode_line(line)
+    end
+
     test "rejects malformed lines" do
       assert {:error, _} = ControlReader.decode_line("not json")
       assert {:error, _} = ControlReader.decode_line(JSON.encode!(%{"foo" => "bar"}))

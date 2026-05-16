@@ -176,7 +176,10 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   defp deliver_event(policy, frame) do
     with {:ok, request} <- Request.from_json(frame["request"] || %{}),
          {:ok, kind} <- decode_kind(frame["kind"]) do
-      NetworkPolicy.deliver(policy, kind, request, reason: frame["reason"])
+      NetworkPolicy.deliver(policy, kind, request,
+        reason: frame["reason"],
+        matched_rule: Event.decode_matched_rule(frame["matched_rule"])
+      )
     end
   end
 
@@ -184,6 +187,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   defp decode_kind("request_closed"), do: {:ok, :request_closed}
   defp decode_kind("request_allowed"), do: {:ok, :request_allowed}
   defp decode_kind("request_denied"), do: {:ok, :request_denied}
+  defp decode_kind("request_failed"), do: {:ok, :request_failed}
   defp decode_kind(other), do: {:error, {:invalid_kind, other}}
 
   defp respond_to_decision_request(state, %{"id" => id, "host" => host, "port" => port} = frame) do
@@ -294,7 +298,14 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
       {:ok, %{"type" => "event"} = frame} ->
         with {:ok, request} <- Request.from_json(frame["request"] || %{}),
              {:ok, kind} <- decode_kind(frame["kind"]) do
-          {:ok, %Event{kind: kind, request: request, reason: frame["reason"], at: DateTime.utc_now()}}
+          {:ok,
+           %Event{
+             kind: kind,
+             request: request,
+             reason: frame["reason"],
+             matched_rule: Event.decode_matched_rule(frame["matched_rule"]),
+             at: DateTime.utc_now()
+           }}
         end
 
       other ->

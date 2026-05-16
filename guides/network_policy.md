@@ -176,15 +176,48 @@ BEAM side. Attach handlers with `:telemetry.attach/4`:
 [:condukt, :sandbox, :network_policy, :request_allowed]
 [:condukt, :sandbox, :network_policy, :request_denied]
 [:condukt, :sandbox, :network_policy, :request_closed]
+[:condukt, :sandbox, :network_policy, :request_failed]
 ```
 
+`:request_failed` fires when a request was allowed but never completed
+cleanly: the workspace rejected the session CA
+(`reason: "tls_client_rejected_ca"`), the upstream was unreachable
+(`reason: "upstream_unreachable: ..."`), or the stream broke
+mid-flight. It is distinct from `:request_closed` (a clean finish) so
+you can alert on it: in a correctly configured pod it should never
+fire, so a non-zero rate is a misconfiguration signal.
+
 Measurements: `%{bytes_in: integer, bytes_out: integer}`.
-Metadata: `%{request: Condukt.Sandbox.NetworkPolicy.Request.t(), reason: atom() | binary() | nil}`.
+Metadata: `%{request: Condukt.Sandbox.NetworkPolicy.Request.t(),
+reason: atom() | binary() | nil, matched_rule: %{index:
+non_neg_integer(), kind: :allow | :deny | :decide} | nil, at:
+DateTime.t() | nil}`.
+
+`:matched_rule` is the decision's provenance on `:request_allowed` and
+`:request_denied`: which entry in the `:rules` list produced it. It is
+`nil` when the policy `:default` fired (no rule matched) and on
+lifecycle-only events.
 
 `:request` carries the full `Condukt.Sandbox.NetworkPolicy.Request`,
 including method, path, request headers, response status, and
 timestamps where the sidecar could derive them. Pipe these events into
 whatever observability stack you already run.
+
+### Decider failures
+
+When a `:decide` rule's callable times out, crashes, or returns
+something that is not `:allow | {:deny, reason}`, the decide runtime
+denies the request and emits:
+
+```
+[:condukt, :sandbox, :network_policy, :decider_failure]
+```
+
+Measurements: `%{count: 1}`. Metadata: `%{reason: :decider_timeout |
+:decider_error | :decider_bad_return}`. The request itself still
+surfaces as `:request_denied` with the corresponding reason; this
+event exists so you can track decider health separately from policy
+denials.
 
 ## Workspace images
 

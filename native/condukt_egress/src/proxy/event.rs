@@ -14,6 +14,7 @@
 //!   * `decision` — BEAM -> sidecar. The decision the sidecar was
 //!     waiting on, keyed by `id`.
 
+use crate::proxy::policy::MatchedRule;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,6 +28,11 @@ pub enum Kind {
     RequestClosed,
     RequestAllowed,
     RequestDenied,
+    /// The request was allowed but never completed cleanly: the
+    /// workspace rejected the session CA, the upstream was
+    /// unreachable, or the stream broke mid-flight. Carries the
+    /// failure label in `reason`.
+    RequestFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +95,11 @@ pub struct Event {
     pub request: Request,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Which policy rule produced an allow/deny decision (index into
+    /// the rule list plus its kind). Absent for the default action and
+    /// for lifecycle-only events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_rule: Option<MatchedRule>,
     pub at: DateTime<Utc>,
 }
 
@@ -98,12 +109,18 @@ impl Event {
             kind,
             request,
             reason: None,
+            matched_rule: None,
             at: Utc::now(),
         }
     }
 
     pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = Some(reason.into());
+        self
+    }
+
+    pub fn with_matched_rule(mut self, rule: MatchedRule) -> Self {
+        self.matched_rule = Some(rule);
         self
     }
 }

@@ -40,6 +40,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
          kind: kind,
          request: request,
          reason: Map.get(json, "reason"),
+         matched_rule: Event.decode_matched_rule(Map.get(json, "matched_rule")),
          at: at
        }}
     end
@@ -97,7 +98,11 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   end
 
   defp deliver(policy, event) do
-    NetworkPolicy.deliver(policy, event.kind, event.request, reason: event.reason, at: event.at)
+    NetworkPolicy.deliver(policy, event.kind, event.request,
+      reason: event.reason,
+      matched_rule: event.matched_rule,
+      at: event.at
+    )
   end
 
   defp split_lines(buffer) do
@@ -118,6 +123,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   defp decode_kind("request_closed"), do: {:ok, :request_closed}
   defp decode_kind("request_allowed"), do: {:ok, :request_allowed}
   defp decode_kind("request_denied"), do: {:ok, :request_denied}
+  defp decode_kind("request_failed"), do: {:ok, :request_failed}
   defp decode_kind(other), do: {:error, {:invalid_kind, other}}
 
   defp decode_at(nil), do: {:ok, DateTime.utc_now()}

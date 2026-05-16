@@ -83,9 +83,25 @@ defmodule Condukt.Sandbox.NetworkPolicy do
       [:condukt, :sandbox, :network_policy, :request_allowed]
       [:condukt, :sandbox, :network_policy, :request_denied]
       [:condukt, :sandbox, :network_policy, :request_closed]
+      [:condukt, :sandbox, :network_policy, :request_failed]
+
+  `:request_failed` fires when an allowed request never completes
+  cleanly (the workspace rejected the session CA, the upstream was
+  unreachable, or the stream broke). `reason` carries the label.
 
   Measurements: `%{bytes_in: integer, bytes_out: integer}`.
-  Metadata: `%{request: Condukt.Sandbox.NetworkPolicy.Request.t(), reason: atom() | binary() | nil}`.
+  Metadata: `%{request: Condukt.Sandbox.NetworkPolicy.Request.t(),
+  reason: atom() | binary() | nil, matched_rule: %{index:
+  non_neg_integer(), kind: :allow | :deny | :decide} | nil, at:
+  DateTime.t() | nil}`. `:matched_rule` is the rule that produced an
+  allow/deny (`nil` for the default action and lifecycle-only events).
+
+  The decide runtime additionally emits, on decider failure:
+
+      [:condukt, :sandbox, :network_policy, :decider_failure]
+
+  Measurements `%{count: 1}`, metadata `%{reason: :decider_timeout |
+  :decider_error | :decider_bad_return}`.
   """
 
   alias Condukt.Sandbox.NetworkPolicy.Context
@@ -139,12 +155,15 @@ defmodule Condukt.Sandbox.NetworkPolicy do
   carry `:reason` (deny reason or free-form string).
   """
   def deliver(_policy, kind, %Request{} = request, opts \\ []) do
-    reason = Keyword.get(opts, :reason)
-
     :telemetry.execute(
       [:condukt, :sandbox, :network_policy, kind],
       %{bytes_in: request.bytes_in, bytes_out: request.bytes_out},
-      %{request: request, reason: reason}
+      %{
+        request: request,
+        reason: Keyword.get(opts, :reason),
+        matched_rule: Keyword.get(opts, :matched_rule),
+        at: Keyword.get(opts, :at)
+      }
     )
 
     :ok

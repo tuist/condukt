@@ -86,6 +86,15 @@ pub enum Decision {
     Decide,
 }
 
+/// Provenance for a decision: which entry in the rule list produced
+/// it. Travels on the event so the BEAM can attribute allows/denies to
+/// a specific rule. The default action carries no matched rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchedRule {
+    pub index: usize,
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenyReason {
     MatchedDenyList,
@@ -106,31 +115,42 @@ impl Policy {
     /// `Condukt.Sandbox.NetworkPolicy.evaluate/3` for the host-only
     /// rules. Returns the first non-`continue` outcome, or the default
     /// action if every rule passes.
-    pub fn evaluate(&self, host: &str) -> Decision {
+    pub fn evaluate(&self, host: &str) -> (Decision, Option<MatchedRule>) {
         let host_lc = host.to_ascii_lowercase();
 
-        for rule in &self.rules {
+        for (index, rule) in self.rules.iter().enumerate() {
             match rule {
                 Rule::Allow { hosts } => {
                     if matches_any(&host_lc, hosts) {
-                        return Decision::Allow;
+                        return (Decision::Allow, Some(matched(index, "allow")));
                     }
                 }
                 Rule::Deny { hosts } => {
                     if matches_any(&host_lc, hosts) {
-                        return Decision::Deny(DenyReason::MatchedDenyList);
+                        return (
+                            Decision::Deny(DenyReason::MatchedDenyList),
+                            Some(matched(index, "deny")),
+                        );
                     }
                 }
                 Rule::Decide => {
-                    return Decision::Decide;
+                    return (Decision::Decide, Some(matched(index, "decide")));
                 }
             }
         }
 
-        match self.default {
+        let decision = match self.default {
             Action::Allow => Decision::Allow,
             Action::Deny => Decision::Deny(DenyReason::DefaultDeny),
-        }
+        };
+        (decision, None)
+    }
+}
+
+fn matched(index: usize, kind: &str) -> MatchedRule {
+    MatchedRule {
+        index,
+        kind: kind.to_string(),
     }
 }
 
@@ -243,7 +263,15 @@ mod tests {
             }],
             Action::Deny,
         );
-        assert_eq!(policy.evaluate("api.github.com"), Decision::Allow);
+        let (decision, matched) = policy.evaluate("api.github.com");
+        assert_eq!(decision, Decision::Allow);
+        assert_eq!(
+            matched,
+            Some(MatchedRule {
+                index: 0,
+                kind: "allow".into()
+            })
+        );
     }
 
     #[test]
@@ -254,10 +282,9 @@ mod tests {
             }],
             Action::Deny,
         );
-        assert_eq!(
-            policy.evaluate("secret.example.com"),
-            Decision::Deny(DenyReason::MatchedDenyList)
-        );
+        let (decision, matched) = policy.evaluate("secret.example.com");
+        assert_eq!(decision, Decision::Deny(DenyReason::MatchedDenyList));
+        assert_eq!(matched.unwrap().kind, "deny");
     }
 
     #[test]
@@ -273,10 +300,9 @@ mod tests {
             ],
             Action::Allow,
         );
-        assert_eq!(
-            deny_first.evaluate("evil.com"),
-            Decision::Deny(DenyReason::MatchedDenyList)
-        );
+        let (decision, matched) = deny_first.evaluate("evil.com");
+        assert_eq!(decision, Decision::Deny(DenyReason::MatchedDenyList));
+        assert_eq!(matched.unwrap().index, 0);
 
         let allow_first = p(
             vec![
@@ -289,13 +315,15 @@ mod tests {
             ],
             Action::Deny,
         );
-        assert_eq!(allow_first.evaluate("evil.com"), Decision::Allow);
+        assert_eq!(allow_first.evaluate("evil.com").0, Decision::Allow);
     }
 
     #[test]
     fn decide_rule_returns_decide_variant() {
         let policy = p(vec![Rule::Decide], Action::Deny);
-        assert_eq!(policy.evaluate("anything.com"), Decision::Decide);
+        let (decision, matched) = policy.evaluate("anything.com");
+        assert_eq!(decision, Decision::Decide);
+        assert_eq!(matched.unwrap().kind, "decide");
     }
 
     #[test]
@@ -309,20 +337,21 @@ mod tests {
             ],
             Action::Deny,
         );
-        assert_eq!(policy.evaluate("api.github.com"), Decision::Allow);
-        assert_eq!(policy.evaluate("evil.com"), Decision::Decide);
+        assert_eq!(policy.evaluate("api.github.com").0, Decision::Allow);
+        let (decision, matched) = policy.evaluate("evil.com");
+        assert_eq!(decision, Decision::Decide);
+        assert_eq!(matched.unwrap().index, 1);
     }
 
     #[test]
-    fn default_fires_when_no_rule_has_an_opinion() {
+    fn default_fires_with_no_matched_rule() {
         let policy_deny = p(vec![], Action::Deny);
-        assert_eq!(
-            policy_deny.evaluate("anything.com"),
-            Decision::Deny(DenyReason::DefaultDeny)
-        );
+        let (decision, matched) = policy_deny.evaluate("anything.com");
+        assert_eq!(decision, Decision::Deny(DenyReason::DefaultDeny));
+        assert_eq!(matched, None);
 
         let policy_allow = p(vec![], Action::Allow);
-        assert_eq!(policy_allow.evaluate("anything.com"), Decision::Allow);
+        assert_eq!(policy_allow.evaluate("anything.com").0, Decision::Allow);
     }
 
     #[test]
