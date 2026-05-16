@@ -32,10 +32,10 @@ defmodule Condukt.Sandbox.NetworkPolicy do
   `**` matches one or more dot-separated labels, literal characters
   match themselves (case-insensitive).
 
-  The `:decide` value can take four shapes, all converging on the same
-  contract: receive a `Condukt.Sandbox.NetworkPolicy.Context` and a
-  `Condukt.Sandbox.NetworkPolicy.Request`, return `:allow` or
-  `{:deny, reason}`.
+  The `:decide` value is a callable that receives a
+  `Condukt.Sandbox.NetworkPolicy.Context` and a
+  `Condukt.Sandbox.NetworkPolicy.Request` and returns `:allow` or
+  `{:deny, reason}`. The callable can take four shapes:
 
     * A 2-arity function: `fn ctx, req -> :allow end`
     * `{module, function}` (atoms): `module.function(ctx, req)`
@@ -45,21 +45,35 @@ defmodule Condukt.Sandbox.NetworkPolicy do
   Use `Condukt.Sandbox.NetworkPolicy.AgentDecider` to wrap a
   `Condukt`-defined agent as a decider.
 
+  The knobs that govern how the decide rule is invoked are scoped to
+  the rule itself, not the policy. Pass a keyword list as the `:decide`
+  value with the callable under `:call`:
+
+      decide: [
+        call: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard},
+        timeout: 5_000,
+        cache: true,
+        context_messages: 5,
+        context_metadata: %{tenant: "acme"}
+      ]
+
+    * `:timeout` — milliseconds the decide runtime waits before
+      treating the call as failed. Default `5_000`.
+    * `:cache` — `true` (default) to cache decider answers per-session
+      per-host.
+    * `:context_messages` — maximum recent session messages handed to
+      the decider as context. Default `5`.
+    * `:context_metadata` — per-session static metadata exposed to the
+      decider. Default `%{}`.
+
   ## Other fields
 
     * `:default` — `:allow` or `:deny`. Default `:deny` (fail closed).
-    * `:decide_timeout` — milliseconds the decide runtime waits before
-      treating the call as failed. Default `5_000`.
     * `:redact` — list of regular expressions; matching content in
       request/response bodies and headers is redacted by the sidecar
       before events are emitted.
     * `:max_body_capture` — maximum bytes of body to retain in each
       event. Default `4096`.
-    * `:context_messages` — maximum recent session messages handed to
-      the decider as context. Default `5`.
-    * `:context_metadata` — per-session static metadata.
-    * `:decision_cache` — `true` (default) to cache decider answers
-      per-session per-host.
 
   ## Telemetry
 
@@ -81,12 +95,8 @@ defmodule Condukt.Sandbox.NetworkPolicy do
 
   defstruct rules: [],
             default: :deny,
-            decide_timeout: 5_000,
             redact: [],
-            max_body_capture: 4096,
-            context_messages: 5,
-            context_metadata: %{},
-            decision_cache: true
+            max_body_capture: 4096
 
   @doc """
   Normalises arbitrary policy input into a `t()`. Accepts an existing
@@ -102,12 +112,8 @@ defmodule Condukt.Sandbox.NetworkPolicy do
     %__MODULE__{
       rules: Map.get(fields, :rules, []),
       default: Map.get(fields, :default, :deny),
-      decide_timeout: Map.get(fields, :decide_timeout, 5_000),
       redact: Map.get(fields, :redact, []),
-      max_body_capture: Map.get(fields, :max_body_capture, 4096),
-      context_messages: Map.get(fields, :context_messages, 5),
-      context_metadata: Map.get(fields, :context_metadata, %{}),
-      decision_cache: Map.get(fields, :decision_cache, true)
+      max_body_capture: Map.get(fields, :max_body_capture, 4096)
     }
   end
 
@@ -155,8 +161,9 @@ defmodule Condukt.Sandbox.NetworkPolicy do
     if Hosts.matches_any?(req.host, hosts), do: {:deny, :matched_deny_list}, else: walk(rest, ctx, req, policy)
   end
 
-  defp walk([{:decide, callable} | _rest], ctx, req, policy) do
-    Decider.invoke(callable, ctx, req, policy.decide_timeout)
+  defp walk([{:decide, value} | _rest], ctx, req, _policy) do
+    spec = Decider.spec(value)
+    Decider.invoke(spec.call, ctx, req, spec.timeout)
   end
 
   defp walk([entry | _rest], _ctx, _req, _policy) do

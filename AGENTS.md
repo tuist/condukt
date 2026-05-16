@@ -41,6 +41,12 @@
   `deny: [host_globs]`, and `decide: callable`. The decider callable
   can be a 2-arity function, `{module, function}`, a module alone
   (calling `module.decide(ctx, req, [])`), or `{module, opts}`.
+  Decide tuning is scoped to the rule, not the struct: pass the
+  `decide:` value as a keyword list with the callable under `:call`
+  plus any of `:timeout`, `:cache`, `:context_messages`,
+  `:context_metadata` (`Condukt.Sandbox.NetworkPolicy.Decider.spec/1`
+  normalizes both forms). The `NetworkPolicy` struct itself only
+  carries `:rules`, `:default`, `:redact`, `:max_body_capture`.
   `Condukt.Sandbox.NetworkPolicy.AgentDecider` wraps a `Condukt`
   agent as a decider.
 - The K8s integration adds an init container (writes iptables NAT

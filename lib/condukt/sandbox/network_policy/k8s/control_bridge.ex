@@ -68,6 +68,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         state = %{
           session_id: session_id,
           policy: policy,
+          decide_spec: Decider.policy_spec(policy),
           owner_pid: owner_pid,
           send_fn: send_fn,
           collector_pid: collector_pid,
@@ -199,7 +200,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
       session_id: state.session_id,
       recent_messages: recent_messages(state),
       request: request,
-      metadata: state.policy.context_metadata || %{}
+      metadata: context_metadata(state)
     }
 
     {decision, cache} = Decider.decide(state.policy, context, request, state.cache)
@@ -207,11 +208,14 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
     %{state | cache: cache}
   end
 
-  defp recent_messages(%{owner_pid: nil}), do: []
-
-  defp recent_messages(%{owner_pid: pid, policy: %{context_messages: limit}}) when is_pid(pid) do
+  defp recent_messages(%{owner_pid: pid, decide_spec: %{context_messages: limit}}) when is_pid(pid) do
     if Process.alive?(pid), do: fetch_history(pid, limit), else: []
   end
+
+  defp recent_messages(_), do: []
+
+  defp context_metadata(%{decide_spec: %{context_metadata: meta}}) when is_map(meta), do: meta
+  defp context_metadata(_), do: %{}
 
   # Isolate the call: a session crash or timeout should not take the
   # bridge down with it. We spawn a probe process that does the

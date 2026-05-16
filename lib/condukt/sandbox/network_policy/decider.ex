@@ -15,17 +15,22 @@ defmodule Condukt.Sandbox.NetworkPolicy.Decider do
   Use `Condukt.Sandbox.NetworkPolicy.AgentDecider` to wrap a Condukt
   agent module as a decider.
 
+  The knobs that govern invocation are scoped to the decide rule, not
+  the policy. Pass the `:decide` value as a keyword list with the
+  callable under `:call` plus any of `:timeout`, `:cache`,
+  `:context_messages`, `:context_metadata`. A bare callable uses the
+  defaults.
+
   ## Runtime semantics
 
-  Decider invocations run in a separate process with a configurable
-  timeout (`Policy.decide_timeout`, default 5000ms). On timeout, an
-  exception, or any non-`:allow | {:deny, reason}` return value, the
-  request is denied with a structured reason and an entry surfaces in
-  telemetry.
+  Decider invocations run in a separate process bounded by the rule's
+  `:timeout` (default 5000ms). On timeout, an exception, or any
+  non-`:allow | {:deny, reason}` return value, the request is denied
+  with a structured reason and an entry surfaces in telemetry.
 
-  Decisions are cached per-session per-host when
-  `Policy.decision_cache` is true (default). The cache is in-process
-  and dies with the session.
+  Decisions are cached per-session per-host when the rule's `:cache`
+  is true (default). The cache is in-process and dies with the
+  session.
   """
 
   alias Condukt.Sandbox.NetworkPolicy
@@ -34,6 +39,9 @@ defmodule Condukt.Sandbox.NetworkPolicy.Decider do
 
   @callback decide(context :: Context.t(), request :: Request.t(), opts :: keyword()) ::
               :allow | {:deny, term()}
+
+  @default_timeout 5_000
+  @default_context_messages 5
 
   @doc """
   Invokes a decider once, in an isolated process bounded by `timeout`
@@ -45,41 +53,78 @@ defmodule Condukt.Sandbox.NetworkPolicy.Decider do
   end
 
   @doc """
+  Normalises a `:decide` rule value into a spec map with `:call`,
+  `:timeout`, `:cache`, `:context_messages`, and `:context_metadata`.
+
+  A keyword list is the configured form and must carry the callable
+  under `:call`. Anything else (function, module, `{module, function}`,
+  `{module, opts}`) is a bare callable that takes the defaults.
+  """
+  def spec(value) when is_list(value) do
+    call =
+      Keyword.get(value, :call) ||
+        raise ArgumentError,
+              "the configured decide form requires a :call entry, got: #{inspect(value)}"
+
+    %{
+      call: call,
+      timeout: Keyword.get(value, :timeout, @default_timeout),
+      cache: Keyword.get(value, :cache, true),
+      context_messages: Keyword.get(value, :context_messages, @default_context_messages),
+      context_metadata: Keyword.get(value, :context_metadata, %{})
+    }
+  end
+
+  def spec(callable) do
+    %{
+      call: callable,
+      timeout: @default_timeout,
+      cache: true,
+      context_messages: @default_context_messages,
+      context_metadata: %{}
+    }
+  end
+
+  @doc """
+  Returns the spec for the policy's first `:decide` rule, or `nil` when
+  the policy declares no decide rule.
+  """
+  def policy_spec(%NetworkPolicy{rules: rules}) do
+    Enum.find_value(rules, fn
+      {:decide, value} -> spec(value)
+      _ -> nil
+    end)
+  end
+
+  @doc """
   Runs the policy's decide rule (if any) and applies the per-session
   decision cache. Used by the K8s control bridge when the sidecar
   sends a `decision_request`. Returns `{decision, updated_cache}`.
   """
   def decide(%NetworkPolicy{} = policy, %Context{} = context, %Request{} = request, cache) do
-    case find_decide_rule(policy) do
+    case policy_spec(policy) do
       nil -> {default_decision(policy), cache}
-      decider -> dispatch(decider, policy, context, request, cache)
+      spec -> dispatch(spec, policy, context, request, cache)
     end
   end
 
-  defp find_decide_rule(%NetworkPolicy{rules: rules}) do
-    Enum.find_value(rules, fn
-      {:decide, callable} -> callable
-      _ -> nil
-    end)
+  defp dispatch(%{cache: false} = spec, policy, context, request, cache) do
+    {run_one(spec, policy, context, request), cache}
   end
 
-  defp dispatch(decider, %NetworkPolicy{decision_cache: false} = policy, context, request, cache) do
-    {run_one(decider, policy, context, request), cache}
-  end
-
-  defp dispatch(decider, policy, context, request, cache) do
+  defp dispatch(spec, policy, context, request, cache) do
     case Map.fetch(cache, request.host) do
       {:ok, cached} ->
         {cached, cache}
 
       :error ->
-        decision = run_one(decider, policy, context, request)
+        decision = run_one(spec, policy, context, request)
         {decision, Map.put(cache, request.host, decision)}
     end
   end
 
-  defp run_one(decider, policy, context, request) do
-    case do_invoke(decider, context, request, policy.decide_timeout) do
+  defp run_one(spec, policy, context, request) do
+    case do_invoke(spec.call, context, request, spec.timeout) do
       :allow -> :allow
       {:deny, _} = decision -> decision
       _other -> emit_failure_and_default(:decider_bad_return, policy)

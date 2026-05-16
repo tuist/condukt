@@ -55,9 +55,8 @@ alias Condukt.Sandbox.NetworkPolicy.AgentDecider
 policy = %NetworkPolicy{
   rules: [
     allow: ["api.github.com"],
-    decide: {AgentDecider, agent: SmokeAgent.NetGuard}
+    decide: [call: {AgentDecider, agent: SmokeAgent.NetGuard}, timeout: 30_000]
   ],
-  decide_timeout: 30_000,
   default: :deny
 }
 

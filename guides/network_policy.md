@@ -43,11 +43,7 @@ That is the whole API surface most callers need to know about.
 ```elixir
 %Condukt.Sandbox.NetworkPolicy{
   rules: [...],
-  default: :deny,
-  decide_timeout: 5_000,
-  decision_cache: true,
-  context_messages: 5,
-  context_metadata: %{}
+  default: :deny
 }
 ```
 
@@ -88,6 +84,25 @@ The decide rule defers to a callable. Four shapes are accepted: a
 `module.decide(ctx, req, opts)`). The behaviour is
 `Condukt.Sandbox.NetworkPolicy.Decider`.
 
+The knobs that govern how the decide rule is invoked are scoped to the
+rule, not the policy. Pass a keyword list with the callable under
+`:call`:
+
+```elixir
+decide: [
+  call: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard},
+  timeout: 5_000,
+  cache: true,
+  context_messages: 5,
+  context_metadata: %{tenant: "acme"}
+]
+```
+
+A list value is the configured form; anything else (function, module,
+`{module, function}`, `{module, opts}`) is a bare callable that takes
+the defaults. `:timeout` defaults to 5000ms, `:cache` to `true`,
+`:context_messages` to 5, `:context_metadata` to `%{}`.
+
 The decide rule is terminal. Whatever the callable returns becomes the
 request's decision. If you want a tiered policy where the decider only
 sees uncertain hosts, put the narrower `:allow` and `:deny` rules
@@ -100,12 +115,12 @@ When a `:decide` rule fires, the runtime hands the callable a
 The context carries:
 
   * `:session_id` — the gated session's id.
-  * `:recent_messages` — the last `policy.context_messages` entries
-    from the session's message history, oldest first.
+  * `:recent_messages` — the last `:context_messages` entries from the
+    session's message history, oldest first (the decide rule's option).
   * `:request` — the request the workspace is about to make.
-  * `:metadata` — caller-supplied per-session static metadata
-    (`policy.context_metadata`). Useful for user identity, tenant,
-    purpose.
+  * `:metadata` — caller-supplied per-session static metadata (the
+    decide rule's `:context_metadata` option). Useful for user
+    identity, tenant, purpose.
 
 ## Agent deciders
 
@@ -140,13 +155,13 @@ helping to enforce.
 
 ## Timeouts and caching
 
-`:decide_timeout` (default 5000ms) bounds how long the runtime waits
-for a decider response before treating it as a failure. On timeout the
-request is denied with reason `:decider_timeout`.
+The decide rule's `:timeout` (default 5000ms) bounds how long the
+runtime waits for a decider response before treating it as a failure.
+On timeout the request is denied with reason `:decider_timeout`.
 
-`:decision_cache` (default `true`) memoises decider answers per-session
-per-host. Once the model has said `:deny` to `evil.com`, the next
-attempt does not pay another model call.
+The decide rule's `:cache` (default `true`) memoises decider answers
+per-session per-host. Once the model has said `:deny` to `evil.com`,
+the next attempt does not pay another model call.
 
 ## Telemetry
 

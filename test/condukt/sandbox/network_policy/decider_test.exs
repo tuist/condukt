@@ -15,13 +15,21 @@ defmodule Condukt.Sandbox.NetworkPolicy.DeciderTest do
   end
 
   defp policy_with(decider, extra \\ []) do
+    tuning =
+      []
+      |> maybe_put(:timeout, Keyword.get(extra, :decide_timeout))
+      |> maybe_put(:cache, Keyword.get(extra, :decision_cache))
+
+    decide_value = if tuning == [], do: decider, else: [{:call, decider} | tuning]
+
     %NetworkPolicy{
-      rules: [decide: decider],
-      decide_timeout: Keyword.get(extra, :decide_timeout, 5_000),
-      decision_cache: Keyword.get(extra, :decision_cache, true),
+      rules: [decide: decide_value],
       default: Keyword.get(extra, :default, :deny)
     }
   end
+
+  defp maybe_put(kw, _key, nil), do: kw
+  defp maybe_put(kw, key, value), do: kw ++ [{key, value}]
 
   describe "decide/4 with function decider" do
     test "allow" do
@@ -130,7 +138,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.DeciderTest do
       assert :counters.get(counter, 1) == 1
     end
 
-    test "decision_cache: false invokes the decider every time" do
+    test "cache: false invokes the decider every time" do
       counter = :counters.new(1, [])
 
       policy =
@@ -168,6 +176,61 @@ defmodule Condukt.Sandbox.NetworkPolicy.DeciderTest do
 
       policy = %NetworkPolicy{rules: [], default: :deny}
       assert {{:deny, :default_deny}, _} = Decider.decide(policy, context(), request(), %{})
+    end
+  end
+
+  describe "spec/1" do
+    test "a bare callable takes the defaults" do
+      fun = fn _, _ -> :allow end
+
+      assert %{
+               call: ^fun,
+               timeout: 5_000,
+               cache: true,
+               context_messages: 5,
+               context_metadata: %{}
+             } = Decider.spec(fun)
+    end
+
+    test "{module, opts} is treated as a bare callable, not the configured form" do
+      assert %{call: {Allower, [a: 1]}, timeout: 5_000} = Decider.spec({Allower, a: 1})
+    end
+
+    test "the configured keyword form overrides the knobs" do
+      fun = fn _, _ -> :allow end
+
+      assert %{
+               call: ^fun,
+               timeout: 50,
+               cache: false,
+               context_messages: 12,
+               context_metadata: %{tenant: "acme"}
+             } =
+               Decider.spec(
+                 call: fun,
+                 timeout: 50,
+                 cache: false,
+                 context_messages: 12,
+                 context_metadata: %{tenant: "acme"}
+               )
+    end
+
+    test "the configured form requires :call" do
+      assert_raise ArgumentError, ~r/requires a :call entry/, fn ->
+        Decider.spec(timeout: 50)
+      end
+    end
+  end
+
+  describe "policy_spec/1" do
+    test "returns the first decide rule's spec" do
+      fun = fn _, _ -> :allow end
+      policy = %NetworkPolicy{rules: [allow: ["a.com"], decide: [call: fun, timeout: 99]]}
+      assert %{call: ^fun, timeout: 99} = Decider.policy_spec(policy)
+    end
+
+    test "returns nil when there is no decide rule" do
+      assert Decider.policy_spec(%NetworkPolicy{rules: [allow: ["a.com"]]}) == nil
     end
   end
 end

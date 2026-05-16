@@ -23,6 +23,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s do
 
   alias Condukt.Sandbox.NetworkPolicy
   alias Condukt.Sandbox.NetworkPolicy.CA
+  alias Condukt.Sandbox.NetworkPolicy.Decider
   alias Condukt.Sandbox.NetworkPolicy.K8s.Manifests
 
   @doc """
@@ -132,8 +133,15 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s do
       default: Atom.to_string(policy.default),
       max_body_capture: policy.max_body_capture,
       redact: Enum.map(policy.redact, &Regex.source/1),
-      decide_timeout_ms: policy.decide_timeout
+      decide_timeout_ms: decide_timeout_ms(policy)
     })
+  end
+
+  defp decide_timeout_ms(policy) do
+    case Decider.policy_spec(policy) do
+      nil -> 5_000
+      spec -> spec.timeout
+    end
   end
 
   # The sidecar evaluates `allow` and `deny` rules locally. `:decide`

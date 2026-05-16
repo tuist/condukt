@@ -62,9 +62,8 @@ end
 policy = %NetworkPolicy{
   rules: [
     allow: ["api.github.com"],
-    decide: decider
+    decide: [call: decider, timeout: 5_000]
   ],
-  decide_timeout: 5_000,
   default: :deny
 }
 
