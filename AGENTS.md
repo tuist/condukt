@@ -55,6 +55,20 @@
   (policy JSON + ephemeral CA cert/key) and `NetworkPolicy` (egress
   scoped to DNS + tcp/80,443). All teardown is best-effort on
   shutdown when `:delete_on_shutdown` is true.
+- The BEAM<->sidecar control channel (only started when the policy
+  has a `:decide` rule) is a `pods/portforward` WebSocket to the
+  proxy's control port, owned by
+  `Condukt.Sandbox.NetworkPolicy.K8s.PortForward` and consumed by
+  `...K8s.ControlBridge`. PortForward drives `Mint.WebSocket`
+  directly (the `:k8s` client models exec only), reuses the
+  `K8s.Conn` for auth/TLS, sets the `v4.channel.k8s.io` subprotocol,
+  and runs framing through `...PortForward.Codec`. The bridge
+  supervises the channel: on drop it re-dials with capped backoff
+  (an in-flight `:decide` denies once, then recovers). Requires a
+  cluster serving WebSocket port-forward (Kubernetes >= 1.30,
+  KEP-4006) and the `pods/portforward` RBAC verb. There is no
+  `condukt-egress` control-bridge subcommand; the BEAM reaches the
+  control port directly.
 - The sidecar image is `ghcr.io/tuist/condukt-egress:<version>`,
   published by the release workflow. `default_image/0` resolves to
   the tag matching the installed Condukt version; override with the

@@ -276,13 +276,25 @@ backends.
     method/path/header capture expects HTTP framing.
   * **Egress to ports other than 80/443** is denied at the Kubernetes
     `NetworkPolicy` layer but not surfaced as a telemetry event.
+  * **Control channel** (only when a `:decide` rule is present): the
+    BEAM reaches the sidecar over a `pods/portforward` WebSocket,
+    which Kubernetes serves over WebSockets only since **1.30**
+    (KEP-4006). Older clusters cannot run agent deciders. Static
+    `allow`/`deny` rules are evaluated entirely sidecar-side and do
+    not need the control channel.
+  * **Control channel drop**: if the channel drops, any `:decide`
+    request in flight at that instant is denied (the sidecar's
+    decide timeout fires). The bridge re-dials with capped backoff,
+    so subsequent requests recover; it is not a permanent
+    degradation. `allow`/`deny` traffic is unaffected.
 
 ## RBAC
 
 In addition to the existing pod / pods/exec verbs the Kubernetes
 sandbox needs, `:network_policy` requires the cluster identity to
 create and delete `secrets` and `networkpolicies` in the target
-namespace:
+namespace. A policy that uses a `:decide` rule also needs
+`pods/portforward` for the BEAM to reach the sidecar control channel:
 
 ```yaml
 - apiGroups: [""]
@@ -291,6 +303,9 @@ namespace:
 - apiGroups: ["networking.k8s.io"]
   resources: ["networkpolicies"]
   verbs: ["get", "create", "delete"]
+- apiGroups: [""]
+  resources: ["pods/portforward"]
+  verbs: ["create"]
 ```
 
 See `guides/sandbox.md` for the base RBAC bundle.
