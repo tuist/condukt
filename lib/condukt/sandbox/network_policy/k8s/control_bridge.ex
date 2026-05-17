@@ -5,16 +5,21 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   # the BEAM and the sidecar `condukt-egress` proxy running in a session
   # pod.
   #
-  # We piggyback on the K8s `pods/exec` websocket the rest of the K8s
-  # sandbox already uses, instead of implementing a fresh
-  # `pods/portforward` client. The BEAM execs
-  # `condukt-egress control-bridge` inside the sidecar container; the
-  # subcommand pumps stdin/stdout against the proxy's control TCP port
-  # on `127.0.0.1:15002` in the sidecar's network namespace.
+  # Transport is a `pods/portforward` WebSocket to the proxy's control
+  # port (`Condukt.Sandbox.NetworkPolicy.K8s.PortForward`): a real
+  # socket, not a command's stdout. The bridge is transport agnostic:
+  # PortForward feeds it `{:control_bridge_data, binary}` for inbound
+  # NDJSON and `{:control_bridge_eof}` when the channel drops; the
+  # bridge writes decisions back through an injected `send_fn`.
   #
-  # Stdout from the exec'd process is the sidecar's outbound NDJSON
-  # stream (events + decision_requests). Stdin is the BEAM's responses
-  # (decisions). The `:k8s` library's exec helper provides both halves.
+  # The channel is supervised: if it drops, the bridge re-dials with
+  # capped exponential backoff instead of taking the session down with
+  # it. A request in flight when the channel dies still gets denied
+  # (the sidecar's decide_timeout fires), but subsequent requests
+  # recover once the channel is back. Decisions are computed
+  # synchronously inside the bridge process, so a reconnect can never
+  # interleave with an in-progress decision: no decision can be sent
+  # over a stale channel.
   #
   # Per-host decision caching, decider invocation, telemetry emission,
   # and context assembly all live here. The owning K8s sandbox starts one
@@ -26,11 +31,15 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   alias Condukt.Sandbox.NetworkPolicy.Context
   alias Condukt.Sandbox.NetworkPolicy.Decider
   alias Condukt.Sandbox.NetworkPolicy.Event
+  alias Condukt.Sandbox.NetworkPolicy.K8s.PortForward
   alias Condukt.Sandbox.NetworkPolicy.Request
 
   require Logger
 
-  @sidecar_container Condukt.Sandbox.NetworkPolicy.K8s.Manifests.sidecar_container_name()
+  @control_port 15_002
+  @max_reconnects 10
+  @backoff_base_ms 500
+  @backoff_max_ms 15_000
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -48,42 +57,46 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
     session_id = Keyword.fetch!(opts, :session_id)
     policy = Keyword.fetch!(opts, :policy)
     owner_pid = Keyword.get(opts, :owner_pid)
+    port = Keyword.get(opts, :control_port, @control_port)
 
     Process.flag(:trap_exit, true)
 
-    parent = self()
-    ref = make_ref()
-    {collector_pid, collector_ref} = spawn_monitor(fn -> collector_loop(parent, ref) end)
+    # Injectable so the reconnect logic is unit-testable without a
+    # cluster. Production default dials a real pods/portforward.
+    connector =
+      Keyword.get(opts, :connector) ||
+        fn owner ->
+          PortForward.start_link(
+            conn: conn,
+            namespace: namespace,
+            pod_name: pod_name,
+            port: port,
+            owner: owner
+          )
+        end
 
-    op =
-      K8s.Client.connect(
-        "v1",
-        "pods/exec",
-        [namespace: namespace, name: pod_name],
-        command: ["condukt-egress", "control-bridge"],
-        container: @sidecar_container,
-        tty: false
-      )
+    state = %{
+      session_id: session_id,
+      policy: policy,
+      decide_spec: Decider.policy_spec(policy),
+      owner_pid: owner_pid,
+      connector: connector,
+      max_reconnects: Keyword.get(opts, :max_reconnects, @max_reconnects),
+      pf: nil,
+      pf_ref: nil,
+      send_fn: nil,
+      buffer: "",
+      cache: %{},
+      attempts: 0
+    }
 
-    case K8s.Client.stream_to(conn, op, [recv_timeout: :infinity], collector_pid) do
-      {:ok, send_fn} ->
-        state = %{
-          session_id: session_id,
-          policy: policy,
-          decide_spec: Decider.policy_spec(policy),
-          owner_pid: owner_pid,
-          send_fn: send_fn,
-          collector_pid: collector_pid,
-          collector_ref: collector_ref,
-          buffer: "",
-          cache: %{}
-        }
-
+    case open_channel(state) do
+      {:ok, state} ->
         {:ok, state}
 
       {:error, reason} ->
-        Logger.warning(fn -> "[sandbox.network_policy.k8s] control bridge exec failed: #{inspect(reason)}" end)
-        {:stop, {:exec_failed, reason}}
+        Logger.warning(fn -> "[sandbox.network_policy.k8s] control bridge connect failed: #{inspect(reason)}" end)
+        {:stop, {:connect_failed, reason}}
     end
   end
 
@@ -95,11 +108,29 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   end
 
   def handle_info({:control_bridge_eof}, state) do
-    {:stop, :normal, state}
+    schedule_reconnect(state)
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{collector_ref: ref} = state) do
-    {:stop, :normal, state}
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{pf_ref: ref} = state) do
+    schedule_reconnect(state)
+  end
+
+  def handle_info(:reconnect, state) do
+    case open_channel(state) do
+      {:ok, state} ->
+        Logger.info(fn -> "[sandbox.network_policy.k8s] control bridge reconnected" end)
+        {:noreply, state}
+
+      {:error, reason} ->
+        attempts = state.attempts + 1
+
+        if attempts >= state.max_reconnects do
+          {:stop, {:portforward_unrecoverable, reason}, state}
+        else
+          Process.send_after(self(), :reconnect, backoff(attempts))
+          {:noreply, %{state | attempts: attempts}}
+        end
+    end
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -110,31 +141,34 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
     :ok
   end
 
-  defp collector_loop(parent, ref) do
-    receive do
-      {:open, true} ->
-        collector_loop(parent, ref)
+  defp open_channel(state) do
+    case state.connector.(self()) do
+      {:ok, pf} ->
+        ref = Process.monitor(pf)
 
-      {:stdout, data} when is_binary(data) ->
-        send(parent, {:control_bridge_data, data})
-        collector_loop(parent, ref)
+        {:ok,
+         %{state | pf: pf, pf_ref: ref, send_fn: build_send_fn(pf), buffer: "", attempts: 0}}
 
-      {:stderr, data} when is_binary(data) ->
-        Logger.debug(fn -> "[sandbox.network_policy.k8s] bridge stderr: #{inspect(data)}" end)
-        collector_loop(parent, ref)
-
-      :close ->
-        send(parent, {:control_bridge_eof})
-
-      :exit ->
-        send(parent, {:control_bridge_eof})
-
-      {:exit, _code} ->
-        send(parent, {:control_bridge_eof})
-
-      _ ->
-        collector_loop(parent, ref)
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp build_send_fn(pf) do
+    fn
+      {:stdin, payload} -> PortForward.send_payload(pf, payload)
+      :close -> PortForward.close(pf)
+    end
+  end
+
+  defp schedule_reconnect(state) do
+    if state.pf_ref, do: Process.demonitor(state.pf_ref, [:flush])
+    Process.send_after(self(), :reconnect, backoff(state.attempts))
+    {:noreply, %{state | pf: nil, pf_ref: nil, send_fn: nil, buffer: ""}}
+  end
+
+  defp backoff(attempts) do
+    min(@backoff_max_ms, @backoff_base_ms * Integer.pow(2, min(attempts, 5)))
   end
 
   defp drain_lines(state, data) do
@@ -257,6 +291,8 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   end
 
   defp serialise_message(other), do: other
+
+  defp send_decision(nil, _id, _decision), do: :ok
 
   defp send_decision(send_fn, id, :allow) do
     payload =

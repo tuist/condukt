@@ -10,23 +10,29 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
   # can drive the frame-handling logic directly without a live
   # pods/exec channel. send_fn is injected to capture what the bridge
   # would have written to the sidecar's stdin.
-  defp state(policy, test_pid) do
+  defp state(policy, test_pid, overrides \\ %{}) do
     send_fn = fn
       {:stdin, payload} -> send(test_pid, {:stdin, payload})
       :close -> send(test_pid, :closed)
     end
 
-    %{
-      session_id: "s1",
-      policy: policy,
-      decide_spec: Decider.policy_spec(policy),
-      owner_pid: nil,
-      send_fn: send_fn,
-      collector_pid: nil,
-      collector_ref: make_ref(),
-      buffer: "",
-      cache: %{}
-    }
+    Map.merge(
+      %{
+        session_id: "s1",
+        policy: policy,
+        decide_spec: Decider.policy_spec(policy),
+        owner_pid: nil,
+        connector: fn _owner -> {:error, :stub} end,
+        max_reconnects: 10,
+        pf: nil,
+        pf_ref: make_ref(),
+        send_fn: send_fn,
+        buffer: "",
+        cache: %{},
+        attempts: 0
+      },
+      overrides
+    )
   end
 
   defp event_frame(kind, host, extra \\ %{}) do
@@ -190,16 +196,49 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
     end
   end
 
-  describe "lifecycle" do
-    test "EOF stops the bridge normally" do
+  describe "lifecycle / reconnect" do
+    test "EOF schedules a reconnect instead of stopping" do
       st = state(%NetworkPolicy{}, self())
-      assert {:stop, :normal, ^st} = ControlBridge.handle_info({:control_bridge_eof}, st)
+      assert {:noreply, st} = ControlBridge.handle_info({:control_bridge_eof}, st)
+      assert st.pf == nil
+      assert st.send_fn == nil
+      assert_receive :reconnect, 1_000
     end
 
-    test "the collector going down stops the bridge" do
+    test "the portforward going down schedules a reconnect" do
       st = state(%NetworkPolicy{}, self())
-      msg = {:DOWN, st.collector_ref, :process, self(), :killed}
-      assert {:stop, :normal, ^st} = ControlBridge.handle_info(msg, st)
+      msg = {:DOWN, st.pf_ref, :process, self(), :killed}
+      assert {:noreply, _st} = ControlBridge.handle_info(msg, st)
+      assert_receive :reconnect, 1_000
+    end
+
+    test ":reconnect re-establishes the channel via the connector" do
+      pf = spawn(fn -> Process.sleep(:infinity) end)
+      st = state(%NetworkPolicy{}, self(), %{connector: fn _owner -> {:ok, pf} end, pf: nil, send_fn: nil})
+
+      assert {:noreply, st} = ControlBridge.handle_info(:reconnect, st)
+      assert st.pf == pf
+      assert is_function(st.send_fn, 1)
+      assert st.attempts == 0
+    end
+
+    test ":reconnect backs off and retries while under the attempt cap" do
+      st = state(%NetworkPolicy{}, self(), %{connector: fn _ -> {:error, :down} end, attempts: 0})
+      assert {:noreply, st} = ControlBridge.handle_info(:reconnect, st)
+      assert st.attempts == 1
+      assert_receive :reconnect, 2_000
+    end
+
+    test ":reconnect stops the bridge once the attempt cap is hit" do
+      st =
+        state(%NetworkPolicy{}, self(), %{
+          connector: fn _ -> {:error, :down} end,
+          attempts: 9,
+          max_reconnects: 10
+        })
+
+      assert {:stop, {:portforward_unrecoverable, :down}, _st} =
+               ControlBridge.handle_info(:reconnect, st)
     end
 
     test "an unrelated message is ignored" do
