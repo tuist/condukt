@@ -19,6 +19,8 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   alias Condukt.Sandbox.NetworkPolicy.Event
   alias Condukt.Sandbox.NetworkPolicy.Request
 
+  require Logger
+
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
   end
@@ -92,8 +94,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlReader do
   end
 
   defp log_drop(reason) do
-    require Logger
-
     Logger.warning(fn -> "[sandbox.network_policy.k8s] dropping malformed event line: #{inspect(reason)}" end)
   end
 

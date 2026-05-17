@@ -28,6 +28,8 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   alias Condukt.Sandbox.NetworkPolicy.Event
   alias Condukt.Sandbox.NetworkPolicy.Request
 
+  require Logger
+
   @sidecar_container Condukt.Sandbox.NetworkPolicy.K8s.Manifests.sidecar_container_name()
 
   def start_link(opts) do
@@ -80,8 +82,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         {:ok, state}
 
       {:error, reason} ->
-        require Logger
-
         Logger.warning(fn -> "[sandbox.network_policy.k8s] control bridge exec failed: #{inspect(reason)}" end)
         {:stop, {:exec_failed, reason}}
     end
@@ -120,8 +120,6 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         collector_loop(parent, ref)
 
       {:stderr, data} when is_binary(data) ->
-        require Logger
-
         Logger.debug(fn -> "[sandbox.network_policy.k8s] bridge stderr: #{inspect(data)}" end)
         collector_loop(parent, ref)
 
@@ -160,14 +158,10 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         respond_to_decision_request(state, frame)
 
       {:ok, other} ->
-        require Logger
-
         Logger.warning(fn -> "[sandbox.network_policy.k8s] unknown frame type: #{inspect(other)}" end)
         state
 
       {:error, reason} ->
-        require Logger
-
         Logger.warning(fn -> "[sandbox.network_policy.k8s] bad frame: #{inspect(reason)} line=#{inspect(line)}" end)
         state
     end
