@@ -15,9 +15,10 @@
 //!   `SO_ORIGINAL_DST`, peeks the TLS ClientHello for SNI, evaluates the
 //!   per-session policy, and either forwards bytes through transparently
 //!   (Tier 1) or terminates TLS with a per-session CA-signed leaf to
-//!   capture method/path/headers/body (Tier 2). Events stream back to the
-//!   BEAM-side `Condukt.Sandbox.NetworkPolicy` over a length-prefixed JSON control
-//!   channel.
+//!   capture method/path/headers/body (Tier 2). It also listens on a
+//!   control TCP port carrying the NDJSON event + decision channel; the
+//!   BEAM reaches that port directly via `pods/portforward`, so no
+//!   stdin/stdout bridge subcommand is needed.
 //!
 //! The two modes share the same image so K8s pulls one artifact for both
 //! the init and sidecar containers. The pod spec selects the mode via
@@ -25,7 +26,6 @@
 
 use clap::{Parser, Subcommand};
 
-mod control_bridge;
 mod netfilter;
 mod proxy;
 
@@ -46,11 +46,6 @@ enum Mode {
 
     /// Run the transparent proxy. Long-lived sidecar mode.
     Proxy(proxy::Args),
-
-    /// Bridge stdin/stdout with the proxy's control TCP port. Used by
-    /// the BEAM-side `Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge` over a
-    /// `pods/exec` websocket to carry NDJSON event + decision traffic.
-    ControlBridge(control_bridge::Args),
 }
 
 fn main() -> std::process::ExitCode {
@@ -58,7 +53,6 @@ fn main() -> std::process::ExitCode {
     let result = match cli.mode {
         Mode::NetfilterSetup(args) => netfilter::run(args),
         Mode::Proxy(args) => proxy::run(args),
-        Mode::ControlBridge(args) => control_bridge::run(args),
     };
 
     match result {
