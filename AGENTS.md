@@ -32,71 +32,37 @@
 ## Network Policy
 
 - `Condukt.Sandbox.NetworkPolicy` is the per-session egress audit +
-  policy layer. Configured via
-  `network_policy: %Condukt.Sandbox.NetworkPolicy{...}` on the
-  `Condukt.Sandbox.Kubernetes` sandbox spec. Other sandboxes silently
-  ignore the option (no enforcement plane available).
-- `rules` is a keyword list whose entries are walked top to bottom.
-  Three kinds ship in the runtime: `allow: [host_globs]`,
-  `deny: [host_globs]`, and `decide: callable`. The decider callable
-  can be a 2-arity function, `{module, function}`, a module alone
-  (calling `module.decide(ctx, req, [])`), or `{module, opts}`.
-  Decide tuning is scoped to the rule, not the struct: pass the
-  `decide:` value as a keyword list with the callable under `:call`
-  plus any of `:timeout`, `:cache`, `:context_messages`,
-  `:context_metadata` (`Condukt.Sandbox.NetworkPolicy.Decider.spec/1`
-  normalizes both forms). The `NetworkPolicy` struct itself only
-  carries `:rules`, `:default`, `:redact`, `:max_body_capture`.
-  `Condukt.Sandbox.NetworkPolicy.AgentDecider` wraps a `Condukt`
-  agent as a decider.
-- The K8s integration adds an init container (writes iptables NAT
-  rules with CAP_NET_ADMIN, then exits) and a sidecar
-  (`condukt-egress proxy`) to the pod, plus a per-session `Secret`
-  (policy JSON + ephemeral CA cert/key) and `NetworkPolicy` (egress
-  scoped to DNS + tcp/80,443). All teardown is best-effort on
-  shutdown when `:delete_on_shutdown` is true.
-- The BEAM<->sidecar control channel (only started when the policy
-  has a `:decide` rule) is a `pods/portforward` WebSocket to the
-  proxy's control port, owned by
-  `Condukt.Sandbox.NetworkPolicy.K8s.PortForward` and consumed by
-  `...K8s.ControlBridge`. PortForward drives `Mint.WebSocket`
-  directly (the `:k8s` client models exec only), reuses the
-  `K8s.Conn` for auth/TLS, sets the `v4.channel.k8s.io` subprotocol,
-  and runs framing through `...PortForward.Codec`. The bridge
-  supervises the channel: on drop it re-dials with capped backoff
-  (an in-flight `:decide` denies once, then recovers). Requires a
-  cluster serving WebSocket port-forward (Kubernetes >= 1.30,
-  KEP-4006) and the `pods/portforward` RBAC verb. There is no
-  `condukt-egress` control-bridge subcommand; the BEAM reaches the
-  control port directly.
-- The sidecar image is `ghcr.io/tuist/condukt-egress:<version>`,
-  published by the release workflow. `default_image/0` resolves to
-  the tag matching the installed Condukt version; override with the
-  top-level `:network_policy_image` option on
-  `Condukt.Sandbox.Kubernetes` when mirroring or pinning.
-- The workspace cooperates with the MITM without any image
-  preparation. The K8s pod spec injects the canonical TLS-client env
-  vars (`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`,
-  `PIP_CERT`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`) pointing at
-  `/etc/condukt/ca.pem`, and overlays a synthesized trust bundle
-  (Mozilla public roots plus the per-session CA, shipped under
-  `priv/ca-certificates/mozilla.pem` and assembled by
-  `Condukt.Sandbox.NetworkPolicy.CA.trust_bundle/1`) at
-  `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` via
-  `subPath` mounts. The only stack that still needs image-side
-  cooperation is Java keystores.
-- The Rust sidecar lives under `native/condukt_egress/` and ships a
-  single binary with two subcommands (`netfilter-setup` and
-  `proxy`). Rust toolchain pinned in
-  `native/condukt_egress/rust-toolchain.toml`. Built and pushed to
-  ghcr by `.github/workflows/release.yml`.
-- ALPN advertises both `h2` and `http/1.1`; the sidecar terminates
-  whichever the client picks and forwards over the matching protocol
-  to the upstream. Mixed-protocol connections fall back to
-  byte-splice. See `guides/network_policy.md` for the topology
-  diagram, policy model (`allow` / `deny` / `decide` / `default`),
-  decider forms (function, MFA, module, agent), context snapshot
-  shape, and known limitations.
+  policy layer. Set it via `network_policy:` on the
+  `Condukt.Sandbox.Kubernetes` spec; other sandboxes ignore the
+  option (no enforcement plane).
+- `rules` is a keyword list walked top to bottom: `allow:`/`deny:`
+  host globs and `decide:` callable (2-arity fun, `{mod, fun}`, a
+  module, or `{mod, opts}`). Decide tuning is scoped to the rule:
+  `decide: [call: callable, timeout:, cache:, context_messages:,
+  context_metadata:]`. The struct itself only carries `:rules`,
+  `:default`, `:redact`, `:max_body_capture`.
+  `...NetworkPolicy.AgentDecider` wraps a `Condukt` agent and injects
+  the decision contract as the agent's `:output` schema; do not
+  describe the wire format in the agent prompt.
+- A `:decide` rule needs the BEAM<->sidecar control channel: a
+  `pods/portforward` WebSocket (`...K8s.PortForward` ->
+  `...K8s.ControlBridge`, supervised, re-dials with backoff). This
+  requires a cluster serving WebSocket port-forward (Kubernetes >=
+  1.30, KEP-4006) and the `pods/portforward` RBAC verb;
+  `allow`/`deny`-only policies do not. There is no `condukt-egress`
+  control-bridge subcommand: the BEAM reaches the control port
+  directly.
+- The Rust sidecar lives under `native/condukt_egress/` (one binary,
+  `netfilter-setup` + `proxy` subcommands; toolchain pinned in its
+  `rust-toolchain.toml`; image `ghcr.io/tuist/condukt-egress:<version>`
+  built by `.github/workflows/release.yml`, overridable per-spec via
+  `:network_policy_image`). Its Dockerfile build is verified on every
+  PR by `.github/workflows/condukt-egress.yml`. Workspace MITM trust
+  is injected by the pod spec with no image preparation (Java
+  keystores excepted).
+- See `guides/network_policy.md` for topology, the policy/decider
+  model, context shape, telemetry, trust-injection details, and
+  limitations. Keep deep architecture there, not here.
 
 ## MCP
 
