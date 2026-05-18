@@ -22,6 +22,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
         policy: policy,
         decide_spec: Decider.policy_spec(policy),
         owner_pid: nil,
+        owner_ref: nil,
         connector: fn _owner -> {:error, :stub} end,
         max_reconnects: 10,
         pf: nil,
@@ -210,6 +211,22 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
       msg = {:DOWN, st.pf_ref, :process, self(), :killed}
       assert {:noreply, _st} = ControlBridge.handle_info(msg, st)
       assert_receive :reconnect, 1_000
+    end
+
+    test "the owner going down stops :normal (collapses the subtree)" do
+      owner_ref = make_ref()
+      st = state(%NetworkPolicy{}, self(), %{owner_ref: owner_ref})
+      msg = {:DOWN, owner_ref, :process, self(), :shutdown}
+
+      assert {:stop, :normal, ^st} = ControlBridge.handle_info(msg, st)
+      # It must NOT try to reconnect: the session is gone.
+      refute_receive :reconnect, 200
+    end
+
+    test "a DOWN that is neither owner nor portforward is ignored" do
+      st = state(%NetworkPolicy{}, self(), %{owner_ref: make_ref()})
+      msg = {:DOWN, make_ref(), :process, self(), :normal}
+      assert {:noreply, ^st} = ControlBridge.handle_info(msg, st)
     end
 
     test ":reconnect re-establishes the channel via the connector" do

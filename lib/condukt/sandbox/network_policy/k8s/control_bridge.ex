@@ -61,6 +61,14 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
 
     Process.flag(:trap_exit, true)
 
+    # Bind the bridge's lifetime to the gated session: when the owner
+    # goes away there is nothing left to gate, so stop `:normal`. As a
+    # transient + significant child that collapses the per-session
+    # ControlChannel subtree, which is what prevents an orphaned bridge
+    # + portforward socket on an abnormal session exit, independent of
+    # any explicit sandbox teardown.
+    owner_ref = if is_pid(owner_pid), do: Process.monitor(owner_pid)
+
     # Injectable so the reconnect logic is unit-testable without a
     # cluster. Production default dials a real pods/portforward.
     connector =
@@ -80,6 +88,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
       policy: policy,
       decide_spec: Decider.policy_spec(policy),
       owner_pid: owner_pid,
+      owner_ref: owner_ref,
       connector: connector,
       max_reconnects: Keyword.get(opts, :max_reconnects, @max_reconnects),
       pf: nil,
@@ -109,6 +118,13 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
 
   def handle_info({:control_bridge_eof}, state) do
     schedule_reconnect(state)
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{owner_ref: ref} = state) when is_reference(ref) do
+    # The gated session is gone. Stop `:normal` so the transient +
+    # significant child is not restarted and the per-session
+    # ControlChannel subtree auto-shuts-down with it.
+    {:stop, :normal, state}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{pf_ref: ref} = state) do

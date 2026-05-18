@@ -288,6 +288,41 @@ backends.
     so subsequent requests recover; it is not a permanent
     degradation. `allow`/`deny` traffic is unaffected.
 
+## Supervision
+
+When a policy has a `:decide` rule, the control channel runs as a
+proper OTP subtree, not a bare linked process:
+
+```
+Condukt.Supervisor (application)
+└── ControlChannelSupervisor      DynamicSupervisor, one_for_one
+    └── ControlChannel  (1/session) Supervisor, one_for_one,
+        │                           auto_shutdown: :any_significant
+        └── ControlBridge          restart: :transient, significant: true
+            └── PortForward        linked + monitored worker
+```
+
+The rules are chosen so the subtree's lifetime tracks the gated
+session:
+
+  * `ControlBridge` monitors the session's owner process. When the
+    session goes away there is nothing left to gate, so it stops
+    `:normal`.
+  * Because `ControlBridge` is `:transient` and `significant: true`
+    under a supervisor with `auto_shutdown: :any_significant`, a clean
+    stop collapses the whole per-session subtree (no orphaned bridge
+    or port-forward socket), while a *crash* is restarted locally.
+  * `ControlChannel` is a `:temporary` child of the
+    `DynamicSupervisor` with a bounded restart intensity. One
+    session's failure never cascades to another's, and a permanently
+    unreachable apiserver makes that session's channel give up rather
+    than hot-loop. The session keeps running; `:decide` requests then
+    fail closed via the sidecar's decide timeout.
+
+Tearing the sandbox down explicitly (`Sandbox.shutdown/1`) stops the
+subtree too, and is idempotent if the subtree already collapsed on its
+own.
+
 ## RBAC
 
 In addition to the existing pod / pods/exec verbs the Kubernetes

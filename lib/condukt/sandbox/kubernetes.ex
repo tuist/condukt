@@ -121,7 +121,7 @@ defmodule Condukt.Sandbox.Kubernetes do
   alias Condukt.Sandbox.Kubernetes.WorkspaceSource
   alias Condukt.Sandbox.NetworkPolicy
   alias Condukt.Sandbox.NetworkPolicy.K8s, as: NetK8s
-  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlChannelSupervisor
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -167,10 +167,10 @@ defmodule Condukt.Sandbox.Kubernetes do
     :ok
   end
 
-  defp stop_net_bridge(%State{net_bridge_pid: nil}), do: :ok
+  defp stop_net_bridge(%State{net_channel_pid: nil}), do: :ok
 
-  defp stop_net_bridge(%State{net_bridge_pid: pid}) when is_pid(pid) do
-    ControlBridge.stop(pid)
+  defp stop_net_bridge(%State{net_channel_pid: pid}) when is_pid(pid) do
+    ControlChannelSupervisor.stop_session(pid)
     :ok
   end
 
@@ -475,8 +475,8 @@ defmodule Condukt.Sandbox.Kubernetes do
         owner_pid: state.owner_pid
       ]
 
-      case ControlBridge.start_link(bridge_opts) do
-        {:ok, pid} -> {:ok, %{state | net_bridge_pid: pid}}
+      case ControlChannelSupervisor.start_session(bridge_opts) do
+        {:ok, pid} -> {:ok, %{state | net_channel_pid: pid}}
         {:error, reason} -> {:error, {:net_bridge_failed, reason}}
       end
     else

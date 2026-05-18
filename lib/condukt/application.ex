@@ -4,17 +4,22 @@ defmodule Condukt.Application do
   use Application
 
   alias Condukt.Engine
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlChannelSupervisor
 
   @impl true
   def start(_type, _args) do
     register_providers()
 
+    # The control-channel registry is always supervised: a K8s sandbox
+    # with a `:decide` policy starts its per-session subtree under it.
+    # It comes up before the engine Task, which can create sessions.
     children =
-      if engine_release?() do
-        [{Task, fn -> run_engine() end}]
-      else
-        []
-      end
+      [ControlChannelSupervisor] ++
+        if engine_release?() do
+          [{Task, fn -> run_engine() end}]
+        else
+          []
+        end
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Condukt.Supervisor)
   end
