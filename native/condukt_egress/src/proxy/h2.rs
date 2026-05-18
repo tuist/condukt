@@ -185,3 +185,24 @@ fn empty_body() -> BoxedBody {
         .map_err(|never| -> BoxError { match never {} })
         .boxed()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn error_response_is_502_carrying_the_message() {
+        let resp = error_response("upstream blew up".into());
+        assert_eq!(resp.status(), 502);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"upstream blew up");
+    }
+
+    #[tokio::test]
+    async fn empty_body_yields_no_bytes() {
+        let collected = empty_body().collect().await.unwrap().to_bytes();
+        assert!(collected.is_empty());
+    }
+}

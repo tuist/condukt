@@ -162,3 +162,92 @@ pub enum DecisionAction {
     Allow,
     Deny,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::policy::MatchedRule;
+    use serde_json::json;
+
+    fn request() -> Request {
+        Request::new("api.github.com".into(), 443, None, Some("s1".into()))
+    }
+
+    #[test]
+    fn request_new_infers_scheme_from_port() {
+        assert_eq!(request().scheme, "https");
+        let http = Request::new("h".into(), 80, None, None);
+        assert_eq!(http.scheme, "http");
+        assert!(http.session_id.is_none());
+    }
+
+    #[test]
+    fn outbound_event_is_tagged_and_snake_cased() {
+        let ev = Event::new(Kind::RequestDenied, request())
+            .with_reason("matched_deny_list")
+            .with_matched_rule(MatchedRule {
+                index: 1,
+                kind: "deny".into(),
+            });
+
+        let v = serde_json::to_value(Outbound::Event(Box::new(ev))).unwrap();
+        assert_eq!(v["type"], "event");
+        assert_eq!(v["kind"], "request_denied");
+        assert_eq!(v["reason"], "matched_deny_list");
+        assert_eq!(v["matched_rule"]["index"], 1);
+        assert_eq!(v["matched_rule"]["kind"], "deny");
+        assert_eq!(v["request"]["host"], "api.github.com");
+    }
+
+    #[test]
+    fn optional_fields_are_omitted_when_absent() {
+        let v = serde_json::to_value(Outbound::Event(Box::new(Event::new(
+            Kind::RequestOpened,
+            request(),
+        ))))
+        .unwrap();
+
+        assert!(v.get("reason").is_none());
+        assert!(v.get("matched_rule").is_none());
+        assert!(v["request"].get("method").is_none());
+    }
+
+    #[test]
+    fn decision_request_is_tagged() {
+        let v = serde_json::to_value(Outbound::DecisionRequest {
+            id: "d1".into(),
+            session_id: Some("s1".into()),
+            host: "evil.com".into(),
+            port: 443,
+            scheme: "https".into(),
+        })
+        .unwrap();
+
+        assert_eq!(v["type"], "decision_request");
+        assert_eq!(v["id"], "d1");
+        assert_eq!(v["host"], "evil.com");
+    }
+
+    #[test]
+    fn inbound_decision_parses_action_and_optional_reason() {
+        let parsed: Inbound =
+            serde_json::from_value(json!({"type": "decision", "id": "d1", "action": "deny"}))
+                .unwrap();
+
+        match parsed {
+            Inbound::Decision { id, action, reason } => {
+                assert_eq!(id, "d1");
+                assert_eq!(action, DecisionAction::Deny);
+                assert!(reason.is_none());
+            }
+            other => panic!("expected Decision, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_inbound_type_falls_through_instead_of_erroring() {
+        let parsed: Inbound =
+            serde_json::from_value(json!({"type": "from_the_future", "x": 1})).unwrap();
+        assert!(matches!(parsed, Inbound::Unknown));
+    }
+}

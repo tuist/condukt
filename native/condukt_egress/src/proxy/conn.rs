@@ -398,3 +398,51 @@ fn load_system_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_http_host_reads_the_host_header_case_insensitively() {
+        let req = b"GET / HTTP/1.1\r\nHost: api.github.com\r\nAccept: */*\r\n\r\n";
+        assert_eq!(parse_http_host(req), Some("api.github.com".to_string()));
+
+        let lower = b"GET / HTTP/1.1\r\nhost:  lower.example.com \r\n\r\n";
+        assert_eq!(
+            parse_http_host(lower),
+            Some("lower.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_http_host_is_none_without_a_host_header() {
+        assert_eq!(parse_http_host(b"GET / HTTP/1.1\r\n\r\n"), None);
+        // Non-UTF8 must not panic.
+        assert_eq!(parse_http_host(&[0xff, 0xfe, 0x00]), None);
+    }
+
+    #[test]
+    fn identify_host_uses_the_http_host_on_plain_ports() {
+        let req = b"GET / HTTP/1.1\r\nHost: plain.example.com\r\n\r\n";
+        assert_eq!(
+            identify_host(req, 80, "10.0.0.1".into()),
+            "plain.example.com"
+        );
+    }
+
+    #[test]
+    fn identify_host_falls_back_to_the_destination_ip() {
+        // Port 443 but no parseable ClientHello: fall back to dst ip
+        // rather than leak a bogus host into the policy decision.
+        assert_eq!(
+            identify_host(b"not tls at all", 443, "203.0.113.5".into()),
+            "203.0.113.5"
+        );
+        // Plain port, garbage request: same fallback.
+        assert_eq!(
+            identify_host(b"\x00\x01\x02", 80, "203.0.113.9".into()),
+            "203.0.113.9"
+        );
+    }
+}

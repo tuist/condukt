@@ -196,3 +196,68 @@ async fn handle_line(line: &str, pending: &Mutex<HashMap<String, oneshot::Sender
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn pending() -> Mutex<HashMap<String, oneshot::Sender<Decision>>> {
+        Mutex::new(HashMap::new())
+    }
+
+    #[tokio::test]
+    async fn handle_line_resolves_the_matching_pending_decision() {
+        let map = pending();
+        let (tx, rx) = oneshot::channel::<Decision>();
+        map.lock().await.insert("d1".to_string(), tx);
+
+        handle_line(
+            r#"{"type":"decision","id":"d1","action":"deny","reason":"nope"}"#,
+            &map,
+        )
+        .await;
+
+        let decision = rx.await.expect("pending decision should be resolved");
+        assert_eq!(decision.action, DecisionAction::Deny);
+        assert_eq!(decision.reason.as_deref(), Some("nope"));
+        assert!(
+            map.lock().await.is_empty(),
+            "resolved id must be removed from the pending map"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_line_tolerates_unknown_id_bad_json_and_unknown_type() {
+        let map = pending();
+
+        // None of these should panic or leave state behind.
+        handle_line(r#"{"type":"decision","id":"ghost","action":"allow"}"#, &map).await;
+        handle_line("definitely not json", &map).await;
+        handle_line(r#"{"type":"from_the_future"}"#, &map).await;
+
+        assert!(map.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn request_decision_returns_none_when_no_peer_answers() {
+        let channel = ControlChannel::start("127.0.0.1:0").await.unwrap();
+
+        let result = channel
+            .request_decision(
+                "d9".into(),
+                Some("s1".into()),
+                "evil.com".into(),
+                443,
+                "https".into(),
+                Duration::from_millis(50),
+            )
+            .await;
+
+        assert!(result.is_none(), "no peer connected, so it must time out");
+        assert!(
+            channel.pending.lock().await.is_empty(),
+            "a timed-out request must not leak its pending entry"
+        );
+    }
+}

@@ -76,3 +76,80 @@ fn main() -> std::process::ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn netfilter_setup_parses_with_defaults() {
+        let cli = Cli::try_parse_from(["condukt-egress", "netfilter-setup"]).unwrap();
+        match cli.mode {
+            Mode::NetfilterSetup(args) => {
+                assert_eq!(args.proxy_port, 15_001);
+                assert_eq!(args.sidecar_uid, 1337);
+                assert_eq!(args.iptables_bin, "iptables");
+            }
+            other => panic!("expected NetfilterSetup, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proxy_requires_the_ca_paths() {
+        // Both CA paths are mandatory; omitting them is a parse error,
+        // not a panic at runtime.
+        assert!(Cli::try_parse_from(["condukt-egress", "proxy"]).is_err());
+
+        let cli = Cli::try_parse_from([
+            "condukt-egress",
+            "proxy",
+            "--ca-cert-path",
+            "/etc/condukt/ca.pem",
+            "--ca-key-path",
+            "/etc/condukt/ca.key",
+        ])
+        .unwrap();
+
+        match cli.mode {
+            Mode::Proxy(args) => {
+                assert_eq!(args.ca_cert_path, "/etc/condukt/ca.pem");
+                assert_eq!(args.ca_key_path, "/etc/condukt/ca.key");
+                assert_eq!(args.listen, "0.0.0.0:15001");
+                assert_eq!(args.control_listen, "0.0.0.0:15002");
+                assert_eq!(args.policy_file, "/etc/condukt/policy.json");
+                assert!(args.session_id.is_none());
+            }
+            other => panic!("expected Proxy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_subcommand_is_rejected() {
+        assert!(Cli::try_parse_from(["condukt-egress", "wat"]).is_err());
+    }
+
+    #[test]
+    fn proxy_flags_override_defaults() {
+        let cli = Cli::try_parse_from([
+            "condukt-egress",
+            "proxy",
+            "--ca-cert-path",
+            "/c",
+            "--ca-key-path",
+            "/k",
+            "--listen",
+            "127.0.0.1:1",
+            "--session-id",
+            "sess-9",
+        ])
+        .unwrap();
+
+        match cli.mode {
+            Mode::Proxy(args) => {
+                assert_eq!(args.listen, "127.0.0.1:1");
+                assert_eq!(args.session_id.as_deref(), Some("sess-9"));
+            }
+            other => panic!("expected Proxy, got {other:?}"),
+        }
+    }
+}
