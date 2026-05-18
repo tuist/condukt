@@ -15,26 +15,30 @@
 # stable. Future revision: switch to distroless+manual lib copy once
 # we have CI coverage that catches missing-lib regressions.
 
-FROM rust:1.94-bookworm AS builder
-
+# cargo-chef caches the compiled dependency closure (rustls, tokio,
+# hyper, rcgen, ...) in a layer keyed only by the dependency graph, so
+# source-only edits reuse it instead of rebuilding from scratch on
+# every CI run. We use cargo-chef rather than the "stub main" trick
+# because that trick relies on file mtimes: after COPYing real sources,
+# cargo can see the stub-built artifact as newer than the sources and
+# skip the real rebuild, shipping a do-nothing binary. cargo-chef never
+# builds the bin in the cook step, so there is no stale fingerprint.
+# The `cargo install` layer is keyed on the base image alone.
+FROM rust:1.94-bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /src
+
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Compile the dependency graph against a stub `main` first. This layer's
-# cache key is the manifests only, so source-only edits reuse the
-# already-compiled dependency closure (rustls, tokio, hyper, rcgen, ...)
-# instead of rebuilding it from scratch on every CI run. `cargo fetch`
-# alone would not help: it only downloads crates, it does not compile
-# them. The compiled artifacts live in $CARGO_HOME and ./target, both
-# of which persist across RUN layers within this stage.
-RUN mkdir src \
- && echo 'fn main() {}' > src/main.rs \
- && cargo build --release --locked \
- && rm -rf src
-
-# Real sources. Only this COPY and the crate's own recompile are
-# invalidated by a source edit; the dependency build above is reused
-# from cache (gha cache-to/from is wired in the workflow).
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+# Dependency-only build. Cached until recipe.json (the dependency
+# graph) changes; gha cache-to/from is wired in the workflow.
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
 RUN cargo build --release --frozen \
  && strip target/release/condukt-egress
