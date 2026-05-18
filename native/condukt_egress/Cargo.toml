@@ -38,6 +38,13 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 
+[dev-dependencies]
+# Already in the dependency graph via rcgen's `x509-parser` feature, so
+# this adds no extra compile cost. Used only by tls.rs tests to parse a
+# minted leaf and assert its subject / SAN / issuer.
+x509-parser = "0.16"
+tokio = { version = "1", features = ["rt", "macros"] }
+
 [profile.release]
 # Small, single binary for distroless containers. We trade compile time for
 # image size: thin-LTO, panic=abort, strip symbols.
