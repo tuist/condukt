@@ -1,4 +1,5 @@
-//! Minimal HTTP/1.1 request-line + headers capture for Tier 2.
+//! Minimal HTTP/1.1 request-line + headers capture for the
+//! TLS-terminating MITM path.
 //!
 //! We only inspect the request line and headers; the body is forwarded
 //! through opaquely. This is enough to surface method, path, and

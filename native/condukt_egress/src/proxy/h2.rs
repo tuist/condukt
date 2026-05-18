@@ -1,4 +1,4 @@
-//! HTTP/2 termination + forwarding for Tier 2 MITM.
+//! HTTP/2 termination + forwarding for the TLS-terminating MITM path.
 //!
 //! Hyper handles the protocol mechanics; we own the per-stream
 //! metadata capture and the upstream forwarding. One HTTP/2 connection
@@ -10,7 +10,7 @@
 //! We emit one pair of `request_opened` / `request_closed` events per
 //! HTTP/2 stream so the BEAM sees each logical HTTP request as a
 //! separate entity. Stream ids are generated as UUIDs at the time of
-//! capture, mirroring the Tier 1 / HTTP/1 paths.
+//! capture, mirroring the passthrough / HTTP/1 paths.
 
 use crate::proxy::control::ControlChannel;
 use crate::proxy::event::{Event, Kind, Request as EventRequest};
