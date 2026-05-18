@@ -125,8 +125,8 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
              transport_opts: request_options.ssl_options
            ),
          {:ok, http} <- Mint.HTTP.set_mode(http, :passive),
-         path <- portforward_path(namespace, pod_name, port),
-         headers <- upgrade_headers(request_options),
+         path = portforward_path(namespace, pod_name, port),
+         headers = upgrade_headers(request_options),
          {:ok, http, ref} <- Mint.WebSocket.upgrade(ws_scheme(uri), http, path, headers),
          {:ok, http, response} <- receive_upgrade_response(http, ref),
          {:ok, http} <- Mint.HTTP.set_mode(http, :active),

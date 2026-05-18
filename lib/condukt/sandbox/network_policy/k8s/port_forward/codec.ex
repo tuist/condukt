@@ -39,8 +39,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward.Codec do
   struct. The per-channel 2-byte port handshake is consumed once and
   never surfaces as an event. Frames on unknown channels are ignored.
   """
-  def feed(%__MODULE__{} = codec, <<channel::8, rest::binary>>)
-      when channel in [@data_channel, @error_channel] do
+  def feed(%__MODULE__{} = codec, <<channel::8, rest::binary>>) when channel in [@data_channel, @error_channel] do
     {payload, codec} = strip_port_handshake(codec, channel, rest)
 
     cond do

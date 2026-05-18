@@ -146,8 +146,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
       {:ok, pf} ->
         ref = Process.monitor(pf)
 
-        {:ok,
-         %{state | pf: pf, pf_ref: ref, send_fn: build_send_fn(pf), buffer: "", attempts: 0}}
+        {:ok, %{state | pf: pf, pf_ref: ref, send_fn: build_send_fn(pf), buffer: "", attempts: 0}}
 
       {:error, reason} ->
         {:error, reason}
