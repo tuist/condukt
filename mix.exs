@@ -73,6 +73,10 @@ defmodule Condukt.MixProject do
       # on K8s don't pay for the HTTP stack at boot.
       {:k8s, "~> 2.8"},
 
+      # Per-session ephemeral CA generation for the network policy egress
+      # MITM path. Pure Elixir, no native deps.
+      {:x509, "~> 0.9"},
+
       # Development & Testing
       {:quokka, "~> 2.12", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
@@ -97,6 +101,7 @@ defmodule Condukt.MixProject do
         "guides/mcp.md": [title: "MCP"],
         "guides/http_routes.md": [title: "HTTP Routes"],
         "guides/sandbox.md": [title: "Sandbox"],
+        "guides/network_policy.md": [title: "Network Policy"],
         "guides/streaming_and_events.md": [title: "Streaming and Events"],
         "guides/sessions_and_persistence.md": [title: "Sessions and Persistence"],
         "guides/compaction.md": [title: "Compaction"],
@@ -128,6 +133,7 @@ defmodule Condukt.MixProject do
         ],
         Guides: [
           "guides/sandbox.md",
+          "guides/network_policy.md",
           "guides/streaming_and_events.md",
           "guides/sessions_and_persistence.md",
           "guides/compaction.md",
@@ -193,7 +199,14 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox.Local,
           Condukt.Sandbox.Virtual,
           Condukt.Sandbox.Virtual.Tools.Mount,
-          Condukt.Sandbox.Kubernetes
+          Condukt.Sandbox.Kubernetes,
+          Condukt.Sandbox.NetworkPolicy,
+          Condukt.Sandbox.NetworkPolicy.Request,
+          Condukt.Sandbox.NetworkPolicy.Event,
+          Condukt.Sandbox.NetworkPolicy.Context,
+          Condukt.Sandbox.NetworkPolicy.Decider,
+          Condukt.Sandbox.NetworkPolicy.AgentDecider,
+          Condukt.Sandbox.NetworkPolicy.CA
         ],
         "Session Stores": [
           Condukt.SessionStore,
@@ -232,7 +245,7 @@ defmodule Condukt.MixProject do
         "GitHub" => @source_url
       },
       files:
-        ~w(lib guides native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
+        ~w(lib guides priv/ca-certificates native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
     ]
   end
 

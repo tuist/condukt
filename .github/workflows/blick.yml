@@ -48,11 +48,12 @@ jobs:
       - name: Install blick and opencode
         run: |
           mise use -g github:tuist/blick
-          mise use -g npm:opencode-ai
+          mise use -g opencode
 
       - name: Run blick review
         env:
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: blick review --base "origin/${{ github.event.pull_request.base.ref }}" --json --stream
 
       - name: Publish review

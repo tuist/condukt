@@ -347,15 +347,20 @@ defmodule Condukt.Session do
   end
 
   defp resolve_sandbox(nil, cwd, session_id) do
-    Sandbox.new(Sandbox.Local, cwd: cwd, id: session_id)
+    Sandbox.new(Sandbox.Local, cwd: cwd, id: session_id, owner_pid: self())
   end
 
   defp resolve_sandbox(module, _cwd, session_id) when is_atom(module) do
-    Sandbox.resolve({module, [id: session_id]})
+    Sandbox.resolve({module, [id: session_id, owner_pid: self()]})
   end
 
   defp resolve_sandbox({module, opts}, _cwd, session_id) when is_atom(module) and is_list(opts) do
-    Sandbox.resolve({module, Keyword.put_new(opts, :id, session_id)})
+    Sandbox.resolve(
+      {module,
+       opts
+       |> Keyword.put_new(:id, session_id)
+       |> Keyword.put_new(:owner_pid, self())}
+    )
   end
 
   defp resolve_sandbox(spec, _cwd, _session_id), do: Sandbox.resolve(spec)

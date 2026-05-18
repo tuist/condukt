@@ -29,6 +29,47 @@
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.
 
+## Network Policy
+
+- `Condukt.Sandbox.NetworkPolicy` is the per-session egress audit +
+  policy layer. Set it via `network_policy:` on the
+  `Condukt.Sandbox.Kubernetes` spec; other sandboxes ignore the
+  option (no enforcement plane).
+- `rules` is a keyword list walked top to bottom: `allow:`/`deny:`
+  host globs and `decide:` callable (2-arity fun, `{mod, fun}`, a
+  module, or `{mod, opts}`). Decide tuning is scoped to the rule:
+  `decide: [call: callable, timeout:, cache:, context_messages:,
+  context_metadata:]`. The struct itself only carries `:rules`,
+  `:default`, `:redact`, `:max_body_capture`.
+  `...NetworkPolicy.AgentDecider` wraps a `Condukt` agent and injects
+  the decision contract as the agent's `:output` schema; do not
+  describe the wire format in the agent prompt.
+- A `:decide` rule needs the BEAM<->sidecar control channel: a
+  `pods/portforward` WebSocket (`...K8s.PortForward` ->
+  `...K8s.ControlBridge`). `ControlBridge` is one per session,
+  supervised as a `:transient` child of a `DynamicSupervisor`
+  (registered name from `Condukt.Application.control_channel_supervisor/0`)
+  under the app root: the standard dynamic-children pattern, not
+  start_linked from the session. It monitors the session owner and
+  stops `:normal` when the owner goes away (dropped, not restarted: no
+  orphaned socket; not linked to the session so no cascade either
+  way); a crash is restarted; an unreachable control port retries with
+  backoff then gives up `:normal` (no crash-loop). Requires WebSocket
+  port-forward (Kubernetes >= 1.30, KEP-4006) and the
+  `pods/portforward` RBAC verb; `allow`/`deny`-only policies do not.
+  There is no `condukt-egress` control-bridge subcommand.
+- The Rust sidecar lives under `native/condukt_egress/` (one binary,
+  `netfilter-setup` + `proxy` subcommands; toolchain pinned in its
+  `rust-toolchain.toml`; image `ghcr.io/tuist/condukt-egress:<version>`
+  built by `.github/workflows/release.yml`, overridable per-spec via
+  `:network_policy_image`). Its Dockerfile build is verified on every
+  PR by `.github/workflows/condukt-egress.yml`. Workspace MITM trust
+  is injected by the pod spec with no image preparation (Java
+  keystores excepted).
+- See `guides/network_policy.md` for topology, the policy/decider
+  model, context shape, telemetry, trust-injection details, and
+  limitations. Keep deep architecture there, not here.
+
 ## MCP
 
 - Condukt connects to external Model Context Protocol servers as a

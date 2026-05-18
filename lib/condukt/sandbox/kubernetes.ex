@@ -119,6 +119,9 @@ defmodule Condukt.Sandbox.Kubernetes do
   alias Condukt.Sandbox.Kubernetes.PodSpec
   alias Condukt.Sandbox.Kubernetes.State
   alias Condukt.Sandbox.Kubernetes.WorkspaceSource
+  alias Condukt.Sandbox.NetworkPolicy
+  alias Condukt.Sandbox.NetworkPolicy.K8s, as: NetK8s
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -154,12 +157,31 @@ defmodule Condukt.Sandbox.Kubernetes do
   @impl Sandbox
   def shutdown(%State{} = state) do
     stop_heartbeat(state)
+    stop_net_bridge(state)
 
     if state.delete_on_shutdown do
       delete_pod(state.conn, state.namespace, state.pod_name)
+      teardown_net(state)
     end
 
     :ok
+  end
+
+  defp stop_net_bridge(%State{net_channel_pid: nil}), do: :ok
+
+  defp stop_net_bridge(%State{net_channel_pid: pid}) when is_pid(pid) do
+    # Idempotent: the bridge may already be gone (it collapsed when the
+    # session owner went away, or it gave up on a dead control port).
+    case DynamicSupervisor.terminate_child(Condukt.Application.control_channel_supervisor(), pid) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+  end
+
+  defp teardown_net(%State{net_resource_names: nil}), do: :ok
+
+  defp teardown_net(%State{conn: conn, namespace: namespace, net_resource_names: names}) do
+    NetK8s.teardown(conn, namespace, names)
   end
 
   @impl Sandbox
@@ -391,24 +413,88 @@ defmodule Condukt.Sandbox.Kubernetes do
   end
 
   defp create_and_wait(conn, config) do
-    manifest = PodSpec.build(config)
+    with {:ok, config} <- prepare_net(conn, config) do
+      labels = Map.put(config.labels, NetK8s.Manifests.session_label(), config.id)
+      manifest = PodSpec.build(%{config | labels: labels})
 
-    case K8s.Client.run(K8s.Client.put_conn(K8s.Client.create(manifest), conn)) do
-      {:ok, _pod} -> wait_until_ready(conn, config)
-      {:error, %{message: "already exists" <> _}} -> wait_until_ready(conn, config)
-      {:error, reason} -> {:error, format_api_error(reason)}
+      case K8s.Client.run(K8s.Client.put_conn(K8s.Client.create(manifest), conn)) do
+        {:ok, _pod} -> wait_until_ready(conn, config)
+        {:error, %{message: "already exists" <> _}} -> wait_until_ready(conn, config)
+        {:error, reason} -> {:error, format_api_error(reason)}
+      end
     end
   end
 
+  defp prepare_net(_conn, %{network_policy: nil} = config), do: {:ok, config}
+
+  defp prepare_net(conn, %{network_policy: %NetworkPolicy{} = policy} = config) do
+    prepare_opts =
+      %{
+        session_id: config.id,
+        namespace: config.namespace,
+        policy: policy
+      }
+      |> maybe_put(:image, Map.get(config, :network_policy_image))
+
+    with {:ok, prepared} <- NetK8s.prepare(prepare_opts),
+         :ok <- NetK8s.apply(conn, prepared) do
+      {:ok,
+       Map.merge(config, %{
+         net: prepared,
+         net_policy: prepared.policy,
+         net_resource_names: prepared.names
+       })}
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp normalize_network_policy(nil), do: nil
+  defp normalize_network_policy(%NetworkPolicy{} = policy), do: policy
+  defp normalize_network_policy(opts), do: NetworkPolicy.new(opts)
+
   defp prepare_and_start(state, config) do
     with {:ok, state} <- WorkspaceSource.prepare(state, config),
-         {:ok, state} <- start_heartbeat(state, config) do
+         {:ok, state} <- start_heartbeat(state, config),
+         {:ok, state} <- start_net_bridge(state, config) do
       {:ok, state}
     else
       {:error, reason} ->
         cleanup_failed_init(state)
         {:error, reason}
     end
+  end
+
+  defp start_net_bridge(%State{net_policy: nil} = state, _config), do: {:ok, state}
+
+  defp start_net_bridge(%State{net_policy: policy} = state, _config) do
+    if has_decide_rule?(policy) do
+      bridge_opts = [
+        conn: state.conn,
+        namespace: state.namespace,
+        pod_name: state.pod_name,
+        session_id: state.id,
+        policy: policy,
+        owner_pid: state.owner_pid
+      ]
+
+      spec = {ControlBridge, bridge_opts}
+
+      case DynamicSupervisor.start_child(Condukt.Application.control_channel_supervisor(), spec) do
+        {:ok, pid} -> {:ok, %{state | net_channel_pid: pid}}
+        {:error, reason} -> {:error, {:net_bridge_failed, reason}}
+      end
+    else
+      {:ok, state}
+    end
+  end
+
+  defp has_decide_rule?(%NetworkPolicy{rules: rules}) do
+    Enum.any?(rules, fn
+      {:decide, _callable} -> true
+      _ -> false
+    end)
   end
 
   defp cleanup_failed_init(%State{delete_on_shutdown: true} = state) do
@@ -584,7 +670,10 @@ defmodule Condukt.Sandbox.Kubernetes do
          workspace_source_timeout: Keyword.get(opts, :workspace_source_timeout, @default_workspace_source_timeout),
          ready_timeout: Keyword.get(opts, :ready_timeout, @default_ready_timeout),
          on_stale: Keyword.get(opts, :on_stale, :error),
-         delete_on_shutdown: delete_on_shutdown
+         delete_on_shutdown: delete_on_shutdown,
+         network_policy: normalize_network_policy(Keyword.get(opts, :network_policy)),
+         network_policy_image: Keyword.get(opts, :network_policy_image),
+         owner_pid: Keyword.get(opts, :owner_pid)
        }}
     end
   end
@@ -597,7 +686,10 @@ defmodule Condukt.Sandbox.Kubernetes do
       container: PodSpec.container_name(),
       base_cwd: config.cwd,
       id: config.id,
-      delete_on_shutdown: config.delete_on_shutdown
+      delete_on_shutdown: config.delete_on_shutdown,
+      net_policy: Map.get(config, :net_policy),
+      net_resource_names: Map.get(config, :net_resource_names),
+      owner_pid: Map.get(config, :owner_pid)
     }
   end
 
