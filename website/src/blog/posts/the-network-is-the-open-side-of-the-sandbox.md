@@ -42,22 +42,20 @@ The policy is shaped as an ordered keyword list of rules, in the same spirit as 
 Three rule kinds ship out of the box, and order is the way you express priority. `:allow` and `:deny` both match against host glob patterns: `*` for a single DNS label, `**` for one or more labels. Putting a `:deny` for an internal subdomain before an `:allow` for the parent domain denies the one you care about and allows the rest. Swap the order and the deny wins everywhere. The static rules are the fast path, evaluated entirely inside the sidecar without a round trip, because spending a model call on a request to your own API is a waste. The interesting rule is `:decide`, and it accepts four shapes that all collapse to the same runtime contract. The first is a plain function: given a session context snapshot and the request, return `:allow` or `{:deny, reason}`, which is the place to put rules you can express in code, like denying anything to an internal hostname unless the session metadata says the session is internal. The second is an `{module, function}` tuple, the same shape but referenceable from configuration, which is the form you reach for when you want the rule to live in a module other people can read. The third is a module alone, which calls `module.decide(ctx, req, [])` and is the natural shape for behaviour-backed deciders that don't need configuration. The fourth is the one that nudged the whole design. You can pass `{module, opts}` and the module can be a `Condukt`-defined agent through the shipped `AgentDecider` wrapper, which means a model gets to make the call:
 
 <div class="code-block">{% highlight "elixir" %}defmodule MyApp.NetGuard do
-  use Condukt, runtime: Condukt.AgentRuntimes.Claude
+  use Condukt
 
   @impl true
   def system_prompt do
     """
-    You gate outbound network requests for an AI coding agent.
-
-    You will receive a JSON object with `request.host`, `request.port`,
-    `request.scheme`, `recent_messages`, and `metadata`. Decide whether
-    to allow this connection.
-
-    Reply with ONLY a JSON object, no prose, no code fences:
-      {"decision": "allow" | "deny", "reason": "..."}
+    You gate outbound network requests for an AI coding agent. You
+    receive the request and recent session context as JSON. Allow
+    well-known reputable API hosts the task plausibly needs; deny
+    everything else.
     """
   end
 end{% endhighlight %}</div>
+
+The prompt only describes the policy, never a wire format. `AgentDecider` injects the decision contract as the agent's structured output schema, so the model returns a validated `{"decision": "allow" | "deny", "reason": "..."}` answer without being told to. The schema lives in the wrapper, not in every prompt that uses it.
 
 When the workspace agent makes a request and the sidecar reaches a `:decide` rule, it holds the connection in its hand, emits a `decision_request` over a bidirectional NDJSON control channel back to the BEAM, and waits for the answer. On the BEAM side, a `ControlBridge` receives the frame, builds a context snapshot from the live session that includes the last few messages and any caller-supplied metadata, runs the decider, and writes back a `decision`. The sidecar either lets the request through with proper MITM TLS termination so that body capture is meaningful, or it RSTs the connection and emits a denial event that the rest of the system can read. Default deny on timeout, because the failure mode should always favour the user, and the wrong direction of failure is the one nobody catches until something embarrassing has already left the building. The decider agent runs as a sub-agent so its own network traffic does not recurse through the gate it is helping to enforce, which would be a delightful kind of bug to chase but not one we want in the hot path. Decisions are cached per-session per-host, so once the model has said "no" to `evil.com`, the next attempt does not pay another model call to hear the same answer.
 
@@ -67,7 +65,7 @@ For the Kubernetes sandbox, we can do all of this because we own the network nam
 
 ## Where we land
 
-The part we keep coming back to is that the bottleneck is no longer the plumbing. The plumbing was real work, and it took a while to find the right shape. We had to build a per-session CA that the workspace can trust without an operator manually distributing certificates. We had to build an iptables-based redirect that catches every outbound connection on the ports we care about without forcing the workspace image to know about us. We had to build a TLS terminator that speaks both HTTP/1.1 and HTTP/2, because anything modern is going to negotiate h2 and we did not want to ship a feature that quietly disabled itself on anything reasonable. We had to build a bidirectional control channel that connects the sidecar to the BEAM through the same `pods/exec` websocket the rest of the K8s sandbox already uses, because asking operators to open another port-forward channel was the wrong shape. We had to build an agent runtime that can stand in for the decider and produce structured output reliable enough to put on a hot path. None of that was a research project, but it was many weeks of careful work, and it is now done.
+The part we keep coming back to is that the bottleneck is no longer the plumbing. The plumbing was real work, and it took a while to find the right shape. We had to build a per-session CA that the workspace can trust without an operator manually distributing certificates. We had to build an iptables-based redirect that catches every outbound connection on the ports we care about without forcing the workspace image to know about us. We had to build a TLS terminator that speaks both HTTP/1.1 and HTTP/2, because anything modern is going to negotiate h2 and we did not want to ship a feature that quietly disabled itself on anything reasonable. We had to build a bidirectional control channel that connects the sidecar to the BEAM. The sidecar listens on a control port and the BEAM reaches it over a `pods/portforward` websocket, the Kubernetes-native way to talk to a port inside a pod, supervised so a dropped channel re-dials with backoff instead of taking the session down. We had to build an agent runtime that can stand in for the decider and produce structured output reliable enough to put on a hot path. None of that was a research project, but it was many weeks of careful work, and it is now done.
 
 We also avoided forcing operators to build a separate image. The pod spec sets the canonical TLS-client env vars on the workspace container, and we overlay a Mozilla-plus-session bundle at the two system trust paths every Linux distro reads. Between the two paths there is no image-rebuild story to maintain. The only stack still not addressed is the JVM, whose keystore format the bundle approach cannot satisfy, and that is the one place we leave the image-side work to the operator.
 
