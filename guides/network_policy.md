@@ -290,38 +290,36 @@ backends.
 
 ## Supervision
 
-When a policy has a `:decide` rule, the control channel runs as a
-proper OTP subtree, not a bare linked process:
+When a policy has a `:decide` rule, the control channel is a
+supervised process, not a bare one linked into the session:
 
 ```
-Condukt.Supervisor (application)
-└── ControlChannelSupervisor      DynamicSupervisor, one_for_one
-    └── ControlChannel  (1/session) Supervisor, one_for_one,
-        │                           auto_shutdown: :any_significant
-        └── ControlBridge          restart: :transient, significant: true
-            └── PortForward        linked + monitored worker
+Condukt.Supervisor (application root)
+└── ControlChannelSupervisor   DynamicSupervisor, one_for_one
+    └── ControlBridge           1 per session, restart: :transient
+        └── PortForward         linked + monitored worker
 ```
 
-The rules are chosen so the subtree's lifetime tracks the gated
-session:
+This is the standard "dynamic children under the application root"
+pattern. `ControlBridge` is a `:transient` child, so:
 
   * `ControlBridge` monitors the session's owner process. When the
     session goes away there is nothing left to gate, so it stops
-    `:normal`.
-  * Because `ControlBridge` is `:transient` and `significant: true`
-    under a supervisor with `auto_shutdown: :any_significant`, a clean
-    stop collapses the whole per-session subtree (no orphaned bridge
-    or port-forward socket), while a *crash* is restarted locally.
-  * `ControlChannel` is a `:temporary` child of the
-    `DynamicSupervisor` with a bounded restart intensity. One
-    session's failure never cascades to another's, and a permanently
-    unreachable apiserver makes that session's channel give up rather
-    than hot-loop. The session keeps running; `:decide` requests then
-    fail closed via the sidecar's decide timeout.
+    `:normal`. A `:transient` child that stops `:normal` is dropped
+    (not restarted): no orphaned bridge or port-forward socket. The
+    bridge is not linked to the session, so neither can take the other
+    down.
+  * A genuine *crash* is restarted by the `DynamicSupervisor`.
+  * A control port that is unreachable (at startup or mid-session)
+    does not crash: the bridge retries with capped backoff and, after
+    its attempt budget, gives up `:normal` (dropped, not restarted),
+    so a dead port cannot hot-loop the shared supervisor. `:decide`
+    then fails closed via the sidecar's decide timeout. Bounded
+    restart intensity on the supervisor caps the impact of a
+    pathologically crashing bridge.
 
 Tearing the sandbox down explicitly (`Sandbox.shutdown/1`) stops the
-subtree too, and is idempotent if the subtree already collapsed on its
-own.
+bridge too, and is idempotent if it already went away on its own.
 
 ## RBAC
 

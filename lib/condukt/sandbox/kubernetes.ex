@@ -121,7 +121,7 @@ defmodule Condukt.Sandbox.Kubernetes do
   alias Condukt.Sandbox.Kubernetes.WorkspaceSource
   alias Condukt.Sandbox.NetworkPolicy
   alias Condukt.Sandbox.NetworkPolicy.K8s, as: NetK8s
-  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlChannelSupervisor
+  alias Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge
 
   @default_image "debian:bookworm-slim"
   @default_cwd "/workspace"
@@ -170,8 +170,12 @@ defmodule Condukt.Sandbox.Kubernetes do
   defp stop_net_bridge(%State{net_channel_pid: nil}), do: :ok
 
   defp stop_net_bridge(%State{net_channel_pid: pid}) when is_pid(pid) do
-    ControlChannelSupervisor.stop_session(pid)
-    :ok
+    # Idempotent: the bridge may already be gone (it collapsed when the
+    # session owner went away, or it gave up on a dead control port).
+    case DynamicSupervisor.terminate_child(Condukt.Application.control_channel_supervisor(), pid) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
   end
 
   defp teardown_net(%State{net_resource_names: nil}), do: :ok
@@ -475,7 +479,9 @@ defmodule Condukt.Sandbox.Kubernetes do
         owner_pid: state.owner_pid
       ]
 
-      case ControlChannelSupervisor.start_session(bridge_opts) do
+      spec = {ControlBridge, bridge_opts}
+
+      case DynamicSupervisor.start_child(Condukt.Application.control_channel_supervisor(), spec) do
         {:ok, pid} -> {:ok, %{state | net_channel_pid: pid}}
         {:error, reason} -> {:error, {:net_bridge_failed, reason}}
       end

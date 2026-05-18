@@ -45,6 +45,19 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
     GenServer.start_link(__MODULE__, opts)
   end
 
+  # Supervised directly by the control-channel DynamicSupervisor.
+  # `:transient` so a crash is restarted but a clean stop (owner gone,
+  # or graceful give-up) is left dropped, never restarted.
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :transient,
+      shutdown: 5_000,
+      type: :worker
+    }
+  end
+
   def stop(pid) do
     if Process.alive?(pid), do: GenServer.stop(pid, :normal, 5_000), else: :ok
   end
@@ -63,10 +76,11 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
 
     # Bind the bridge's lifetime to the gated session: when the owner
     # goes away there is nothing left to gate, so stop `:normal`. As a
-    # transient + significant child that collapses the per-session
-    # ControlChannel subtree, which is what prevents an orphaned bridge
-    # + portforward socket on an abnormal session exit, independent of
-    # any explicit sandbox teardown.
+    # `:transient` child of the control-channel DynamicSupervisor, a
+    # `:normal` stop is not restarted and the child is dropped, so no
+    # bridge or portforward socket is orphaned on an abnormal session
+    # exit, independent of any explicit sandbox teardown. The bridge is
+    # not linked to the session, so neither can take the other down.
     owner_ref = if is_pid(owner_pid), do: Process.monitor(owner_pid)
 
     # Injectable so the reconnect logic is unit-testable without a
@@ -99,13 +113,22 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
       attempts: 0
     }
 
+    # A control port that is not up yet (or a transient apiserver blip)
+    # at session start must not fail sandbox init or crash the bridge:
+    # enter the same backoff/reconnect loop a mid-session drop uses. A
+    # genuinely unreachable port eventually gives up `:normal` (see
+    # :reconnect), which is not restarted and fails closed.
     case open_channel(state) do
       {:ok, state} ->
         {:ok, state}
 
       {:error, reason} ->
-        Logger.warning(fn -> "[sandbox.network_policy.k8s] control bridge connect failed: #{inspect(reason)}" end)
-        {:stop, {:connect_failed, reason}}
+        Logger.warning(fn ->
+          "[sandbox.network_policy.k8s] control bridge initial connect failed: #{inspect(reason)}; retrying"
+        end)
+
+        Process.send_after(self(), :reconnect, backoff(0))
+        {:ok, state}
     end
   end
 
@@ -141,7 +164,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
         attempts = state.attempts + 1
 
         if attempts >= state.max_reconnects do
-          {:stop, {:portforward_unrecoverable, reason}, state}
+          give_up(state, attempts, reason)
         else
           Process.send_after(self(), :reconnect, backoff(attempts))
           {:noreply, %{state | attempts: attempts}}
@@ -150,6 +173,18 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridge do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # Give up gracefully: stop `:normal` so the transient child is
+  # dropped (not restarted) and a permanently dead control port cannot
+  # crash-loop the shared supervisor. `:decide` then fails closed via
+  # the sidecar's decide timeout.
+  defp give_up(state, attempts, reason) do
+    Logger.warning(fn ->
+      "[sandbox.network_policy.k8s] control bridge giving up after #{attempts} attempts: #{inspect(reason)}"
+    end)
+
+    {:stop, :normal, state}
+  end
 
   @impl true
   def terminate(_reason, state) do

@@ -246,7 +246,7 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
       assert_receive :reconnect, 2_000
     end
 
-    test ":reconnect stops the bridge once the attempt cap is hit" do
+    test ":reconnect gives up :normal once the attempt cap is hit" do
       st =
         state(%NetworkPolicy{}, self(), %{
           connector: fn _ -> {:error, :down} end,
@@ -254,8 +254,9 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
           max_reconnects: 10
         })
 
-      assert {:stop, {:portforward_unrecoverable, :down}, _st} =
-               ControlBridge.handle_info(:reconnect, st)
+      # :normal so the transient child is dropped, not restarted: a dead
+      # control port must not crash-loop the shared supervisor.
+      assert {:stop, :normal, _st} = ControlBridge.handle_info(:reconnect, st)
     end
 
     test "an unrelated message is ignored" do
@@ -267,6 +268,112 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.ControlBridgeTest do
       st = state(%NetworkPolicy{}, self())
       assert :ok = ControlBridge.terminate(:normal, st)
       assert_received :closed
+    end
+  end
+
+  describe "supervised under a DynamicSupervisor" do
+    setup do
+      %{sup: start_supervised!({DynamicSupervisor, strategy: :one_for_one})}
+    end
+
+    # A real gen_server (Agent) stand-in for PortForward: the bridge
+    # stops it via PortForward.close -> GenServer.stop on teardown.
+    defp fake_pf do
+      {:ok, pid} = Agent.start(fn -> :ok end)
+      pid
+    end
+
+    defp bopts(owner, connector) do
+      [
+        conn: :stub,
+        namespace: "ns",
+        pod_name: "pod",
+        session_id: "s1",
+        policy: %NetworkPolicy{},
+        owner_pid: owner,
+        connector: connector
+      ]
+    end
+
+    defp only_child(sup) do
+      case DynamicSupervisor.which_children(sup) do
+        [{_, pid, _, _}] when is_pid(pid) -> pid
+        _ -> nil
+      end
+    end
+
+    defp wait_for(fun, tries \\ 50) do
+      cond do
+        tries == 0 ->
+          nil
+
+        v = fun.() ->
+          v
+
+        true ->
+          Process.sleep(20)
+          wait_for(fun, tries - 1)
+      end
+    end
+
+    test "child_spec is a transient worker" do
+      spec = ControlBridge.child_spec([])
+      assert spec.restart == :transient
+      assert spec.type == :worker
+    end
+
+    test "init does not crash when the control port is unreachable", %{sup: sup} do
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {ControlBridge, bopts(self(), fn _ -> {:error, :unreachable} end)}
+        )
+
+      # init returned {:ok} and scheduled a retry rather than crashing,
+      # so a control port that is not up yet does not fail the session.
+      assert Process.alive?(pid)
+    end
+
+    test "a crash is restarted (transient child)", %{sup: sup} do
+      {:ok, p1} =
+        DynamicSupervisor.start_child(
+          sup,
+          {ControlBridge, bopts(self(), fn _ -> {:ok, fake_pf()} end)}
+        )
+
+      Process.exit(p1, :kill)
+
+      p2 =
+        wait_for(fn ->
+          case only_child(sup) do
+            pid when is_pid(pid) and pid != p1 -> pid
+            _ -> nil
+          end
+        end)
+
+      assert is_pid(p2)
+      assert p2 != p1
+    end
+
+    test "the owner going away drops the bridge and is not restarted", %{sup: sup} do
+      owner = spawn(fn -> Process.sleep(:infinity) end)
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {ControlBridge, bopts(owner, fn _ -> {:ok, fake_pf()} end)}
+        )
+
+      ref = Process.monitor(pid)
+      Process.exit(owner, :kill)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+      assert [] = wait_for(fn -> if only_child(sup) == nil, do: [] end)
+    end
+
+    test "the application supervises a control-channel DynamicSupervisor" do
+      name = Condukt.Application.control_channel_supervisor()
+      assert is_pid(Process.whereis(name))
     end
   end
 end

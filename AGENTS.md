@@ -46,14 +46,16 @@
   describe the wire format in the agent prompt.
 - A `:decide` rule needs the BEAM<->sidecar control channel: a
   `pods/portforward` WebSocket (`...K8s.PortForward` ->
-  `...K8s.ControlBridge`). It runs as a per-session OTP subtree under
-  the app-level `...K8s.ControlChannelSupervisor` (DynamicSupervisor)
-  -> `...K8s.ControlChannel` (per-session Supervisor, transient +
-  significant child, `auto_shutdown`). ControlBridge monitors the
-  session owner and stops `:normal` when it goes away, collapsing the
-  subtree (no orphaned socket); a crash is restarted locally; a dead
-  apiserver makes that one session give up, never cascading. Requires
-  WebSocket port-forward (Kubernetes >= 1.30, KEP-4006) and the
+  `...K8s.ControlBridge`). `ControlBridge` is one per session,
+  supervised as a `:transient` child of a `DynamicSupervisor`
+  (registered name from `Condukt.Application.control_channel_supervisor/0`)
+  under the app root: the standard dynamic-children pattern, not
+  start_linked from the session. It monitors the session owner and
+  stops `:normal` when the owner goes away (dropped, not restarted: no
+  orphaned socket; not linked to the session so no cascade either
+  way); a crash is restarted; an unreachable control port retries with
+  backoff then gives up `:normal` (no crash-loop). Requires WebSocket
+  port-forward (Kubernetes >= 1.30, KEP-4006) and the
   `pods/portforward` RBAC verb; `allow`/`deny`-only policies do not.
   There is no `condukt-egress` control-bridge subcommand.
 - The Rust sidecar lives under `native/condukt_egress/` (one binary,
