@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.5.0] - 2026-05-18
+
+### Features
+
+- add Sandbox.Net egress audit + policy with runtime decider
+
+
 ## [1.4.1] - 2026-05-13
 
 ### Bug Fixes
