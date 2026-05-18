@@ -58,15 +58,16 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
     port = Keyword.get(opts, :port, @default_port)
 
     case connect(conn, namespace, pod_name, port) do
-      {:ok, http, websocket, ref} ->
-        {:ok,
-         %{
-           owner: owner,
-           http: http,
-           websocket: websocket,
-           ref: ref,
-           codec: Codec.new()
-         }}
+      {:ok, http, websocket, ref, initial_frames} ->
+        state = %{
+          owner: owner,
+          http: http,
+          websocket: websocket,
+          ref: ref,
+          codec: Codec.new()
+        }
+
+        {:ok, process_initial_frames(state, initial_frames)}
 
       {:error, reason} ->
         Logger.warning(fn -> "[sandbox.network_policy.k8s] portforward connect failed: #{inspect(reason)}" end)
@@ -131,8 +132,15 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
          {:ok, http, response} <- receive_upgrade_response(http, ref),
          {:ok, http} <- Mint.HTTP.set_mode(http, :active),
          {:ok, http, websocket} <-
-           Mint.WebSocket.new(http, ref, response.status, response.headers) do
-      {:ok, http, websocket, ref}
+           Mint.WebSocket.new(http, ref, response.status, response.headers),
+         {:ok, websocket, initial} <- decode_initial(websocket, response.data) do
+      # The API server frequently ships the port-forward channel
+      # handshake frames in the same TCP read as the HTTP 101. Those
+      # bytes come back as `response.data`; if we do not decode them
+      # through the freshly built websocket here they are lost, the
+      # codec never sees the per-channel port handshake, and it strips
+      # two real bytes off the first data/error frame instead.
+      {:ok, http, websocket, ref, initial}
     else
       {:error, _conn, reason} -> {:error, reason}
       {:error, reason} -> {:error, reason}
@@ -162,7 +170,9 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
   # Drain the HTTP upgrade response synchronously before flipping the
   # socket to active mode (mirrors the K8s client's own handshake).
   defp receive_upgrade_response(http, ref) do
-    Enum.reduce_while(Stream.cycle([:ok]), {http, %{}}, fn _, {http, acc} ->
+    acc = %{status: nil, headers: [], data: "", done: false}
+
+    Enum.reduce_while(Stream.cycle([:ok]), {http, acc}, fn _, {http, acc} ->
       recv_upgrade_step(http, ref, acc)
     end)
   end
@@ -171,20 +181,34 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
     case Mint.HTTP.recv(http, 0, 5_000) do
       {:ok, http, parts} ->
         acc = merge_upgrade_parts(acc, parts, ref)
-        if acc[:done], do: {:halt, {:ok, http, acc}}, else: {:cont, {http, acc}}
+        if acc.done, do: {:halt, {:ok, http, acc}}, else: {:cont, {http, acc}}
 
       {:error, http, error, _} ->
         {:halt, {:error, http, error}}
     end
   end
 
+  # Data parts are concatenated, not overwritten: the early websocket
+  # bytes (channel handshake, sometimes the first frame too) can span
+  # parts and recv iterations, and dropping any of them reintroduces
+  # the off-by-two strip.
   defp merge_upgrade_parts(acc, parts, ref) do
-    parts
-    |> Map.new(fn
-      {type, ^ref} -> {type, true}
-      {type, ^ref, value} -> {type, value}
+    Enum.reduce(parts, acc, fn
+      {:status, ^ref, status}, acc -> %{acc | status: status}
+      {:headers, ^ref, headers}, acc -> %{acc | headers: headers}
+      {:data, ^ref, data}, acc -> %{acc | data: acc.data <> data}
+      {:done, ^ref}, acc -> %{acc | done: true}
+      _other, acc -> acc
     end)
-    |> Map.merge(acc)
+  end
+
+  defp decode_initial(websocket, ""), do: {:ok, websocket, []}
+
+  defp decode_initial(websocket, data) do
+    case Mint.WebSocket.decode(websocket, data) do
+      {:ok, websocket, frames} -> {:ok, websocket, frames}
+      {:error, websocket, _reason} -> {:ok, websocket, []}
+    end
   end
 
   defp handle_responses(state, responses) do
@@ -225,6 +249,18 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
     end
   end
 
+  # Run the frames recovered from the upgrade read through the same
+  # codec path as the steady-state loop, before the GenServer starts
+  # receiving socket messages.
+  defp process_initial_frames(state, frames) do
+    Enum.reduce(frames, state, fn frame, state ->
+      case apply_frame(state, frame) do
+        {:noreply, state} -> state
+        {:stop, _reason, state} -> state
+      end
+    end)
+  end
+
   defp apply_frame(state, {:binary, bytes}) do
     {events, codec} = Codec.feed(state.codec, bytes)
     Enum.each(events, &emit(state.owner, &1))
@@ -253,4 +289,12 @@ defmodule Condukt.Sandbox.NetworkPolicy.K8s.PortForward do
     send(state.owner, {:control_bridge_eof})
     {:stop, :normal, state}
   end
+
+  # Public for tests: the upgrade-data accumulation is the regression
+  # surface for the dropped-handshake / off-by-two strip bug.
+  @doc false
+  def __upgrade_acc__, do: %{status: nil, headers: [], data: "", done: false}
+
+  @doc false
+  def __merge_upgrade_parts__(acc, parts, ref), do: merge_upgrade_parts(acc, parts, ref)
 end
