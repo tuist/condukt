@@ -1,11 +1,11 @@
 {
   "name": "Condukt",
   "short_name": "Condukt",
-  "description": "A framework for building AI agents in Elixir.",
+  "description": "An Elixir framework for defining and running AI agents and workflows.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "background_color": "#0a0a0b",
+  "theme_color": "#0a0a0b",
   "icons": [
     { "src": "/assets/favicon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/assets/favicon-512.png", "sizes": "512x512", "type": "image/png" }

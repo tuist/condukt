@@ -8,6 +8,7 @@
     "dev": "eleventy --serve --quiet",
     "clean": "rm -rf _site",
     "social:images": "node scripts/generate-social-images.mjs",
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "deploy": "aube run build && wrangler pages deploy ./_site --project-name=condukt-website --branch=main --commit-dirty=true"
   },
   "devDependencies": {
