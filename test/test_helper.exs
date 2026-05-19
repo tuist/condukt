@@ -15,4 +15,10 @@ Code.require_file("support/llm_provider.ex", __DIR__)
 #
 #   mix test --only virtual_sandbox
 #
-ExUnit.start(exclude: [virtual_sandbox: true, k8s_sandbox: true])
+# Microsandbox live tests are tagged `:microsandbox_sandbox` and excluded by
+# default. They boot a real microVM and rely on supported local hardware
+# virtualization, so keep them opt-in:
+#
+#   mix test --only microsandbox_sandbox
+#
+ExUnit.start(exclude: [virtual_sandbox: true, k8s_sandbox: true, microsandbox_sandbox: true])
