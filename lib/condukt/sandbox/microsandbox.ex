@@ -258,7 +258,7 @@ defmodule Condukt.Sandbox.Microsandbox do
   defp normalize_exec_result({:error, "timeout"}), do: {:error, :timeout}
   defp normalize_exec_result({:error, reason}), do: {:error, normalize_reason(reason)}
 
-  defp normalize_reason(reason) when reason in [:nif_disabled, :unsupported_target], do: reason
+  defp normalize_reason(:unsupported_target), do: :unsupported_target
   defp normalize_reason("enoent"), do: :enoent
   defp normalize_reason("eisdir"), do: :eisdir
   defp normalize_reason("eexist"), do: :eexist
