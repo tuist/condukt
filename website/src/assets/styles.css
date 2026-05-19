@@ -5,9 +5,9 @@
   --fg: #e8e6e3;
   --fg-muted: #8d8d86;
   --fg-dim: #5a5a55;
-  --accent: #ffb000;
-  --accent-soft: rgba(255, 176, 0, 0.1);
-  --accent-line: rgba(255, 176, 0, 0.28);
+  --accent: #9d7ce0;
+  --accent-soft: rgba(157, 124, 224, 0.12);
+  --accent-line: rgba(157, 124, 224, 0.3);
   --prompt: #4ade80;
   --border: #232325;
   --border-bright: #34342f;
@@ -133,6 +133,14 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 
 .hero h1 .tok-prompt { color: var(--prompt); font-weight: 400; }
 .hero h1 .tok-accent { color: var(--accent); }
+
+.elixir-mark {
+  width: 0.72em;
+  height: 0.72em;
+  margin-left: 0.32em;
+  vertical-align: baseline;
+  color: var(--accent);
+}
 
 .lede {
   font-size: 1.05rem;

@@ -21,7 +21,7 @@ const COLORS = {
   fg: "#e8e6e3",
   muted: "#8d8d86",
   dim: "#5a5a55",
-  accent: "#ffb000",
+  accent: "#9d7ce0",
   prompt: "#4ade80",
 };
 
