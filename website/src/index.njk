@@ -12,8 +12,8 @@ description: Production infrastructure for AI agents on the BEAM. Condukt runs a
       {{ site.name }} runs AI agents as supervised OTP processes, isolates
       every session in a sandbox (local, in-memory, or a dedicated
       Kubernetes pod), and governs what they can reach on the network.
-      Run autonomous agents, or declare deterministic workflows that
-      call agents exactly where you need judgment.
+      Run a single agent, or run a workflow that wires explicit steps
+      and agents into one graph.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="{{ site.docs }}">read the docs</a>
@@ -152,8 +152,8 @@ end{% endhighlight %}</div>
     <p class="section-num">section 03</p>
     <h2>Workflows as a typed DAG</h2>
     <p class="lede">
-      Compose deterministic commands, agent loops, HTTP calls, custom
-      tools, and fan-outs into a single graph. References between steps
+      Compose commands, agent loops, HTTP calls, custom tools, and
+      fan-outs into a single graph. References between steps
       make data flow visible in the file, and <code>condukt check</code>
       validates the graph before it runs.
     </p>
@@ -188,10 +188,10 @@ end{% endhighlight %}</div>
     <p class="section-num">section 04</p>
     <h2>Two ways to put an LLM to work</h2>
     <p class="lede">
-      Run an autonomous agent, or declare a deterministic workflow that
-      calls agents where you need judgment. Both run on the same engine,
-      sandboxes, and egress policy, and they compose: an agent can be one
-      step in a workflow.
+      Run an autonomous agent, or run a workflow that mixes explicit
+      steps with agent steps where you need judgment. Both run on the
+      same engine, sandboxes, and egress policy, and they compose: an
+      agent can be one step in a workflow.
     </p>
 
     <div class="path">
@@ -222,12 +222,12 @@ end{% endhighlight %}</div>
     </div>
 
     <div class="path">
-      <h3 class="path-title">Declare a workflow</h3>
+      <h3 class="path-title">Run a workflow</h3>
       <p class="path-desc">
         A typed DAG authored in HCL, a declarative language. Wire
         explicit cmd, http, tool, and map steps, and drop agent steps in
-        exactly where reasoning is needed. Best for repeatable,
-        inspectable orchestration.
+        where reasoning is needed. The graph is inspectable and validated
+        by <code>condukt check</code> before it runs.
       </p>
       <ol class="steps">
         <li>
