@@ -38,7 +38,9 @@ through the active `Condukt.Sandbox`. The default sandbox,
 `Condukt.Sandbox.Local`, talks to the host filesystem. The
 `Condukt.Sandbox.Virtual` sandbox runs against an in-memory virtual
 filesystem and a Rust-implemented bash interpreter, with no host process
-spawning by default. The same agent definition works with either.
+spawning by default. `Condukt.Sandbox.Microsandbox` runs the same tool calls
+inside a `microsandbox` microVM while bind-mounted workspace paths still map
+back to the host project. The same agent definition works with any of them.
 
 See the [Sandbox guide](sandbox.md) for details, including how to pick a
 sandbox at `start_link/1` time and how custom sandboxes plug in.

@@ -1,0 +1,27 @@
+[package]
+name = "condukt_microsandbox"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Rustler NIF wrapping microsandbox for Condukt"
+publish = false
+
+[lib]
+name = "condukt_microsandbox"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = { version = "0.36", default-features = false, features = ["derive"] }
+microsandbox = { version = "0.4.6", default-features = false, features = ["prebuilt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+
+[features]
+default = ["nif_version_2_16"]
+nif_version_2_15 = ["rustler/nif_version_2_15"]
+nif_version_2_16 = ["rustler/nif_version_2_16"]
+nif_version_2_17 = ["rustler/nif_version_2_17"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

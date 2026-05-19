@@ -198,6 +198,7 @@ defmodule Condukt.MixProject do
           Condukt.Sandbox,
           Condukt.Sandbox.Local,
           Condukt.Sandbox.Virtual,
+          Condukt.Sandbox.Microsandbox,
           Condukt.Sandbox.Virtual.Tools.Mount,
           Condukt.Sandbox.Kubernetes,
           Condukt.Sandbox.NetworkPolicy,
@@ -245,7 +246,7 @@ defmodule Condukt.MixProject do
         "GitHub" => @source_url
       },
       files:
-        ~w(lib guides priv/ca-certificates native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
+        ~w(lib guides priv/ca-certificates native/condukt_bashkit/Cargo.toml native/condukt_bashkit/Cargo.lock native/condukt_bashkit/src native/condukt_bashkit/.cargo native/condukt_bashkit/rust-toolchain.toml native/condukt_bashkit/README.md native/condukt_microsandbox/Cargo.toml native/condukt_microsandbox/Cargo.lock native/condukt_microsandbox/src native/condukt_microsandbox/rust-toolchain.toml native/condukt_microsandbox/README.md checksum-Elixir.Condukt.Bashkit.NIF.exs checksum-Elixir.Condukt.Microsandbox.NIF.exs .formatter.exs mix.exs README.md CHANGELOG.md LICENSE MIT.md)
     ]
   end
 

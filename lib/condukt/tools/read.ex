@@ -7,7 +7,8 @@ defmodule Condukt.Tools.Read do
 
   All filesystem access goes through the active `Condukt.Sandbox`, so the
   same agent definition behaves identically against the host filesystem
-  (`Sandbox.Local`) or an in-memory virtual filesystem (`Sandbox.Virtual`).
+  (`Sandbox.Local`), an in-memory virtual filesystem (`Sandbox.Virtual`), or a
+  microVM-backed guest workspace (`Sandbox.Microsandbox`).
 
   ## Parameters
 

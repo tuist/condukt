@@ -9,8 +9,8 @@ defmodule Condukt.Context do
 
   Discovery routes through `Condukt.Sandbox`, so the files are read from
   wherever the active sandbox lives: the host filesystem for `Sandbox.Local`,
-  the virtual filesystem for `Sandbox.Virtual`, or inside the pod for
-  `Sandbox.Kubernetes`.
+  the virtual filesystem for `Sandbox.Virtual`, a mounted guest workspace for
+  `Sandbox.Microsandbox`, or inside the pod for `Sandbox.Kubernetes`.
   """
 
   alias Condukt.Context.Skill

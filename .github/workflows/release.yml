@@ -105,23 +105,32 @@ jobs:
   # GitHub release and feed it into the rustler_precompiled checksum files.
   # ============================================================================
   build_nifs:
-    name: Build NIF (${{ matrix.crate }} | ${{ matrix.job.target }} | nif ${{ matrix.nif }})
+    name: Build NIF (${{ matrix.crate }} | ${{ matrix.target }} | nif ${{ matrix.nif }})
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
-    runs-on: ${{ matrix.job.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
 
     strategy:
       fail-fast: false
       matrix:
-        crate: [condukt_bashkit]
-        nif: ["2.16", "2.17"]
-        job:
-          - { target: aarch64-apple-darwin,        os: macos-14 }
-          - { target: x86_64-apple-darwin,         os: macos-15-intel }
-          - { target: x86_64-unknown-linux-gnu,    os: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu,   os: ubuntu-22.04, use-cross: true }
-          - { target: x86_64-pc-windows-msvc,      os: windows-2022 }
+        include:
+          - { crate: condukt_bashkit, nif: "2.16", target: aarch64-apple-darwin, os: macos-14 }
+          - { crate: condukt_bashkit, nif: "2.16", target: x86_64-apple-darwin, os: macos-15-intel }
+          - { crate: condukt_bashkit, nif: "2.16", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { crate: condukt_bashkit, nif: "2.16", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { crate: condukt_bashkit, nif: "2.16", target: x86_64-pc-windows-msvc, os: windows-2022 }
+          - { crate: condukt_bashkit, nif: "2.17", target: aarch64-apple-darwin, os: macos-14 }
+          - { crate: condukt_bashkit, nif: "2.17", target: x86_64-apple-darwin, os: macos-15-intel }
+          - { crate: condukt_bashkit, nif: "2.17", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { crate: condukt_bashkit, nif: "2.17", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { crate: condukt_bashkit, nif: "2.17", target: x86_64-pc-windows-msvc, os: windows-2022 }
+          - { crate: condukt_microsandbox, nif: "2.16", target: aarch64-apple-darwin, os: macos-14 }
+          - { crate: condukt_microsandbox, nif: "2.16", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { crate: condukt_microsandbox, nif: "2.16", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { crate: condukt_microsandbox, nif: "2.17", target: aarch64-apple-darwin, os: macos-14 }
+          - { crate: condukt_microsandbox, nif: "2.17", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { crate: condukt_microsandbox, nif: "2.17", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
           # musl targets are deferred: bashkit (or one of its transitive
           # deps) refuses to produce a `cdylib` under cross-built musl
           # ("does not support these crate types"). Re-add them once the
@@ -143,14 +152,14 @@ jobs:
         with:
           project-name: ${{ matrix.crate }}
           project-version: ${{ needs.plan.outputs.next_version }}
-          target: ${{ matrix.job.target }}
+          target: ${{ matrix.target }}
           nif-version: ${{ matrix.nif }}
           # Pass empty string (not "false") for non-cross targets so the
           # action's `if: ${{ inputs.use-cross && ... }}` condition skips
           # the cross install step. Composite-action boolean inputs are
           # passed as strings, and any non-empty string is truthy in GH
           # expressions, so "false" would still trigger the install.
-          use-cross: ${{ matrix.job.use-cross == true && 'true' || '' }}
+          use-cross: ${{ matrix.use-cross == true && 'true' || '' }}
           project-dir: native/${{ matrix.crate }}
 
       - name: Upload NIF artifact
@@ -216,11 +225,19 @@ jobs:
           pattern: "*condukt_bashkit-*.tar.gz"
           merge-multiple: true
 
+      - name: Download microsandbox NIF artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: nif-artifacts/condukt_microsandbox
+          pattern: "*condukt_microsandbox-*.tar.gz"
+          merge-multiple: true
+
       - name: Generate checksum files
         run: |
           set -euo pipefail
           find nif-artifacts -maxdepth 2 -type f -name '*.tar.gz' -print | sort
           elixir scripts/generate_nif_checksum.exs nif-artifacts/condukt_bashkit Elixir.Condukt.Bashkit.NIF
+          elixir scripts/generate_nif_checksum.exs nif-artifacts/condukt_microsandbox Elixir.Condukt.Microsandbox.NIF
 
       - name: Update version and changelog
         run: |
@@ -245,7 +262,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add mix.exs CHANGELOG.md \
-            "checksum-Elixir.Condukt.Bashkit.NIF.exs"
+            "checksum-Elixir.Condukt.Bashkit.NIF.exs" \
+            "checksum-Elixir.Condukt.Microsandbox.NIF.exs"
           git commit -m "[Release] Condukt ${{ needs.plan.outputs.next_version }}"
           git tag -a "${{ needs.plan.outputs.next_version }}" -m "${{ needs.plan.outputs.next_version }}"
 
@@ -261,6 +279,7 @@ jobs:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
           MIX_ENV: dev
           CONDUKT_BASHKIT_DISABLE: "1"
+          CONDUKT_MICROSANDBOX_DISABLE: "1"
         run: |
           set -euo pipefail
           : "${HEX_API_KEY:?HEX_API_KEY secret is required}"

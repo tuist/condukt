@@ -6,8 +6,8 @@ search file contents. Built-in tools like `Condukt.Tools.Read` and
 `Condukt.Tools.Bash` declare one tool name and JSON schema to the LLM and
 route every primitive call through the active sandbox. The same agent
 definition can therefore run against the host filesystem in development and
-against an isolated virtual filesystem in production by changing one option
-at session start.
+against an isolated virtual filesystem, a microVM guest, or a remote pod in
+production by changing one option at session start.
 
 ## Built-in sandboxes
 
@@ -17,6 +17,10 @@ at session start.
   a Rust-implemented bash interpreter (bashkit), with no host process
   spawning by default. It is shipped via a precompiled NIF, so consumers
   do not need a Rust toolchain to use it.
+* `Condukt.Sandbox.Microsandbox` boots a
+  [microsandbox](https://github.com/superradcompany/microsandbox) microVM,
+  bind-mounts host paths into the guest at sandbox creation time, and routes
+  reads, writes, and commands through the guest agent bridge.
 * `Condukt.Sandbox.Kubernetes` runs each session inside a dedicated
   Kubernetes pod. All filesystem reads, writes, and process execution
   happen inside the pod via the Kubernetes exec API; the agent cannot
@@ -80,6 +84,55 @@ def tools do
   Condukt.Tools.coding_tools() ++ [Condukt.Sandbox.Virtual.Tools.Mount]
 end
 ```
+
+## Microsandbox
+
+`Condukt.Sandbox.Microsandbox` is backed by the
+[microsandbox](https://github.com/superradcompany/microsandbox) crate. Condukt
+loads it through a Rustler NIF and keeps a per-session async runtime alive so
+the guest bridge can serve file and exec requests across the whole session.
+
+```elixir
+{:ok, sb} =
+  Condukt.Sandbox.new(Condukt.Sandbox.Microsandbox,
+    image: "ubuntu:24.04"
+  )
+
+{:ok, %{output: out, exit_code: 0}} = Condukt.Sandbox.exec(sb, "pwd")
+String.trim(out) == "/workspace"
+
+{:ok, sb} =
+  Condukt.Sandbox.new(Condukt.Sandbox.Microsandbox,
+    image: "ghcr.io/myorg/elixir-dev:latest",
+    cwd: "/repo",
+    workspace_host: File.cwd!(),
+    mounts: [{"/tmp/cache", "/cache", :readwrite}]
+  )
+```
+
+By default the sandbox bind-mounts the current host working directory at
+`/workspace` and uses `/bin/bash` for `exec/3`. That gives the coding tools a
+guest environment while still pointing at the host project tree.
+
+Current limits:
+
+* Runtime `mount/3` is not supported. `microsandbox` volumes are configured at
+  sandbox creation time, so use the `:mounts` init option.
+* `glob/3` and `grep/3` are available for host-backed bind mounts. Paths that
+  only exist inside the guest rootfs return `{:error, :not_supported}`.
+* `Condukt.Sandbox.NetworkPolicy` is still Kubernetes-only. Microsandbox does
+  not translate that layer yet.
+
+The precompiled NIF currently targets:
+
+```
+aarch64-apple-darwin
+aarch64-unknown-linux-gnu
+x86_64-unknown-linux-gnu
+```
+
+Unsupported hosts compile the Elixir wrapper as stubs that return
+`{:error, :unsupported_target}`.
 
 ## Kubernetes sandbox
 
@@ -175,10 +228,11 @@ follows the usual single-use lifecycle: `shutdown/1` deletes it.
 `AGENTS.md`, `CLAUDE.md`, and `.agents/skills/*/SKILL.md` are read through
 the active sandbox at session start, not from the host filesystem
 directly. For `Sandbox.Local` that is the same place either way. For
-`Sandbox.Virtual` and `Sandbox.Kubernetes` it means the discovery finds
-files in the sandbox: a virtual filesystem with mounts, or a workspace
-inside a pod cloned via `:workspace_source`. The agent picks up the same
-project instructions regardless of which backend it is running against.
+`Sandbox.Virtual`, `Sandbox.Microsandbox`, and `Sandbox.Kubernetes` it means
+the discovery finds files in the sandbox: a virtual filesystem with mounts, a
+bind-mounted guest workspace, or a workspace inside a pod cloned via
+`:workspace_source`. The agent picks up the same project instructions
+regardless of which backend it is running against.
 
 ### State persistence
 
@@ -323,6 +377,13 @@ Sessions resolve the sandbox in this order:
   MyApp.CodingAgent.start_link(
     api_key: "...",
     sandbox: Condukt.Sandbox.Virtual
+  )
+
+# Microsandbox backed by a guest image and the current workspace mount.
+{:ok, agent} =
+  MyApp.CodingAgent.start_link(
+    api_key: "...",
+    sandbox: {Condukt.Sandbox.Microsandbox, image: "ubuntu:24.04"}
   )
 ```
 
