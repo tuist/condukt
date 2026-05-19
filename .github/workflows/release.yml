@@ -140,6 +140,12 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
+      - name: Install Linux native dependencies
+        if: matrix.crate == 'condukt_microsandbox' && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap-ng-dev
+
       - name: Build NIF
         id: build-nif
         # v1.1.5 upgrades the bundled `giantswarm/install-binary-action` from
@@ -280,6 +286,8 @@ jobs:
           MIX_ENV: dev
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libcap-ng-dev
           : "${HEX_API_KEY:?HEX_API_KEY secret is required}"
 
           mix deps.get
