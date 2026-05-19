@@ -1,19 +1,18 @@
 ---
 layout: base.njk
 title: null
-description: Production infrastructure for AI agents on the BEAM. Condukt runs agents as supervised OTP processes, sandboxes every session, governs network egress, and runs typed workflow DAGs.
+description: An Elixir framework for defining and running AI agents and workflows. Agents are supervised OTP processes, every session is sandboxed with governed egress, and workflows wire steps and agents into a typed graph.
 ---
 
 <section class="hero">
   <div class="container">
-    <p class="eyebrow">elixir · otp · agent infrastructure</p>
-    <h1><span class="tok-prompt">❯</span> Production infrastructure<br />for AI <span class="tok-accent">agents</span>.</h1>
+    <p class="eyebrow">elixir · agents · workflows</p>
+    <h1><span class="tok-prompt">❯</span> Define and run AI agents<br />and workflows. <span class="tok-accent">In Elixir.</span></h1>
     <p class="lede">
-      {{ site.name }} runs AI agents as supervised OTP processes, isolates
-      every session in a sandbox (local, in-memory, or a dedicated
-      Kubernetes pod), and governs what they can reach on the network.
-      Run a single agent, or run a workflow that wires explicit steps
-      and agents into one graph.
+      {{ site.name }} is an Elixir framework for defining and running AI
+      agents and workflows. Agents are supervised OTP processes, every
+      session is sandboxed with governed network egress, and you wire
+      agents into typed workflow graphs.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="{{ site.docs }}">read the docs</a>
@@ -147,51 +146,14 @@ end{% endhighlight %}</div>
   </div>
 </section>
 
-<section id="workflows" class="install-section">
-  <div class="container">
-    <p class="section-num">section 03</p>
-    <h2>Workflows as a typed DAG</h2>
-    <p class="lede">
-      Compose commands, agent loops, HTTP calls, custom tools, and
-      fan-outs into a single graph. References between steps
-      make data flow visible in the file, and <code>condukt check</code>
-      validates the graph before it runs.
-    </p>
-    <div class="code-block titled" data-title="release_notes.hcl">{% highlight "hcl" %}workflow "release_notes" {
-  runtime {
-    model = "openai:gpt-4.1-mini"
-  }
-
-  cmd "version" {
-    argv = ["sh", "-c", "git describe --tags --always"]
-  }
-
-  agent "draft" {
-    needs = ["version"]
-    input = "Draft release notes for ${task.version.stdout}"
-  }
-
-  output = task.draft.output
-}{% endhighlight %}</div>
-    <p class="comment">
-      # Five step kinds compose any workflow: <code>cmd</code>,
-      <code>agent</code>, <code>http</code>, <code>tool</code>, and
-      <code>map</code>. Run with <code>condukt run release_notes.hcl</code>,
-      validate without executing using <code>condukt check release_notes.hcl</code>.
-      <a href="https://hexdocs.pm/condukt/workflows.html">Read the workflows guide →</a>
-    </p>
-  </div>
-</section>
-
 <section id="install" class="install-section">
   <div class="container">
-    <p class="section-num">section 04</p>
-    <h2>Two ways to put an LLM to work</h2>
+    <p class="section-num">section 03</p>
+    <h2>Agents and workflows</h2>
     <p class="lede">
-      Run an autonomous agent, or run a workflow that mixes explicit
-      steps with agent steps where you need judgment. Both run on the
-      same engine, sandboxes, and egress policy, and they compose: an
-      agent can be one step in a workflow.
+      Define an agent and run it, or wire steps and agents into a
+      workflow graph. Both run on the same engine, sandboxes, and egress
+      policy. An agent can be a single step in a workflow.
     </p>
 
     <div class="path">
@@ -224,32 +186,43 @@ end{% endhighlight %}</div>
     <div class="path">
       <h3 class="path-title">Run a workflow</h3>
       <p class="path-desc">
-        A typed DAG authored in HCL, a declarative language. Wire
-        explicit cmd, http, tool, and map steps, and drop agent steps in
-        where reasoning is needed. The graph is inspectable and validated
-        by <code>condukt check</code> before it runs.
+        A typed DAG authored in HCL. Wire explicit cmd, http, tool, and
+        map steps, and drop agent steps in where reasoning is needed:
+        the same agents, embedded in a graph.
       </p>
       <ol class="steps">
         <li>
           <h3>Author it in HCL</h3>
-          <div class="code-block titled" data-title="hello.hcl">{% highlight "hcl" %}workflow "hello" {
-  input "name" {
-    type = "string"
+          <div class="code-block titled" data-title="release_notes.hcl">{% highlight "hcl" %}workflow "release_notes" {
+  runtime {
+    model = "openai:gpt-4.1-mini"
   }
 
-  cmd "greet" {
-    argv = ["echo", "Hello, ${input.name}"]
+  cmd "version" {
+    argv = ["sh", "-c", "git describe --tags --always"]
   }
 
-  output = task.greet.stdout
+  agent "draft" {
+    needs = ["version"]
+    input = "Draft release notes for ${task.version.stdout}"
+  }
+
+  output = task.draft.output
 }{% endhighlight %}</div>
         </li>
         <li>
           <h3>Validate and run it</h3>
-          <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}condukt check hello.hcl
-condukt run hello.hcl --input '{"name":"world"}'{% endhighlight %}</div>
+          <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}condukt check release_notes.hcl
+condukt run release_notes.hcl{% endhighlight %}</div>
         </li>
       </ol>
+      <p class="comment">
+        # Five step kinds compose any workflow: <code>cmd</code>,
+        <code>agent</code>, <code>http</code>, <code>tool</code>, and
+        <code>map</code>. The <code>agent</code> step here is the same
+        kind of agent as above, embedded in the graph.
+        <a href="https://hexdocs.pm/condukt/workflows.html">Read the workflows guide →</a>
+      </p>
     </div>
 
     <p class="comment">

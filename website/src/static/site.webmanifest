@@ -1,7 +1,7 @@
 {
   "name": "Condukt",
   "short_name": "Condukt",
-  "description": "Production infrastructure for AI agents on the BEAM.",
+  "description": "An Elixir framework for defining and running AI agents and workflows.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0b",
