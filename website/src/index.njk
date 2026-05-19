@@ -1,27 +1,28 @@
 ---
 layout: base.njk
 title: null
-description: A framework for building AI agents in Elixir, with OTP-native primitives, streaming, workflows, and a standalone engine.
+description: Production infrastructure for AI agents on the BEAM. Condukt runs agents as supervised OTP processes, sandboxes every session, governs network egress, and runs typed workflow DAGs.
 ---
 
 <section class="hero">
   <div class="container">
-    <p class="eyebrow">elixir · otp · workflow engine</p>
-    <h1><span class="tok-prompt">❯</span> Build resilient AI agents<br />in <span class="tok-accent">Elixir</span>.</h1>
+    <p class="eyebrow">elixir · otp · agent infrastructure</p>
+    <h1><span class="tok-prompt">❯</span> Production infrastructure<br />for AI <span class="tok-accent">agents</span>.</h1>
     <p class="lede">
-      {{ site.name }} treats agents as first-class OTP processes: supervised,
-      observable, and built for production. Embed it as a library, or install
-      the standalone engine to run workflow files with no local Elixir
-      toolchain.
+      {{ site.name }} runs AI agents as supervised OTP processes, isolates
+      every session in a sandbox (local, in-memory, or a dedicated
+      Kubernetes pod), and governs what they can reach on the network.
+      Embed it as an Elixir library, or run workflow files with the
+      standalone engine.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="{{ site.docs }}">read the docs</a>
       <a class="btn ghost" href="{{ site.repo }}">view on github</a>
     </div>
-    <div class="code-block titled install" data-title="~ get started">{% highlight "bash" %}# Library — add to mix.exs
-{:condukt, "~> 0.13"}
+    <div class="code-block titled install" data-title="~ get started">{% highlight "bash" %}# Library: add to mix.exs
+{:condukt, "~> 1.5"}
 
-# Engine — standalone runner via mise
+# Engine: standalone runner via mise
 mise use -g github:tuist/condukt{% endhighlight %}</div>
   </div>
 </section>
@@ -29,72 +30,126 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
 <section id="features" class="features">
   <div class="container">
     <p class="section-num">section 01</p>
-    <h2>Why Condukt</h2>
+    <h2>What Condukt gives you</h2>
     <div class="feature-grid">
       <article>
         <span class="feature-icon" aria-hidden="true">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v2"/><path d="M12 2v2"/><path d="M17 20v2"/><path d="M17 2v2"/><path d="M2 12h2"/><path d="M2 17h2"/><path d="M2 7h2"/><path d="M20 12h2"/><path d="M20 17h2"/><path d="M20 7h2"/><path d="M7 20v2"/><path d="M7 2v2"/><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
         </span>
         <h3>OTP-native</h3>
-        <p>Agents are GenServers. They fit naturally into supervision trees and
-        survive restarts the way the rest of your system does.</p>
+        <p>Agents are supervised GenServers. They live in your supervision
+        tree and recover from crashes the way the rest of your system does.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/><path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47"/><path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1"/><path d="M9.5 18h5"/><path d="m8 22 4-11 4 11"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 9l3 3-3 3"/></svg>
         </span>
-        <h3>Streaming</h3>
-        <p>Real-time event streams for text, thinking, tool calls, and
-        results. Perfect for chat UIs and Phoenix LiveView.</p>
+        <h3>Sandboxed sessions</h3>
+        <p>Every session runs through one sandbox facade: the host, an
+        in-memory Rust filesystem, or a dedicated Kubernetes pod cloned
+        from a git workspace.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
         </span>
-        <h3>Multi-provider</h3>
-        <p>18+ LLM providers via ReqLLM: Anthropic, OpenAI, Google, Groq,
-        Ollama, OpenRouter, xAI, and more.</p>
+        <h3>Governed egress</h3>
+        <p>Per-session network policy with allow and deny host globs, plus
+        an LLM-backed decide rule. Egress is audited and secrets are
+        redacted.</p>
+      </article>
+      <article>
+        <span class="feature-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+        </span>
+        <h3>Pluggable runtimes</h3>
+        <p>Use the native ReqLLM tool loop, or wrap the Codex and Claude
+        CLIs as drop-in agent runtimes without leaving Condukt.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="m8 8 4 4-4 4"/></svg>
         </span>
         <h3>Workflow engine</h3>
-        <p>A Burrito-built <code>condukt</code> executable runs HCL and
-        <code>.exs</code> workflow files on Linux, macOS, and Windows
-        through mise.</p>
+        <p>Author typed DAGs in HCL with cmd, agent, http, tool, and map
+        steps. Validate the graph with <code>condukt check</code> before
+        anything runs.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
         </span>
-        <h3>Pluggable tools</h3>
-        <p>Read, Bash, Edit, Write out of the box. Define your own tools by
-        implementing the <code>Condukt.Tool</code> behaviour.</p>
+        <h3>MCP client</h3>
+        <p>Connect external Model Context Protocol servers over stdio,
+        HTTP SSE, or streamable HTTP. Their tools appear to agents as
+        <code>server.tool</code>.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><path d="M12 8v4"/><path d="M5 21v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>
         </span>
-        <h3>Project instructions</h3>
-        <p>Auto-discovers <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and
-        local skills so your agents follow your conventions.</p>
+        <h3>Sub-agents &amp; HTTP</h3>
+        <p>Delegate to role-based child agents with typed inputs and
+        outputs, and expose any agent or operation as a JSON endpoint via
+        <code>Condukt.Plug</code>.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/><path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/><path d="M16.2 4.8c2 2 2.26 5.11.8 7.47"/><path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1"/><path d="M9.5 18h5"/><path d="m8 22 4-11 4 11"/></svg>
         </span>
-        <h3>Redaction &amp; compaction</h3>
-        <p>Pluggable outbound redactors and compactors keep prompts short and
-        secrets out of provider requests.</p>
+        <h3>Multi-provider streaming</h3>
+        <p>18+ LLM providers through ReqLLM, with real-time event streams
+        for text, thinking, and tool calls. Built for Phoenix LiveView.</p>
       </article>
     </div>
   </div>
 </section>
 
-<section id="workflows" class="install-section">
+<section id="sandbox" class="install-section">
   <div class="container">
     <p class="section-num">section 02</p>
+    <h2>Sandboxed and governed by default</h2>
+    <p class="lede">
+      Declare a sandbox on the agent and every session is isolated. A
+      Kubernetes sandbox runs each session in its own pod. A network
+      policy decides what that pod may reach, with an agent as the final
+      arbiter on ambiguous hosts.
+    </p>
+    <div class="code-block titled" data-title="lib/my_app/coding_agent.ex">{% highlight "elixir" %}defmodule MyApp.CodingAgent do
+  use Condukt
+
+  @impl true
+  def tools, do: Condukt.Tools.coding_tools()
+
+  @impl true
+  def sandbox do
+    {Condukt.Sandbox.Kubernetes,
+     namespace: "agents",
+     image: "ghcr.io/myorg/agent:1.4",
+     workspace_source: [git: "https://github.com/myorg/repo.git", ref: "main"],
+     network_policy: %Condukt.Sandbox.NetworkPolicy{
+       rules: [
+         deny: ["*.internal.example.com"],
+         allow: ["api.github.com", "*.hex.pm"],
+         decide: {Condukt.Sandbox.NetworkPolicy.AgentDecider, agent: MyApp.NetGuard}
+       ],
+       default: :deny
+     }}
+  end
+end{% endhighlight %}</div>
+    <p class="comment">
+      # Local and in-memory Virtual sandboxes share the same facade. Swap
+      <code>Condukt.Sandbox.Kubernetes</code> for
+      <code>Condukt.Sandbox.Virtual</code> to run tools against an
+      in-memory Rust filesystem instead.
+      <a href="https://hexdocs.pm/condukt/sandbox.html">Read the sandbox guide →</a>
+    </p>
+  </div>
+</section>
+
+<section id="workflows" class="install-section">
+  <div class="container">
+    <p class="section-num">section 03</p>
     <h2>Workflows as a typed DAG</h2>
     <p class="lede">
       Compose deterministic commands, agent loops, HTTP calls, custom
@@ -121,8 +176,8 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
     <p class="comment">
       # Five step kinds compose any workflow: <code>cmd</code>,
       <code>agent</code>, <code>http</code>, <code>tool</code>, and
-      <code>map</code>. Run with <code>condukt run release_notes.hcl</code>
-      or validate without executing using <code>condukt check release_notes.hcl</code>.
+      <code>map</code>. Run with <code>condukt run release_notes.hcl</code>,
+      validate without executing using <code>condukt check release_notes.hcl</code>.
       <a href="https://hexdocs.pm/condukt/workflows.html">Read the workflows guide →</a>
     </p>
   </div>
@@ -130,7 +185,7 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
 
 <section id="install" class="install-section">
   <div class="container">
-    <p class="section-num">section 03</p>
+    <p class="section-num">section 04</p>
     <h2>Two ways to run Condukt</h2>
     <div class="mode-grid">
       <article>
@@ -138,7 +193,7 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
         <p>Use Hex when agents should run inside your Elixir app and share
         your supervision tree.</p>
         <div class="code-block titled" data-title="mix.exs">{% highlight "elixir" %}def deps do
-  [{:condukt, "~> 0.13"}]
+  [{:condukt, "~> 1.5"}]
 end{% endhighlight %}</div>
       </article>
       <article>
@@ -162,11 +217,10 @@ end{% endhighlight %}</div>
       </li>
       <li>
         <h3>Run it</h3>
-        <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, agent} = MyApp.CodingAgent.start_link(
-  api_key: System.get_env("ANTHROPIC_API_KEY")
-)
-
-{:ok, response} = Condukt.run(agent, "Refactor this module."){% endhighlight %}</div>
+        <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
+  Condukt.run(MyApp.CodingAgent, "Refactor this module.",
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY")
+  ){% endhighlight %}</div>
       </li>
     </ol>
   </div>

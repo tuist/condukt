@@ -196,9 +196,9 @@ export async function generatePostSocialImages() {
 
 export async function generateHomeSocialImage() {
   const svg = renderCard({
-    eyebrow: "# elixir · otp · workflow engine",
-    title: "Build resilient AI agents in Elixir.",
-    footnote: "OTP-native · Streaming · 18+ LLM providers",
+    eyebrow: "# elixir · otp · agent infrastructure",
+    title: "Production infrastructure for AI agents.",
+    footnote: "Sandboxed · Supervised · Governed egress",
   });
   const image = await sharp(Buffer.from(svg)).png().toBuffer();
   await writeIfChanged(path.join(assetsDir, "social-card.png"), image);
