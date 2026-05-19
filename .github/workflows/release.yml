@@ -278,8 +278,6 @@ jobs:
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
           MIX_ENV: dev
-          CONDUKT_BASHKIT_DISABLE: "1"
-          CONDUKT_MICROSANDBOX_DISABLE: "1"
         run: |
           set -euo pipefail
           : "${HEX_API_KEY:?HEX_API_KEY secret is required}"
