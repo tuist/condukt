@@ -187,41 +187,76 @@ end{% endhighlight %}</div>
   <div class="container">
     <p class="section-num">section 04</p>
     <h2>Two ways to run Condukt</h2>
-    <div class="mode-grid">
-      <article>
-        <h3>Library</h3>
-        <p>Use Hex when agents should run inside your Elixir app and share
-        your supervision tree.</p>
-        <div class="code-block titled" data-title="mix.exs">{% highlight "elixir" %}def deps do
+    <p class="lede">
+      Embed agents in your Elixir app with the Hex library, or run
+      workflow files with the standalone engine. Each path is a
+      self-contained quickstart below.
+    </p>
+
+    <div class="path">
+      <h3 class="path-title">Library</h3>
+      <p class="path-desc">
+        Agents run inside your Elixir app and share your supervision
+        tree. You write and call them from Elixir.
+      </p>
+      <ol class="steps">
+        <li>
+          <h3>Add the dependency</h3>
+          <div class="code-block titled" data-title="mix.exs">{% highlight "elixir" %}def deps do
   [{:condukt, "~> 1.5"}]
 end{% endhighlight %}</div>
-      </article>
-      <article>
-        <h3>Engine</h3>
-        <p>Use mise when you want the standalone workflow runner with Erlang
-        and Condukt bundled into one executable.</p>
-        <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}mise use -g github:tuist/condukt
-condukt check hello.hcl{% endhighlight %}</div>
-      </article>
-    </div>
-
-    <ol class="steps">
-      <li>
-        <h3>Define an agent</h3>
-        <div class="code-block titled" data-title="lib/my_app/coding_agent.ex">{% highlight "elixir" %}defmodule MyApp.CodingAgent do
+        </li>
+        <li>
+          <h3>Define an agent</h3>
+          <div class="code-block titled" data-title="lib/my_app/coding_agent.ex">{% highlight "elixir" %}defmodule MyApp.CodingAgent do
   use Condukt
 
   @impl true
   def tools, do: Condukt.Tools.coding_tools()
 end{% endhighlight %}</div>
-      </li>
-      <li>
-        <h3>Run it</h3>
-        <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
+        </li>
+        <li>
+          <h3>Run it from Elixir</h3>
+          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
   Condukt.run(MyApp.CodingAgent, "Refactor this module.",
     api_key: System.fetch_env!("ANTHROPIC_API_KEY")
   ){% endhighlight %}</div>
-      </li>
-    </ol>
+        </li>
+      </ol>
+    </div>
+
+    <div class="path">
+      <h3 class="path-title">Engine</h3>
+      <p class="path-desc">
+        A standalone runner with Erlang and Condukt bundled into one
+        executable. No Elixir toolchain required. You author workflows
+        in HCL and run them from the shell.
+      </p>
+      <ol class="steps">
+        <li>
+          <h3>Install the engine</h3>
+          <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}mise use -g github:tuist/condukt{% endhighlight %}</div>
+        </li>
+        <li>
+          <h3>Author a workflow</h3>
+          <div class="code-block titled" data-title="hello.hcl">{% highlight "hcl" %}workflow "hello" {
+  input "name" {
+    type = "string"
+  }
+
+  cmd "greet" {
+    argv = ["echo", "Hello, ${input.name}"]
+  }
+
+  output = task.greet.stdout
+}{% endhighlight %}</div>
+        </li>
+        <li>
+          <h3>Validate and run it</h3>
+          <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}condukt check hello.hcl
+condukt run hello.hcl --input '{"name":"world"}'{% endhighlight %}</div>
+        </li>
+      </ol>
+    </div>
   </div>
 </section>
