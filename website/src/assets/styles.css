@@ -211,6 +211,11 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   padding: 1rem 1.15rem;
   overflow-x: auto;
   line-height: 1.6;
+  /* Lumis inlines the theme background on the <pre>; clear it so the
+     card owns a single background and the only rounded frame is the
+     .code-block (overflow:hidden) wrapper. */
+  background: transparent !important;
+  border-radius: 0 !important;
 }
 
 .code-block pre.lumis code { background: transparent; }
