@@ -110,20 +110,24 @@ defmodule Condukt.Sandbox.Microsandbox do
     guest_path = resolve_guest_path(path, state.base_cwd)
 
     with {:ok, content} <- read_file(state, guest_path) do
-      case count_occurrences(content, old_text) do
-        0 ->
-          {:ok, %{occurrences: 0, content: content}}
+      apply_edit(state, guest_path, content, old_text, new_text)
+    end
+  end
 
-        count when count > 1 ->
-          {:ok, %{occurrences: count, content: content}}
+  defp apply_edit(state, guest_path, content, old_text, new_text) do
+    case count_occurrences(content, old_text) do
+      0 ->
+        {:ok, %{occurrences: 0, content: content}}
 
-        1 ->
-          new_content = String.replace(content, old_text, new_text, global: false)
+      count when count > 1 ->
+        {:ok, %{occurrences: count, content: content}}
 
-          with :ok <- write_file(state, guest_path, new_content) do
-            {:ok, %{occurrences: 1, content: new_content}}
-          end
-      end
+      1 ->
+        new_content = String.replace(content, old_text, new_text, global: false)
+
+        with :ok <- write_file(state, guest_path, new_content) do
+          {:ok, %{occurrences: 1, content: new_content}}
+        end
     end
   end
 

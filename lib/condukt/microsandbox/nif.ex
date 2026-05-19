@@ -1,15 +1,24 @@
 defmodule Condukt.Microsandbox.NIF do
   @moduledoc false
 
-  if (
-       arch = :erlang.system_info(:system_architecture) |> List.to_string()
+  @microsandbox_supported_target (
+                                   arch =
+                                     :erlang.system_info(:system_architecture) |> List.to_string()
 
-       case :os.type() do
-         {:unix, :darwin} -> String.starts_with?(arch, "aarch64")
-         {:unix, :linux} -> String.starts_with?(arch, "aarch64") or String.starts_with?(arch, "x86_64")
-         _ -> false
-       end
-     ) do
+                                   case :os.type() do
+                                     {:unix, :darwin} ->
+                                       String.starts_with?(arch, "aarch64")
+
+                                     {:unix, :linux} ->
+                                       String.starts_with?(arch, "aarch64") or
+                                         String.starts_with?(arch, "x86_64")
+
+                                     _ ->
+                                       false
+                                   end
+                                 )
+
+  if @microsandbox_supported_target do
     use RustlerPrecompiled,
       otp_app: :condukt,
       crate: "condukt_microsandbox",
