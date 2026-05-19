@@ -28,20 +28,12 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 64px 64px;
-  background-position: -1px -1px;
-}
-
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(120% 90% at 50% 0%, transparent 55%, var(--bg) 100%);
+  background: radial-gradient(120% 80% at 50% 0%, rgba(255, 255, 255, 0.035), transparent 55%);
   z-index: -1;
 }
 
@@ -506,6 +498,5 @@ code:not(.lumis code) {
 .post-back a::before { content: "cd "; color: var(--fg-dim); }
 
 @media (max-width: 640px) {
-  body { background-size: 40px 40px; }
   .site-nav a { margin-left: 0.9rem; }
 }
