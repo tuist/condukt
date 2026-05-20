@@ -110,12 +110,29 @@ jobs:
           # walk per-thread RNG state at process exit and crash when BEAM
           # scheduler threads are not joined first. See
           # scripts/patch_nif_fini_array.py for the full diagnosis.
+          #
+          # `mix compile` itself triggers this crash on Linux because loading
+          # the NIF module maps the .so into BEAM and the compile process's
+          # own exit then runs _dl_fini. The .so is fully built and copied
+          # to priv/native before BEAM tears down, so we tolerate exit 139
+          # here and patch the produced .so. The follow-up `mix test
+          # --no-compile` step then runs against the patched binary and
+          # exits cleanly.
+          set +e
           mix compile
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] && [ "$status" -ne 139 ]; then
+            echo "mix compile failed with unexpected status $status"
+            exit "$status"
+          fi
           for so in \
             _build/test/lib/condukt/priv/native/condukt_microsandbox.so \
             native/condukt_microsandbox/target/release/libcondukt_microsandbox.so; do
             if [ -e "$so" ]; then
               python3 scripts/patch_nif_fini_array.py "$so"
+            else
+              echo "warning: $so not found after mix compile"
             fi
           done
 
