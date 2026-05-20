@@ -126,19 +126,26 @@ jobs:
               readelf --hex-dump=.fini_array "$so" || true
               echo "--- .init_array contents ---"
               readelf --hex-dump=.init_array "$so" || true
-              echo "--- RELATIVE relocations targeting .fini_array offsets ---"
-              fini_addr=$(readelf -SW "$so" | awk '/\.fini_array/ {print $5; exit}')
-              fini_size=$(readelf -SW "$so" | awk '/\.fini_array/ {print $7; exit}')
-              if [ -n "$fini_addr" ]; then
-                echo "fini_array vaddr=0x$fini_addr size=0x$fini_size"
-                readelf -rW "$so" | awk -v base="0x$fini_addr" -v size="0x$fini_size" '
-                  NR==1 {next}
-                  /^Relocation/ {next}
-                  $1 ~ /^[0-9a-f]+$/ {
-                    off=strtonum("0x"$1)
-                    if (off >= strtonum(base) && off < strtonum(base) + strtonum(size)) print
-                  }
-                '
+              echo "--- objdump -R (first 80 lines) ---"
+              objdump -R "$so" 2>&1 | head -80 || true
+              echo "--- readelf -rW (first 80 lines) ---"
+              readelf -rW "$so" 2>&1 | head -80 || true
+              echo "--- Relocations targeting .fini_array address range ---"
+              # readelf -SW columns when section name is short: [N] NAME TYPE ADDR OFF SIZE ES FLG ...
+              fini_addr_hex=$(readelf -SW "$so" | awk '/\.fini_array/ {print $4; exit}')
+              fini_size_hex=$(readelf -SW "$so" | awk '/\.fini_array/ {print $6; exit}')
+              if [ -n "$fini_addr_hex" ] && [ -n "$fini_size_hex" ]; then
+                fini_start=$((16#$fini_addr_hex))
+                fini_end=$((fini_start + 16#$fini_size_hex))
+                printf 'fini_array vaddr=0x%s size=0x%s (dec %d..%d)\n' "$fini_addr_hex" "$fini_size_hex" "$fini_start" "$fini_end"
+                readelf -rW "$so" | while IFS= read -r line; do
+                  off_hex=$(printf '%s' "$line" | awk '$1 ~ /^[0-9a-f]+$/ {print $1; exit}')
+                  [ -z "$off_hex" ] && continue
+                  off_dec=$((16#$off_hex)) 2>/dev/null || continue
+                  if [ "$off_dec" -ge "$fini_start" ] && [ "$off_dec" -lt "$fini_end" ]; then
+                    echo "$line"
+                  fi
+                done
               fi
             else
               echo "$so not found"
