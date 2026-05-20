@@ -11,6 +11,8 @@ defmodule Condukt.Sandbox do
   - `Condukt.Sandbox.Virtual` (in `:condukt_bashkit_nif`) runs inside an
     in-memory virtual filesystem and a Rust-implemented bash interpreter, with
     no host process spawning by default.
+  - `Condukt.Sandbox.Microsandbox` boots a `microsandbox` microVM, bind-mounts
+    selected host directories into it, and runs commands inside the guest.
 
   ## Why a sandbox
 

@@ -18,13 +18,16 @@
 - `Condukt.Sandbox.Local` is the default and operates against the host
   filesystem. `Condukt.Sandbox.Virtual` is in-tree and routes through a
   Rust NIF wrapping bashkit for in-memory virtual filesystem isolation.
-  `Condukt.Sandbox.Kubernetes` runs each session in a dedicated pod via
-  the `:k8s` library; idempotent on a stable `:id` so an Oban-style
-  worker can reattach the same pod across job retries. K8s sandboxes
-  refresh a heartbeat annotation for stale-pod reaping, support
-  `reap_stale/1`, stream writes through exec stdin, and can clone an
-  init-time `:workspace_source` git repository when the image includes
-  `git`.
+  `Condukt.Sandbox.Microsandbox` is in-tree and routes through a Rust
+  NIF wrapping the `microsandbox` crate for microVM-backed execution
+  against bind-mounted host workspaces. Runtime `mount/3` is not
+  supported there; use init-time `:mounts`. `Condukt.Sandbox.Kubernetes`
+  runs each session in a dedicated pod via the `:k8s` library;
+  idempotent on a stable `:id` so an Oban-style worker can reattach the
+  same pod across job retries. K8s sandboxes refresh a heartbeat
+  annotation for stale-pod reaping, support `reap_stale/1`, stream
+  writes through exec stdin, and can clone an init-time
+  `:workspace_source` git repository when the image includes `git`.
 - `Condukt.Tools.Command` is the explicit exception: it runs a host-allowlisted
   executable directly, by design, and is not sandbox-routed.
 - See `guides/sandbox.md` for behaviour shape and how to add custom sandboxes.
@@ -140,21 +143,27 @@
   runtime-backed agents; Condukt passes the composed prompt to the runtime.
 - See `guides/agents.md` for runtime boundary and callback implications.
 
-## Native NIF (`native/condukt_bashkit/`)
+## Native NIFs
 
-- The `condukt_bashkit` Rust crate wraps the bashkit virtual sandbox into
-  a NIF. Build it with `cd native/condukt_bashkit && cargo build --release`
+- `native/condukt_bashkit/` wraps the bashkit virtual sandbox into a
+  NIF. Build it with `cd native/condukt_bashkit && cargo build --release`
   or via `MIX_ENV=dev mix compile`.
-- Toolchain: Rust 1.94.x, pinned in `native/condukt_bashkit/rust-toolchain.toml`
-  (also in `mise.toml`).
-- `mix compile` source-builds the NIF in `MIX_ENV=dev`. Other Mix
-  environments download the precompiled NIF from the GitHub release.
-- The release publish job runs with `MIX_ENV=prod` so Hex package validation
-  and publishing exercise the precompiled NIF path.
+- `native/condukt_microsandbox/` wraps the `microsandbox` crate into a
+  NIF for `Condukt.Sandbox.Microsandbox`. Build it with
+  `cd native/condukt_microsandbox && cargo build --release` or via
+  `MIX_ENV=dev mix compile`.
+- Toolchain: Rust 1.94.x, pinned in each crate's `rust-toolchain.toml`
+  and in `mise.toml`.
+- `mix compile` source-builds both NIFs in `MIX_ENV=dev`. Other Mix
+  environments download the precompiled artifacts from the GitHub release
+  when the target is supported.
+- The release publish job runs with `MIX_ENV=prod` so Hex package
+  validation and publishing exercise the precompiled NIF path.
 - Releases must publish precompiled artifacts for every target listed in
-  `lib/condukt/bashkit/nif.ex`'s `:targets` option, plus a checksum file
-  named `checksum-Elixir.Condukt.Bashkit.NIF.exs` in the package source.
-  See `.github/workflows/release.yml` for the build matrix.
+  `lib/condukt/bashkit/nif.ex` and `lib/condukt/microsandbox/nif.ex`,
+  plus checksum files named `checksum-Elixir.Condukt.Bashkit.NIF.exs`
+  and `checksum-Elixir.Condukt.Microsandbox.NIF.exs` in the package
+  source. See `.github/workflows/release.yml` for the build matrix.
 
 ## Workflows
 

@@ -4,7 +4,8 @@ defmodule Condukt.Tools.Bash do
 
   Routes through the active `Condukt.Sandbox`. With `Sandbox.Local` this
   spawns a real bash subprocess on the host; with `Sandbox.Virtual` it runs
-  inside the in-memory bashkit interpreter with no host process spawning.
+  inside the in-memory bashkit interpreter with no host process spawning; with
+  `Sandbox.Microsandbox` it executes inside the guest microVM.
 
   Output is truncated to reasonable limits.
 
