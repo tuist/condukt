@@ -18,7 +18,13 @@ defmodule Condukt.Microsandbox.NIF do
                                    end
                                  )
 
-  if @microsandbox_supported_target do
+  # Compile-time opt-out, matching the bashkit pattern. Loading the Rust NIF
+  # on GHA Linux runners triggers a BEAM teardown segfault even when the
+  # tagged microsandbox tests are excluded, so the CI workflow sets this to
+  # generate plain Elixir stubs instead.
+  @microsandbox_disabled System.get_env("CONDUKT_MICROSANDBOX_DISABLE") in ["1", "true"]
+
+  if @microsandbox_supported_target and not @microsandbox_disabled do
     use RustlerPrecompiled,
       otp_app: :condukt,
       crate: "condukt_microsandbox",
@@ -42,7 +48,9 @@ defmodule Condukt.Microsandbox.NIF do
 
     defp err, do: :erlang.nif_error(:nif_not_loaded)
   else
-    @disabled_error {:error, :unsupported_target}
+    @disabled_error (if @microsandbox_disabled,
+                       do: {:error, :nif_disabled},
+                       else: {:error, :unsupported_target})
 
     def new_session(_config), do: @disabled_error
     def shutdown(_session), do: :ok
