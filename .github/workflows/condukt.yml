@@ -63,11 +63,6 @@ jobs:
     env:
       MIX_ENV: test
       CONDUKT_BASHKIT_DISABLE: "1"
-      # Temporary: keep symbols on the rebuilt NIF so gdb backtraces from the
-      # teardown segfault have function names. Revert when the root cause is
-      # identified and fixed.
-      CARGO_PROFILE_RELEASE_STRIP: "false"
-      CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
