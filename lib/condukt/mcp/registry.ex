@@ -1,12 +1,12 @@
 defmodule Condukt.MCP.Registry do
   @moduledoc """
   Lifecycle helper for connecting to a list of MCP servers as part of
-  starting a session or executing a workflow.
+  starting a session.
 
   `start_all/2` opens one `Condukt.MCP.Client` per server and discovers
   the tools each one exposes. The returned registry value carries the
   client pids and prebuilt `Condukt.Tool.Inline` specs ready to merge
-  into an agent or workflow tool list.
+  into an agent tool list.
 
   `stop_all/1` closes every connection in the registry. Tool inline
   specs returned by `tools/1` capture the client pid in their `:call`
@@ -100,16 +100,6 @@ defmodule Condukt.MCP.Registry do
   """
   def tools(%__MODULE__{entries: entries}) do
     Enum.flat_map(entries, & &1.tools)
-  end
-
-  @doc """
-  Returns a `tool_id => inline_spec` map suitable for the workflow
-  tool registry's `:tools` extension option.
-  """
-  def tool_map(%__MODULE__{entries: entries}) do
-    entries
-    |> Enum.flat_map(& &1.tools)
-    |> Map.new(fn %Condukt.Tool.Inline{name: name} = tool -> {name, tool} end)
   end
 
   @doc """

@@ -42,7 +42,7 @@ Disable for fully static prompts:
 Both files use plain Markdown. Use them for things like:
 
 * Conventions ("Prefer `MuonTrap` over `System.cmd/3`.")
-* Workflows ("After every change, create a git commit and push it.")
+* Procedures ("After every change, create a git commit and push it.")
 * Domain glossary
 * Pointers to important modules
 

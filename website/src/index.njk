@@ -1,28 +1,28 @@
 ---
 layout: base.njk
 title: null
-description: An Elixir framework for defining and running AI agents and workflows. Agents are supervised OTP processes, every session is sandboxed with governed egress, and workflows wire steps and agents into a typed graph.
+description: An Elixir framework for defining and running AI agents. Agents are supervised OTP processes, every session is sandboxed with governed egress, and tools, secrets, and sub-agents compose inside the same runtime.
 ---
 
 <section class="hero">
   <div class="container">
-    <p class="eyebrow">elixir · agents · workflows</p>
-    <h1><span class="tok-prompt">❯</span> Define and run AI agents<br />and workflows. <span class="tok-accent">In Elixir.</span><svg class="elixir-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.793 16.575c0 3.752-2.927 7.426-7.743 7.426-5.249 0-7.843-3.71-7.843-8.29 0-5.21 3.892-12.952 8-15.647a.397.397 0 0 1 .61.371 9.716 9.716 0 0 0 1.694 6.518c.522.795 1.092 1.478 1.763 2.352.94 1.227 1.637 1.906 2.644 3.842l.015.028a7.107 7.107 0 0 1 .86 3.4z"/></svg></h1>
+    <p class="eyebrow">elixir · agents · sandboxes</p>
+    <h1><span class="tok-prompt">❯</span> Define and run AI agents. <span class="tok-accent">In Elixir.</span><svg class="elixir-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.793 16.575c0 3.752-2.927 7.426-7.743 7.426-5.249 0-7.843-3.71-7.843-8.29 0-5.21 3.892-12.952 8-15.647a.397.397 0 0 1 .61.371 9.716 9.716 0 0 0 1.694 6.518c.522.795 1.092 1.478 1.763 2.352.94 1.227 1.637 1.906 2.644 3.842l.015.028a7.107 7.107 0 0 1 .86 3.4z"/></svg></h1>
     <p class="lede">
       {{ site.name }} is an Elixir framework for defining and running AI
-      agents and workflows. Agents are supervised OTP processes, every
-      session is sandboxed with governed network egress, and you wire
-      agents into typed workflow graphs.
+      agents. Agents are supervised OTP processes, every session is
+      sandboxed with governed network egress, and tools, secrets, and
+      sub-agents compose inside the same runtime.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="{{ site.docs }}">read the docs</a>
       <a class="btn ghost" href="{{ site.repo }}">view on github</a>
     </div>
-    <div class="code-block titled install" data-title="~ get started">{% highlight "bash" %}# Library: add to mix.exs
+    <div class="code-block titled install" data-title="~ get started">{% highlight "bash" %}# Add to mix.exs
 {:condukt, "~> 1.5"}
 
-# Engine: standalone runner via mise
-mise use -g github:tuist/condukt{% endhighlight %}</div>
+# Fetch dependencies
+mix deps.get{% endhighlight %}</div>
   </div>
 </section>
 
@@ -69,10 +69,10 @@ mise use -g github:tuist/condukt{% endhighlight %}</div>
         <span class="feature-icon" aria-hidden="true">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="m8 8 4 4-4 4"/></svg>
         </span>
-        <h3>Workflow engine</h3>
-        <p>Author typed DAGs in HCL with cmd, agent, http, tool, and map
-        steps. Validate the graph with <code>condukt check</code> before
-        anything runs.</p>
+        <h3>Typed operations</h3>
+        <p>Expose compile-time entrypoints with JSON Schema validated
+        input and output so callers can run constrained agent tasks
+        without parsing free-form text.</p>
       </article>
       <article>
         <span class="feature-icon" aria-hidden="true">
@@ -149,19 +149,19 @@ end{% endhighlight %}</div>
 <section id="install" class="install-section">
   <div class="container">
     <p class="section-num">section 03</p>
-    <h2>Agents and workflows</h2>
+    <h2>Run agents your way</h2>
     <p class="lede">
-      Define an agent and run it, or wire steps and agents into a
-      workflow graph. Both run on the same engine, sandboxes, and egress
-      policy. An agent can be a single step in a workflow.
+      Use the same agent definition for single-call work or persistent
+      sessions. Both paths share the same tools, sandboxes, secrets, and
+      network policy.
     </p>
 
     <div class="path">
-      <h3 class="path-title">Run an agent</h3>
+      <h3 class="path-title">Run it once</h3>
       <p class="path-desc">
-        An autonomous loop. Give it a model, tools, and a sandbox, hand
-        it a goal, and it reasons and acts until it is done. Best for
-        open-ended work where the steps are not known up front.
+        The default fit for scripts, jobs, request handlers, and CI
+        tasks. Condukt starts a transient session, runs the task, and
+        shuts it down when the answer is ready.
       </p>
       <ol class="steps">
         <li>
@@ -184,52 +184,36 @@ end{% endhighlight %}</div>
     </div>
 
     <div class="path">
-      <h3 class="path-title">Run a workflow</h3>
+      <h3 class="path-title">Keep a session alive</h3>
       <p class="path-desc">
-        A typed DAG authored in HCL. Wire explicit cmd, http, tool, and
-        map steps, and drop agent steps in where reasoning is needed:
-        the same agents, embedded in a graph.
+        Start the agent under supervision when you need conversation
+        history, streaming, persistence, or repeated prompts against the
+        same session.
       </p>
       <ol class="steps">
         <li>
-          <h3>Author it in HCL</h3>
-          <div class="code-block titled" data-title="release_notes.hcl">{% highlight "hcl" %}workflow "release_notes" {
-  runtime {
-    model = "openai:gpt-4.1-mini"
-  }
-
-  cmd "version" {
-    argv = ["sh", "-c", "git describe --tags --always"]
-  }
-
-  agent "draft" {
-    needs = ["version"]
-    input = "Draft release notes for ${task.version.stdout}"
-  }
-
-  output = task.draft.output
-}{% endhighlight %}</div>
+          <h3>Start it</h3>
+          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, agent} =
+  MyApp.CodingAgent.start_link(
+    api_key: System.fetch_env!("ANTHROPIC_API_KEY")
+  ){% endhighlight %}</div>
         </li>
         <li>
-          <h3>Validate and run it</h3>
-          <div class="code-block titled" data-title="~ shell">{% highlight "bash" %}condukt check release_notes.hcl
-condukt run release_notes.hcl{% endhighlight %}</div>
+          <h3>Send prompts to it</h3>
+          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
+  Condukt.run(agent, "Refactor this module."){% endhighlight %}</div>
         </li>
       </ol>
       <p class="comment">
-        # Five step kinds compose any workflow: <code>cmd</code>,
-        <code>agent</code>, <code>http</code>, <code>tool</code>, and
-        <code>map</code>. The <code>agent</code> step here is the same
-        kind of agent as above, embedded in the graph.
-        <a href="https://hexdocs.pm/condukt/workflows.html">Read the workflows guide →</a>
+        # One-shot runs and persistent sessions use the same agent
+        definition. Choose the lifecycle that fits the caller.
+        <a href="https://hexdocs.pm/condukt/one_shot_runs.html">Read the one-shot runs guide →</a>
       </p>
     </div>
 
     <p class="comment">
-      # Packaging is a separate choice: add <code>{:condukt, "~> 1.5"}</code>
-      to embed agents and workflows in your Elixir app and supervision
-      tree, or run <code>mise use -g github:tuist/condukt</code> for the
-      standalone engine that runs workflow files with no Elixir toolchain.
+      # Add <code>{:condukt, "~> 1.5"}</code> to embed agents directly in
+      your Elixir app and supervision tree.
     </p>
   </div>
 </section>

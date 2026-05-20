@@ -3,7 +3,7 @@ defmodule Condukt.MCP.Server do
   Declarative configuration for a connected MCP server.
 
   See `Condukt.MCP` for the supported transports, authentication shapes,
-  and how the struct fits into agents and workflows.
+  and how the struct fits into agents.
 
   ## Fields
 

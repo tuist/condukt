@@ -3,7 +3,7 @@ defmodule Condukt.Context do
   Loads project instructions and local skills from the active sandbox.
 
   Condukt automatically looks for local instruction files such as `AGENTS.md`
-  and reusable workflows under `.agents/skills/*/SKILL.md`. The discovered
+  and reusable skills under `.agents/skills/*/SKILL.md`. The discovered
   instructions are appended to the configured system prompt so agents can adapt
   to the project they are running in.
 
@@ -191,7 +191,7 @@ defmodule Condukt.Context do
     """
     ## Available Skills
 
-    The following reusable workflows were discovered in this project. If one
+    The following reusable skills were discovered in this project. If one
     seems relevant, read its `SKILL.md` file before following it so you have
     the full instructions.
 

@@ -196,8 +196,8 @@ export async function generatePostSocialImages() {
 
 export async function generateHomeSocialImage() {
   const svg = renderCard({
-    eyebrow: "# elixir · agents · workflows",
-    title: "Define and run AI agents and workflows.",
+    eyebrow: "# elixir · agents · sandboxes",
+    title: "Define and run AI agents.",
     footnote: "Supervised · Sandboxed · Elixir",
   });
   const image = await sharp(Buffer.from(svg)).png().toBuffer();

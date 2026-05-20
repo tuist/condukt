@@ -1,6 +1,6 @@
 # Model Context Protocol
 
-Condukt agents and workflows can talk to external [Model Context
+Condukt agents can talk to external [Model Context
 Protocol](https://modelcontextprotocol.io) servers and call the tools
 those servers expose alongside their own statically defined tools.
 
@@ -67,58 +67,6 @@ Servers can also be supplied per-call:
     tools: [Condukt.Tools.Read]
   )
 ```
-
-## Declaring servers in HCL workflows
-
-Workflows declare servers with top-level `mcp_server` blocks. Tool
-steps and agent steps reference their tools by the same prefixed id:
-
-```hcl
-workflow "review_issue" {
-  input "issue_id" {
-    type = "string"
-  }
-
-  mcp_server "linear" {
-    transport = "streamable_http"
-    url       = "https://mcp.linear.app/mcp"
-    auth      = { type = "bearer", env = "LINEAR_API_KEY" }
-  }
-
-  tool "issue" {
-    id   = "linear.get_issue"
-    args = { issue_id = "${input.issue_id}" }
-  }
-
-  agent "draft" {
-    needs = ["issue"]
-    model = "anthropic:claude-sonnet-4-6"
-    tools = ["linear.add_comment"]
-    input = "Comment on the issue with a summary:\n\n${task.issue.output}"
-  }
-
-  output = task.draft.output
-}
-```
-
-The executor opens the configured servers when `Condukt.Workflows.run/3`
-starts and closes them when the run finishes (including on error).
-
-### HCL attributes
-
-Every `mcp_server` block has a required `transport` attribute. The
-remaining attributes depend on the transport.
-
-| Transport         | Required          | Optional                                    |
-|-------------------|-------------------|---------------------------------------------|
-| `stdio`           | `command`         | `args`, `env`, `prefix`, `init_timeout`, `request_timeout` |
-| `http_sse`        | `url`             | `headers`, `auth`, `prefix`, `init_timeout`, `request_timeout` |
-| `streamable_http` | `url`             | `headers`, `auth`, `prefix`, `init_timeout`, `request_timeout` |
-| `http`            | alias for `streamable_http` |
-
-`auth` is an HCL object literal: `auth = { type = "bearer", env = "LINEAR_API_KEY" }`.
-`env` is a list of variable names that should be passed through to the
-spawned subprocess from the parent's environment.
 
 ## Authentication
 
@@ -205,10 +153,6 @@ and point the `:command` at the container entrypoint.
 declared its server. When the session terminates, every client it
 opened terminates too: stdio subprocesses receive EOF on stdin and
 shut down, and HTTP transports close their open requests.
-
-Workflows follow the same pattern. `Condukt.Workflows.run/3` opens
-clients before the first step and closes them after the last step,
-including in error paths.
 
 A client that loses its connection mid-run does not restart in v1.
 Outstanding tool calls fail with `{:error, {:transport_down, _}}` and

@@ -1,7 +1,7 @@
 # Getting Started
 
 Condukt is a framework for building AI agents in Elixir. Agents are OTP
-processes that can reason with an LLM, call tools, and orchestrate workflows.
+processes that can reason with an LLM, call tools, and delegate work.
 
 This guide walks through installing Condukt, defining your first agent, and
 running a prompt end to end.
@@ -13,7 +13,7 @@ Add `:condukt` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:condukt, "~> 0.13"}
+    {:condukt, "~> 1.5"}
   ]
 end
 ```

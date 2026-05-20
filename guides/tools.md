@@ -186,7 +186,7 @@ have nothing to sandbox and can do their I/O directly.
 
 ## Inline tools
 
-Use `Condukt.tool/1` for one-off workflows where defining a module would add
+Use `Condukt.tool/1` for one-off runs where defining a module would add
 more ceremony than value. Inline tools work anywhere a module tool works,
 including an agent's `tools/0` callback and anonymous `Condukt.run/2` calls.
 

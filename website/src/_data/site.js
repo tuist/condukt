@@ -1,8 +1,8 @@
 module.exports = {
   name: "Condukt",
-  tagline: "An Elixir framework for defining and running AI agents and workflows.",
+  tagline: "An Elixir framework for defining and running AI agents.",
   description:
-    "Condukt is an Elixir framework for defining and running AI agents and workflows. Agents are supervised OTP processes, every session is sandboxed, and workflows wire steps and agents into a typed graph.",
+    "Condukt is an Elixir framework for defining and running AI agents. Agents are supervised OTP processes, every session is sandboxed, and tools, secrets, and sub-agents compose inside the same runtime.",
   url: "https://condukt.tuist.dev",
   repo: "https://github.com/tuist/condukt",
   hex: "https://hex.pm/packages/condukt",

@@ -10,7 +10,7 @@ defmodule Condukt.MCP.Client do
   In normal use, callers do not interact with this module directly:
   `Condukt.MCP.start_all/2` builds a list of clients and turns each
   server's tools into `Condukt.Tool.Inline` specs ready to drop into an
-  agent or workflow tool list. Use `start_link/2` directly when you
+  agent tool list. Use `start_link/2` directly when you
   need finer control.
   """
 
