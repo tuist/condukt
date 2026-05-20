@@ -212,12 +212,14 @@ jobs:
           fi
           exit $status
 
-      - name: Upload core dumps
+      - name: Upload core dumps and NIF binary
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-core-dumps
-          path: /tmp/cores/
+          path: |
+            /tmp/cores/
+            _build/test/lib/condukt/priv/native/condukt_microsandbox.so
           if-no-files-found: ignore
           retention-days: 7
 
