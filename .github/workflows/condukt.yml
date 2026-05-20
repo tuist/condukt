@@ -103,11 +103,27 @@ jobs:
       - name: Fetch dependencies
         run: mix deps.get
 
+      - name: Build NIF and patch out exit-time destructors
+        run: |
+          # The aws-lc-sys destructors registered in .fini_array
+          # (rand_thread_local_state_clear_all, tree_jitter_free_global_drbg)
+          # walk per-thread RNG state at process exit and crash when BEAM
+          # scheduler threads are not joined first. See
+          # scripts/patch_nif_fini_array.py for the full diagnosis.
+          mix compile
+          for so in \
+            _build/test/lib/condukt/priv/native/condukt_microsandbox.so \
+            native/condukt_microsandbox/target/release/libcondukt_microsandbox.so; do
+            if [ -e "$so" ]; then
+              python3 scripts/patch_nif_fini_array.py "$so"
+            fi
+          done
+
       - name: Run test suite
         run: |
           ulimit -c unlimited
           set +e
-          mix test
+          mix test --no-compile
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
