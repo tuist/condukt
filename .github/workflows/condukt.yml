@@ -120,6 +120,26 @@ jobs:
               readelf -d "$so" || true
               echo "--- nodelete present? ---"
               readelf -d "$so" | grep -i nodelete || echo "NODELETE NOT SET"
+              echo "--- section headers (fini/init) ---"
+              readelf -SW "$so" | grep -E "fini|init" || true
+              echo "--- .fini_array contents ---"
+              readelf --hex-dump=.fini_array "$so" || true
+              echo "--- .init_array contents ---"
+              readelf --hex-dump=.init_array "$so" || true
+              echo "--- RELATIVE relocations targeting .fini_array offsets ---"
+              fini_addr=$(readelf -SW "$so" | awk '/\.fini_array/ {print $5; exit}')
+              fini_size=$(readelf -SW "$so" | awk '/\.fini_array/ {print $7; exit}')
+              if [ -n "$fini_addr" ]; then
+                echo "fini_array vaddr=0x$fini_addr size=0x$fini_size"
+                readelf -rW "$so" | awk -v base="0x$fini_addr" -v size="0x$fini_size" '
+                  NR==1 {next}
+                  /^Relocation/ {next}
+                  $1 ~ /^[0-9a-f]+$/ {
+                    off=strtonum("0x"$1)
+                    if (off >= strtonum(base) && off < strtonum(base) + strtonum(size)) print
+                  }
+                '
+              fi
             else
               echo "$so not found"
             fi
