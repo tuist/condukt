@@ -157,63 +157,48 @@ end{% endhighlight %}</div>
     </p>
 
     <div class="path">
-      <h3 class="path-title">Run it once</h3>
+      <h3 class="path-title">Choose the lifecycle</h3>
       <p class="path-desc">
-        The default fit for scripts, jobs, request handlers, and CI
-        tasks. Condukt starts a transient session, runs the task, and
-        shuts it down when the answer is ready.
+        Use one-shot runs for scripts, jobs, request handlers, and CI.
+        Start a supervised session when you need streaming, persistence,
+        or repeated prompts against the same agent.
       </p>
       <ol class="steps">
         <li>
-          <h3>Define it in Elixir</h3>
-          <div class="code-block titled" data-title="lib/my_app/coding_agent.ex">{% highlight "elixir" %}defmodule MyApp.CodingAgent do
-  use Condukt
-
-  @impl true
-  def tools, do: Condukt.Tools.coding_tools()
-end{% endhighlight %}</div>
+          <h3>Run it once</h3>
+          <p>
+            Pass the agent module to <code>Condukt.run/3</code> and
+            Condukt creates a transient session for that call.
+          </p>
         </li>
         <li>
-          <h3>Run it</h3>
-          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
+          <h3>Keep it alive</h3>
+          <p>
+            Start the agent with <code>start_link/1</code>, then send
+            prompts to the running session.
+          </p>
+        </li>
+      </ol>
+
+      <div class="code-block titled" data-title="iex">{% highlight "elixir" %}# One-shot
+{:ok, response} =
   Condukt.run(MyApp.CodingAgent, "Refactor this module.",
     api_key: System.fetch_env!("ANTHROPIC_API_KEY")
-  ){% endhighlight %}</div>
-        </li>
-      </ol>
-    </div>
+  )
 
-    <div class="path">
-      <h3 class="path-title">Keep a session alive</h3>
-      <p class="path-desc">
-        Start the agent under supervision when you need conversation
-        history, streaming, persistence, or repeated prompts against the
-        same session.
-      </p>
-      <ol class="steps">
-        <li>
-          <h3>Start it</h3>
-          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, agent} =
+# Persistent session
+{:ok, agent} =
   MyApp.CodingAgent.start_link(
     api_key: System.fetch_env!("ANTHROPIC_API_KEY")
-  ){% endhighlight %}</div>
-        </li>
-        <li>
-          <h3>Send prompts to it</h3>
-          <div class="code-block titled" data-title="iex">{% highlight "elixir" %}{:ok, response} =
-  Condukt.run(agent, "Refactor this module."){% endhighlight %}</div>
-        </li>
-      </ol>
+  )
+
+{:ok, response} = Condukt.run(agent, "Refactor this module.")
+{% endhighlight %}</div>
+
       <p class="comment">
-        # One-shot runs and persistent sessions use the same agent
-        definition. Choose the lifecycle that fits the caller.
+        # Same agent definition, two lifecycles.
         <a href="https://hexdocs.pm/condukt/one_shot_runs.html">Read the one-shot runs guide →</a>
       </p>
     </div>
-
-    <p class="comment">
-      # Add <code>{:condukt, "~> 1.5"}</code> to embed agents directly in
-      your Elixir app and supervision tree.
-    </p>
   </div>
 </section>
