@@ -103,38 +103,22 @@ jobs:
       - name: Fetch dependencies
         run: mix deps.get
 
-      - name: Build NIF and patch out exit-time destructors
+      - name: Patch out exit-time destructors in NIF
         run: |
-          # The aws-lc-sys destructors registered in .fini_array
-          # (rand_thread_local_state_clear_all, tree_jitter_free_global_drbg)
-          # walk per-thread RNG state at process exit and crash when BEAM
-          # scheduler threads are not joined first. See
-          # scripts/patch_nif_fini_array.py for the full diagnosis.
-          #
-          # `mix compile` itself triggers this crash on Linux because loading
-          # the NIF module maps the .so into BEAM and the compile process's
-          # own exit then runs _dl_fini. The .so is fully built and copied
-          # to priv/native before BEAM tears down, so we tolerate exit 139
-          # here and patch the produced .so. The follow-up `mix test
-          # --no-compile` step then runs against the patched binary and
-          # exits cleanly.
-          set +e
-          mix compile
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ] && [ "$status" -ne 139 ]; then
-            echo "mix compile failed with unexpected status $status"
-            exit "$status"
+          # The downloaded mix-test-build artifact already contains the
+          # NIF .so at _build/test/lib/condukt/priv/native/. Zero its
+          # DT_FINI_ARRAYSZ so the aws-lc-sys destructors registered in
+          # .fini_array (rand_thread_local_state_clear_all,
+          # tree_jitter_free_global_drbg) do not run at process exit;
+          # they crash BEAM because scheduler threads are not joined
+          # before exit(). See scripts/patch_nif_fini_array.py for the
+          # full diagnosis.
+          so=_build/test/lib/condukt/priv/native/condukt_microsandbox.so
+          if [ -e "$so" ]; then
+            python3 scripts/patch_nif_fini_array.py "$so"
+          else
+            echo "warning: $so not found in downloaded artifact"
           fi
-          for so in \
-            _build/test/lib/condukt/priv/native/condukt_microsandbox.so \
-            native/condukt_microsandbox/target/release/libcondukt_microsandbox.so; do
-            if [ -e "$so" ]; then
-              python3 scripts/patch_nif_fini_array.py "$so"
-            else
-              echo "warning: $so not found after mix compile"
-            fi
-          done
 
       - name: Run test suite
         run: |
@@ -375,5 +359,16 @@ jobs:
           docker pull debian:bookworm-slim
           kind load docker-image debian:bookworm-slim --name condukt-smoke
 
+      - name: Patch out exit-time destructors in NIF
+        run: |
+          # Same aws-lc-sys destructor crash as the test job. See
+          # scripts/patch_nif_fini_array.py.
+          so=_build/test/lib/condukt/priv/native/condukt_microsandbox.so
+          if [ -e "$so" ]; then
+            python3 scripts/patch_nif_fini_array.py "$so"
+          else
+            echo "warning: $so not found in downloaded artifact"
+          fi
+
       - name: Run K8s sandbox smoke tests
-        run: mix test --only k8s_sandbox test/condukt/sandbox/kubernetes_test.exs
+        run: mix test --no-compile --only k8s_sandbox test/condukt/sandbox/kubernetes_test.exs
