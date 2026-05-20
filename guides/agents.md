@@ -75,7 +75,7 @@ end
 ```
 
 Passing a runtime changes the meaning of the agent module. The module is still
-addressable by Condukt, so it can be used in one-shot runs, workflows, and
+addressable by Condukt, so it can be used in one-shot runs and
 sub-agent registrations. Internally, however, Condukt delegates the loop to the
 runtime adapter instead of driving every LLM turn itself.
 
@@ -115,7 +115,7 @@ portable while relying on behavior that only exists in one SDK.
 Runtime adapters should preserve Condukt's orchestration boundary:
 
 - Condukt owns session identity, sandbox selection, secret resolution,
-  workflow placement, sub-agent registration, and normalized telemetry.
+  sub-agent registration, and normalized telemetry.
 - The runtime owns the internal loop, SDK-specific model configuration,
   SDK-specific tools, and final result extraction.
 - Structured input and output should be enforced at the Condukt boundary, not
@@ -123,8 +123,8 @@ Runtime adapters should preserve Condukt's orchestration boundary:
 - Streaming should be normalized into Condukt events where possible, while
   allowing runtime-specific event details to remain opt in.
 
-This boundary lets external coding agents participate in Condukt workflows
-without pretending they are ordinary chat-completion providers.
+This boundary lets external coding agents compose with Condukt sessions without
+pretending they are ordinary chat-completion providers.
 
 ### Built-in SDK runtimes
 
@@ -243,7 +243,7 @@ MyApp.ResearchAgent.start_link(
 
 `Condukt.run/2` and `Condukt.run/3` support three call shapes:
 
-* `Condukt.run("prompt", opts)` runs an anonymous one-shot workflow
+* `Condukt.run("prompt", opts)` runs an anonymous one-shot run
 * `Condukt.run(MyApp.Agent, "prompt", opts)` runs a module-defined one-shot agent
 * `Condukt.run(agent_pid_or_name, "prompt", opts)` runs against a persistent session
 
@@ -264,8 +264,8 @@ For a running agent process, the `Condukt` module also forwards these calls to
 * `Condukt.steer/2` injects a message mid run, skipping remaining tool calls
 * `Condukt.follow_up/2` queues a message to be delivered after the current run
 
-See the [Anonymous Workflows guide](anonymous_workflows.md) for prompt-first
-one-shot runs without an agent module.
+See the [One-Shot Runs guide](one_shot_runs.md) for prompt-first one-shot runs
+without an agent module.
 
 ## Handling events in the agent module
 

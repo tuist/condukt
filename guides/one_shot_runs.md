@@ -1,8 +1,8 @@
-# Anonymous Workflows
+# One-Shot Runs
 
-Anonymous workflows are one-call agent runs. They are useful for scripts,
-notebooks, jobs, CI tasks, and callbacks where defining a named agent module
-would add ceremony without adding useful state.
+One-shot runs are single-call agent sessions. They are useful for scripts,
+notebooks, jobs, CI tasks, and callbacks where defining or supervising a
+long-lived agent process would add ceremony without adding useful state.
 
 `Condukt.run/2` accepts a prompt as the first argument:
 
@@ -35,7 +35,7 @@ below.
 
 ## Runtime options
 
-Anonymous workflows accept the same run options as agent runs:
+Anonymous runs accept the same run options as agent runs:
 
 * `:timeout` caps the synchronous call timeout in milliseconds
 * `:max_turns` caps tool-use loops
@@ -47,7 +47,7 @@ They also accept the same session options you would pass to an agent's
 `:subagents`, `:session_store`, `:compactor`, `:redactor`, and
 `:load_project_instructions`.
 
-Anonymous workflows default `:load_project_instructions` to `false`. Pass
+Anonymous runs default `:load_project_instructions` to `false`. Pass
 `load_project_instructions: true` when you want `AGENTS.md`, `CLAUDE.md`, and
 local skills to shape the transient run.
 
@@ -102,7 +102,7 @@ matching top-level result keys after validation.
 
 ## Inline tools
 
-For small workflow-specific tools, use `Condukt.tool/1`:
+For small run-specific tools, use `Condukt.tool/1`:
 
 ```elixir
 ls =
@@ -131,7 +131,7 @@ tools.
 
 ## Anonymous sub-agents
 
-Anonymous workflows can register sub-agents inline with `:subagents`. Use
+Anonymous runs can register sub-agents inline with `:subagents`. Use
 `role: [opts]` when the child does not need a named module:
 
 ```elixir
@@ -154,10 +154,10 @@ opts when the child should load project instructions.
 
 ## Errors
 
-Anonymous workflows return `{:error, reason}` for validation failures, LLM
+Anonymous runs return `{:error, reason}` for validation failures, LLM
 errors, and session startup failures.
 
-Common structured workflow reasons include:
+Common structured run reasons include:
 
 * `{:invalid_input, %JSV.ValidationError{}}`
 * `{:invalid_output, %JSV.ValidationError{}}`
@@ -166,8 +166,8 @@ Common structured workflow reasons include:
 
 ## Choosing an API
 
-Use anonymous workflows when the task fits in one call and no module-level
-agent identity is useful.
+Use `Condukt.run("prompt", opts)` when the task fits in one call and no
+module-level agent identity is useful.
 
 Use `Condukt.run(MyApp.Agent, prompt, opts)` when the task fits in one call
 but the agent module's callbacks are useful.

@@ -23,7 +23,7 @@ What if Atlas could start that investigation automatically? Imagine an alert tha
 
 > Look at this alert, inspect the recent changes around this service, and tell us whether there is a likely code-level cause. If there is, propose a minimal fix.
 
-That is not a generic LLM task. It is a coding task. The agent needs to understand the repository, inspect files, maybe run tests, and produce a useful engineering artifact. Codex and Claude Code are exactly the kind of harnesses that are becoming good at this. The same applies to bugs reported by users. A user reports that a workflow is failing. Atlas can collect the report, attach logs and traces, identify the project, and delegate the first pass to a coding agent. The output might be a diagnosis, a patch, or simply a better issue with the right context.
+That is not a generic LLM task. It is a coding task. The agent needs to understand the repository, inspect files, maybe run tests, and produce a useful engineering artifact. Codex and Claude Code are exactly the kind of harnesses that are becoming good at this. The same applies to bugs reported by users. A user reports that an automation is failing. Atlas can collect the report, attach logs and traces, identify the project, and delegate the first pass to a coding agent. The output might be a diagnosis, a patch, or simply a better issue with the right context.
 
 The important part is that Condukt does not need to pretend it can build a better coding harness than Codex or Claude Code. It needs to orchestrate them.
 
@@ -59,18 +59,18 @@ Then another part of the system can run it like any other Condukt agent:
     cwd: "/workspaces/acme/api"
   ){% endhighlight %}</div>
 
-From Condukt's perspective, this is still an agent. It has a session id, a sandbox, secrets, project instructions, telemetry, and a place in a workflow. But internally, the coding work is delegated to the runtime. In this example, that means shelling out to `codex exec`. The Claude runtime follows the same idea with `claude --print`.
+From Condukt's perspective, this is still an agent. It has a session id, a sandbox, secrets, project instructions, telemetry, and a place in a larger system. But internally, the coding work is delegated to the runtime. In this example, that means shelling out to `codex exec`. The Claude runtime follows the same idea with `claude --print`.
 
 This keeps the boundary honest. Condukt orchestrates. Codex or Claude do the coding work. The system does not flatten everything into "call a model" when the actual behavior is richer than that.
 
 ## Reusing what developers already have
 
-There is also a practical reason we like this direction: subscriptions. Many developers and teams already have access to Codex or Claude Code. They have configured them, authenticated them, and built habits around them. If Condukt can plug into those tools, it can inherit that investment instead of asking teams to configure yet another provider key and another approximation of the same coding workflow.
+There is also a practical reason we like this direction: subscriptions. Many developers and teams already have access to Codex or Claude Code. They have configured them, authenticated them, and built habits around them. If Condukt can plug into those tools, it can inherit that investment instead of asking teams to configure yet another provider key and another approximation of the same coding loop.
 
 This is very aligned with how developer tools should evolve. Meet developers where they are. If they are already getting good results from a coding harness, do not force them through a worse abstraction because it looks cleaner on our side. The abstraction should respect the shape of the underlying tool. For simple reasoning tasks, Condukt can own the loop. For coding tasks, it can delegate the loop. Both can exist under the same orchestration model.
 
 ## Where this leads
 
-We do not think the future of developer automation is one agent to rule them all. It is more likely to be a network of specialized runtimes, each good at a certain kind of work, connected by systems that understand context, permissions, workflows, and organizational boundaries. Condukt can be one of those systems, but only if it resists the temptation to absorb every capability into itself. That would make it worse. It should provide the structure around the work: when to run, where to run, what context to pass, what secrets are available, what result is expected, and how the outcome flows back into the rest of the system.
+We do not think the future of developer automation is one agent to rule them all. It is more likely to be a network of specialized runtimes, each good at a certain kind of work, connected by systems that understand context, permissions, execution boundaries, and organizational boundaries. Condukt can be one of those systems, but only if it resists the temptation to absorb every capability into itself. That would make it worse. It should provide the structure around the work: when to run, where to run, what context to pass, what secrets are available, what result is expected, and how the outcome flows back into the rest of the system.
 
 The coding harnesses will keep improving. Codex and Claude Code will get better at understanding repositories, making changes, and validating them. The interesting work for Condukt is to make those harnesses useful inside real products and real organizations. That is where this becomes more than a developer convenience. It becomes infrastructure for turning operational signals into engineering action.

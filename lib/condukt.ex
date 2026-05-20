@@ -3,7 +3,7 @@ defmodule Condukt do
   A framework for building AI agents in Elixir.
 
   Condukt treats AI agents as first-class OTP processes that can
-  reason, use tools, and orchestrate complex workflows.
+  reason, use tools, and orchestrate complex tasks.
 
   ## Defining an Agent
 
@@ -61,7 +61,7 @@ defmodule Condukt do
 
   The default native runtime is backed by `Condukt.Session` and ReqLLM. Other
   runtime modules can own the inner loop while Condukt keeps the surrounding
-  session, sandbox, secrets, telemetry, workflow, and sub-agent boundaries.
+  session, sandbox, secrets, telemetry, and sub-agent boundaries.
   """
   @callback runtime() :: module() | {module(), keyword()}
 

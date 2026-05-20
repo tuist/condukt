@@ -2,12 +2,11 @@ defmodule Condukt.MCP do
   @moduledoc """
   Client-side support for the [Model Context Protocol](https://modelcontextprotocol.io).
 
-  Condukt agents and workflows can declare external MCP servers and call
-  the tools those servers expose alongside their own statically defined
-  tools. Each declared server is started as a supervised
-  `Condukt.MCP.Client` process for the lifetime of the session or workflow
-  run, the server's `tools/list` is fetched, and each remote tool is
-  exposed to the model as a prefixed entry in the tool registry
+  Condukt agents can declare external MCP servers and call the tools those
+  servers expose alongside their own statically defined tools. Each declared
+  server is started as a supervised `Condukt.MCP.Client` process for the
+  lifetime of the session, the server's `tools/list` is fetched, and each
+  remote tool is exposed to the model as a prefixed entry in the tool registry
   (`<server>.<tool>` by default).
 
   ## Declaring servers on an agent
@@ -42,27 +41,6 @@ defmodule Condukt.MCP do
 
   Servers can also be supplied per-call through the `:mcp_servers` option
   on `Condukt.run/3` and through an agent module's `start_link/1`.
-
-  ## Declaring servers in HCL workflows
-
-  Workflows declare servers with top-level `mcp_server` blocks and
-  reference their tools from `tool` and `agent` steps using the prefixed
-  id:
-
-      mcp_server "linear" {
-        transport = "streamable_http"
-        url       = "https://mcp.linear.app/mcp"
-
-        auth = {
-          type = "bearer"
-          env  = "LINEAR_API_KEY"
-        }
-      }
-
-      tool "list_issues" {
-        id = "linear.list_issues"
-        args = { team_id = input.team }
-      }
 
   ## Authentication
 
@@ -116,7 +94,7 @@ defmodule Condukt.MCP do
 
   The return value is opaque; pass it to `Condukt.MCP.Registry.tools/1`
   to obtain the list of inline tool specs ready to be merged into an
-  agent or workflow tool list, and to `Condukt.MCP.Registry.stop_all/1` for
+  agent tool list, and to `Condukt.MCP.Registry.stop_all/1` for
   cleanup.
   """
   defdelegate start_all(servers, opts \\ []), to: Registry, as: :start_all

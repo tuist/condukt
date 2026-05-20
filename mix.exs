@@ -18,8 +18,7 @@ defmodule Condukt.MixProject do
       source_url: @source_url,
       elixirc_paths: elixirc_paths(Mix.env()),
       test_ignore_filters: [~r/test\/support\//],
-      aliases: aliases(),
-      releases: releases()
+      aliases: aliases()
     ]
   end
 
@@ -43,17 +42,8 @@ defmodule Condukt.MixProject do
 
       # Command execution with child process shutdown propagation
       {:muontrap, "~> 1.7"},
-
-      # Workflows manifests, lockfiles, triggers, and optional HTTP serving
-      {:toml, "~> 0.7.0"},
-      {:hxl, "~> 0.2.1"},
-      {:crontab, "~> 1.1"},
       {:plug, "~> 1.16", optional: true},
       {:bandit, "~> 1.5", optional: true},
-
-      # Standalone engine releases for users who want the workflow runner
-      # without installing Erlang, Elixir, or Mix.
-      {:burrito, "~> 1.5", optional: true},
 
       # Telemetry
       {:telemetry, "~> 1.0"},
@@ -94,10 +84,9 @@ defmodule Condukt.MixProject do
         "guides/installation.md": [title: "Installation"],
         "guides/getting_started.md": [title: "Getting Started"],
         "guides/agents.md": [title: "Agents"],
-        "guides/anonymous_workflows.md": [title: "Anonymous Workflows"],
+        "guides/one_shot_runs.md": [title: "One-Shot Runs"],
         "guides/tools.md": [title: "Tools"],
         "guides/subagents.md": [title: "Sub-agents"],
-        "guides/workflows.md": [title: "Workflows"],
         "guides/mcp.md": [title: "MCP"],
         "guides/http_routes.md": [title: "HTTP Routes"],
         "guides/sandbox.md": [title: "Sandbox"],
@@ -120,12 +109,9 @@ defmodule Condukt.MixProject do
         ],
         Agents: [
           "guides/agents.md",
-          "guides/anonymous_workflows.md",
+          "guides/one_shot_runs.md",
           "guides/tools.md",
           "guides/subagents.md"
-        ],
-        Workflows: [
-          "guides/workflows.md"
         ],
         Integrations: [
           "guides/mcp.md",
@@ -162,9 +148,6 @@ defmodule Condukt.MixProject do
           Condukt.Context,
           Condukt.Context.Skill
         ],
-        Engine: [
-          Condukt.Engine.CLI
-        ],
         Tools: [
           Condukt.Tool,
           Condukt.Tool.Inline,
@@ -177,16 +160,6 @@ defmodule Condukt.MixProject do
           Condukt.Tools.Glob,
           Condukt.Tools.Grep,
           Condukt.Tools.Subagent
-        ],
-        Workflows: [
-          Condukt.Workflows,
-          Condukt.Workflows.Compiler,
-          Condukt.Workflows.Document,
-          Condukt.Workflows.Executor,
-          Condukt.Workflows.Expr,
-          Condukt.Workflows.HCLCompiler,
-          Condukt.Workflows.Validator,
-          Condukt.Workflows.ToolRegistry
         ],
         MCP: [
           Condukt.MCP,
@@ -253,23 +226,6 @@ defmodule Condukt.MixProject do
   defp aliases do
     [
       lint: ["format --check-formatted", "credo --strict", "dialyzer"]
-    ]
-  end
-
-  defp releases do
-    [
-      condukt: [
-        steps: [:assemble, &Burrito.wrap/1],
-        applications: [condukt: :permanent],
-        burrito: [
-          targets: [
-            linux_x64: [os: :linux, cpu: :x86_64],
-            macos_x64: [os: :darwin, cpu: :x86_64, skip_nifs: true],
-            macos_arm64: [os: :darwin, cpu: :aarch64, skip_nifs: true],
-            windows_x64: [os: :windows, cpu: :x86_64, skip_nifs: true]
-          ]
-        ]
-      ]
     ]
   end
 end

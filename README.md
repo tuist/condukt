@@ -12,12 +12,9 @@
   <a href="https://github.com/tuist/condukt/commits/main"><img src="https://img.shields.io/github/last-commit/tuist/condukt.svg" alt="Last commit" /></a>
 </p>
 
-Condukt is an Elixir library and standalone agentic engine for building
-reliable AI agents and workflow files.
+Condukt is an Elixir library for building reliable AI agents.
 
-Use Condukt as a Hex library when agents should live inside your OTP system.
-Install the standalone `condukt` executable when you want to run HCL workflow
-files from the command line, cron, CI, or webhooks. Both modes share the same
+Use Condukt when agents should live inside your OTP system. It provides the
 agent runtime, tool system, sandboxing model, project instructions, provider
 support, structured output, redaction, secrets, streaming, and telemetry.
 
@@ -28,23 +25,16 @@ Add Condukt to your Elixir application:
 ```elixir
 def deps do
   [
-    {:condukt, "~> 1.3"}
+    {:condukt, "~> 1.5"}
   ]
 end
-```
-
-Or install the standalone workflow engine with mise:
-
-```sh
-mise use -g github:tuist/condukt
-condukt version
 ```
 
 ## A Small Tour
 
 This example shows the common shape: define an agent, grant tools, delegate to
-a sub-agent, expose a typed operation, run one-shot tasks, stream a persistent
-session, and execute a workflow.
+a sub-agent, expose a typed operation, run one-shot tasks, and stream a
+persistent session.
 
 ```elixir
 defmodule MyApp.ProjectAgent do
@@ -140,40 +130,6 @@ agent
   _event -> :ok
 end)
 |> Stream.run()
-
-workflow = """
-workflow "readme_summary" {
-  runtime {
-    model = "anthropic:claude-sonnet-4-20250514"
-    sandbox = "local"
-    cwd = "."
-  }
-
-  input "path" {
-    type = "string"
-  }
-
-  tool "read" {
-    id = "Read"
-    args = {
-      path = input.path
-    }
-  }
-
-  agent "summarize" {
-    needs = ["read"]
-    tools = ["Read"]
-    input = "Summarize this file:\\n${task.read.output}"
-  }
-
-  output = task.summarize.output
-}
-"""
-
-{:ok, workflow_summary} =
-  Condukt.Workflows.run(workflow, %{"path" => "README.md"},
-    agent_options: [api_key: api_key]
-  )
 ```
 
 ## Documentation
@@ -188,7 +144,7 @@ Start here:
 Build agents:
 
 - [Agents](https://hexdocs.pm/condukt/agents.html)
-- [Anonymous Workflows](https://hexdocs.pm/condukt/anonymous_workflows.html)
+- [One-Shot Runs](https://hexdocs.pm/condukt/one_shot_runs.html)
 - [Tools](https://hexdocs.pm/condukt/tools.html)
 - [Sub-agents](https://hexdocs.pm/condukt/subagents.html)
 - [Operations](https://hexdocs.pm/condukt/Condukt.Operation.html)
@@ -196,9 +152,8 @@ Build agents:
 - [Sessions and Persistence](https://hexdocs.pm/condukt/sessions_and_persistence.html)
 - [Compaction](https://hexdocs.pm/condukt/compaction.html)
 
-Run production workflows and integrations:
+Run production integrations:
 
-- [Workflows](https://hexdocs.pm/condukt/workflows.html)
 - [MCP](https://hexdocs.pm/condukt/mcp.html)
 - [HTTP Routes](https://hexdocs.pm/condukt/http_routes.html)
 - [Sandbox](https://hexdocs.pm/condukt/sandbox.html)

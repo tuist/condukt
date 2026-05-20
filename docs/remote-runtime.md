@@ -12,13 +12,13 @@ That means the agent loop already has a clean tool boundary, but the built-in to
 
 ## Goal
 
-Run a session or workflow inside an isolated remote environment that can be:
+Run a session inside an isolated remote environment that can be:
 
 - created on demand
 - bootstrapped with repo contents and dependencies
 - used for file operations and command execution during the run
 - exposed when needed through a browser terminal or preview URL
-- shut down automatically after the workflow finishes or goes idle
+- shut down automatically after the session finishes or goes idle
 
 ## Recommended architecture
 
@@ -66,7 +66,7 @@ At `start_link/2`, Condukt can either:
 - create the runtime session immediately, or
 - lazily create it on first tool call
 
-For workflows that may never use tools, lazy creation is safer and cheaper.
+For sessions that may never use tools, lazy creation is safer and cheaper.
 
 ## Provider evaluation
 
@@ -85,7 +85,7 @@ Why it fits:
 Implication:
 
 - Condukt can implement `Condukt.Runtime.Daytona` as a direct Elixir HTTP client.
-- This is the cleanest path if the goal is “plug account credentials into Condukt and run workflows remotely.”
+- This is the cleanest path if the goal is “plug account credentials into Condukt and run sessions remotely.”
 
 Recommended usage model:
 
@@ -180,7 +180,7 @@ Support one or more workspace strategies:
 - restore from provider snapshot/template
 - mount a shared persistent volume for caches
 
-For coding workflows, cloning the repo plus restoring caches is usually the best tradeoff.
+For coding sessions, cloning the repo plus restoring caches is usually the best tradeoff.
 
 ### Phase 5: Operational controls
 
@@ -204,7 +204,7 @@ That would fragment the API surface and force agent authors to choose tools by i
 
 The remote environment should belong to the Condukt session, not to individual tool invocations.
 
-If tools each provision their own sandbox, the workflow will lose filesystem/process continuity.
+If tools each provision their own sandbox, the session will lose filesystem/process continuity.
 
 ### Treat remote `cwd` as workspace root
 
@@ -229,7 +229,7 @@ That gives Condukt:
 
 - the least invasive API change
 - a direct Elixir integration path
-- lifecycle controls that match “spin up, run workflow, shut down”
+- lifecycle controls that match “spin up, run a session, shut down”
 - room to add E2B and Modal later without rewriting tools again
 
 If you want Modal support too, I would treat it as a second integration path behind the same runtime behaviour, likely through a small Python or JS bridge service instead of a pure Elixir client.
