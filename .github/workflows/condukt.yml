@@ -130,6 +130,38 @@ jobs:
               objdump -R "$so" 2>&1 | head -80 || true
               echo "--- readelf -rW (first 80 lines) ---"
               readelf -rW "$so" 2>&1 | head -80 || true
+              echo "--- .fini_array destructor symbols (via addr2line + nm) ---"
+              # Pull the three function offsets from the dynamic relocations
+              # targeting .fini_array, then resolve each back to source.
+              fini_addr_hex=$(readelf -SW "$so" | awk '/\.fini_array/ {print $4; exit}')
+              fini_size_hex=$(readelf -SW "$so" | awk '/\.fini_array/ {print $6; exit}')
+              if [ -n "$fini_addr_hex" ] && [ -n "$fini_size_hex" ]; then
+                fini_start=$((16#$fini_addr_hex))
+                fini_end=$((fini_start + 16#$fini_size_hex))
+                readelf -rW "$so" | awk '$1 ~ /^[0-9a-f]+$/ && $2 ~ /RELATIVE/ {print $1, $NF}' | \
+                  while read -r off_hex addend; do
+                    off_dec=$((16#$off_hex)) 2>/dev/null || continue
+                    if [ "$off_dec" -ge "$fini_start" ] && [ "$off_dec" -lt "$fini_end" ]; then
+                      target=$(printf '%s' "$addend" | sed -n 's/.*+\(0x[0-9a-fA-F]*\).*/\1/p')
+                      [ -z "$target" ] && continue
+                      echo "--- destructor target $target (.fini_array slot $off_hex) ---"
+                      addr2line -e "$so" -f -C "$target" 2>&1 || true
+                      echo "nearby symbols:"
+                      nm -C --defined-only --numeric-sort "$so" 2>/dev/null | \
+                        awk -v t="$target" '
+                          BEGIN { tdec = strtonum(t) }
+                          {
+                            ah = "0x" $1
+                            ad = strtonum(ah)
+                            if (ad <= tdec) { prev_sym = $0 }
+                            if (ad > tdec) { print prev_sym; print $0; exit }
+                          }
+                        ' || true
+                      echo "disassembly at $target (first 20 insns):"
+                      objdump -d --start-address="$target" --stop-address=$(printf '0x%x' $((16#${target#0x} + 0x80))) "$so" 2>&1 | tail -30 || true
+                    fi
+                  done
+              fi
               echo "--- Relocations targeting .fini_array address range ---"
               # readelf -SW columns when section name is short: [N] NAME TYPE ADDR OFF SIZE ES FLG ...
               fini_addr_hex=$(readelf -SW "$so" | awk '/\.fini_array/ {print $4; exit}')
