@@ -19,7 +19,6 @@ jobs:
       # during process teardown even when the tagged tests do not run.
       # Native coverage lives in dedicated jobs below.
       CONDUKT_BASHKIT_DISABLE: "1"
-      CONDUKT_MICROSANDBOX_DISABLE: "1"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -64,7 +63,6 @@ jobs:
     env:
       MIX_ENV: test
       CONDUKT_BASHKIT_DISABLE: "1"
-      CONDUKT_MICROSANDBOX_DISABLE: "1"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -78,6 +76,11 @@ jobs:
         run: |
           mix local.hex --force
           mix local.rebar --force
+
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap-ng-dev
 
       - name: Download Mix dependencies
         uses: actions/download-artifact@v4
@@ -98,7 +101,6 @@ jobs:
     env:
       MIX_ENV: test
       CONDUKT_BASHKIT_DISABLE: "1"
-      CONDUKT_MICROSANDBOX_DISABLE: "1"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -132,7 +134,6 @@ jobs:
     env:
       MIX_ENV: test
       CONDUKT_BASHKIT_DISABLE: "1"
-      CONDUKT_MICROSANDBOX_DISABLE: "1"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -166,7 +167,6 @@ jobs:
     env:
       MIX_ENV: test
       CONDUKT_BASHKIT_DISABLE: "1"
-      CONDUKT_MICROSANDBOX_DISABLE: "1"
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -180,6 +180,11 @@ jobs:
         run: |
           mix local.hex --force
           mix local.rebar --force
+
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap-ng-dev
 
       - name: Download Mix dependencies
         uses: actions/download-artifact@v4
