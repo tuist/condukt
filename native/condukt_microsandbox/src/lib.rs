@@ -16,12 +16,48 @@ mod atoms {
 }
 
 pub struct Session {
-    runtime: Mutex<Runtime>,
+    // Field order matters for the automatic drop chain: `sandbox` is declared
+    // first so that, if our explicit `Drop` below ever bails out partway,
+    // the sandbox still gets dropped while the runtime is alive.
     sandbox: Mutex<Option<MicroSandbox>>,
+    runtime: Mutex<Runtime>,
 }
 
 #[rustler::resource_impl]
 impl rustler::Resource for Session {}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Clean up the guest sandbox on the real runtime first, so that any
+        // async teardown microsandbox does internally (stopping the microVM,
+        // closing IPC handles) runs against a live executor.
+        if let Ok(mut sb_guard) = self.sandbox.lock()
+            && let Some(sandbox) = sb_guard.take()
+            && let Ok(rt_guard) = self.runtime.lock()
+        {
+            let _ = rt_guard.block_on(async move {
+                let _ = sandbox.stop_and_wait().await;
+            });
+        }
+
+        // Then detach the multi-thread Tokio runtime instead of synchronously
+        // joining its worker pool from BEAM's finalizer thread.
+        //
+        // BEAM finalizes Rustler resources from the dirty-scheduler / async
+        // thread that drops the last `ResourceArc`. The default `Drop` on a
+        // multi-thread `tokio::runtime::Runtime` joins the worker pool there,
+        // which on Linux glibc has been observed to segfault during BEAM
+        // teardown (the bashkit NIF documents the same hazard). Swapping the
+        // runtime out and calling `shutdown_background` returns immediately
+        // and lets the workers die on their own.
+        if let Ok(mut rt_guard) = self.runtime.lock()
+            && let Ok(placeholder) = tokio::runtime::Builder::new_current_thread().build()
+        {
+            let owned = std::mem::replace(&mut *rt_guard, placeholder);
+            owned.shutdown_background();
+        }
+    }
+}
 
 #[derive(NifUnitEnum, Clone, Copy)]
 pub enum MountMode {
@@ -74,8 +110,8 @@ fn new_session(config: SessionConfig) -> NifResult<Result<ResourceArc<Session>, 
     };
 
     Ok(Ok(ResourceArc::new(Session {
-        runtime: Mutex::new(runtime),
         sandbox: Mutex::new(Some(sandbox)),
+        runtime: Mutex::new(runtime),
     })))
 }
 
