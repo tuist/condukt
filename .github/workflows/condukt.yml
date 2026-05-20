@@ -111,6 +111,20 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
+            echo "::group::NIF binary inspection"
+            so=_build/test/lib/condukt/priv/native/condukt_microsandbox.so
+            if [ -e "$so" ]; then
+              echo "--- file $so ---"
+              file "$so" || true
+              echo "--- readelf -d $so ---"
+              readelf -d "$so" || true
+              echo "--- nodelete present? ---"
+              readelf -d "$so" | grep -i nodelete || echo "NODELETE NOT SET"
+            else
+              echo "$so not found"
+            fi
+            echo "::endgroup::"
+
             echo "::group::Core dumps"
             ls -la /tmp/cores/ || true
             for core in /tmp/cores/core.*; do
@@ -126,7 +140,12 @@ jobs:
               gdb -batch \
                 -ex 'set pagination off' \
                 -ex 'info sharedlibrary' \
+                -ex 'info proc mappings' \
                 -ex 'thread apply all bt full' \
+                -ex 'info registers' \
+                -ex 'x/16gx $rsp' \
+                -ex 'x/16i $rip-32' \
+                -ex 'x/16i $rip' \
                 -ex quit \
                 "$exe" "$core" 2>&1 || true
             done
