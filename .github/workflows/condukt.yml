@@ -80,7 +80,14 @@ jobs:
       - name: Install Linux native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcap-ng-dev
+          sudo apt-get install -y libcap-ng-dev gdb
+
+      - name: Enable core dumps
+        run: |
+          sudo mkdir -p /tmp/cores
+          sudo chmod 1777 /tmp/cores
+          sudo sh -c 'echo "/tmp/cores/core.%e.%p" > /proc/sys/kernel/core_pattern'
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
 
       - name: Download Mix dependencies
         uses: actions/download-artifact@v4
@@ -92,7 +99,38 @@ jobs:
         run: mix deps.get
 
       - name: Run test suite
-        run: mix test
+        run: |
+          ulimit -c unlimited
+          set +e
+          mix test
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Core dumps"
+            ls -la /tmp/cores/ || true
+            for core in /tmp/cores/core.*; do
+              [ -e "$core" ] || continue
+              echo "--- $core ---"
+              file "$core" || true
+              gdb -batch \
+                -ex 'set pagination off' \
+                -ex 'info sharedlibrary' \
+                -ex 'thread apply all bt full' \
+                -ex quit \
+                "$core" 2>&1 || true
+            done
+            echo "::endgroup::"
+          fi
+          exit $status
+
+      - name: Upload core dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-core-dumps
+          path: /tmp/cores/
+          if-no-files-found: ignore
+          retention-days: 7
 
   format:
     name: Check formatting
