@@ -127,10 +127,13 @@ jobs:
           - { crate: condukt_bashkit, nif: "2.17", target: x86_64-pc-windows-msvc, os: windows-2022 }
           - { crate: condukt_microsandbox, nif: "2.16", target: aarch64-apple-darwin, os: macos-14 }
           - { crate: condukt_microsandbox, nif: "2.16", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
-          - { crate: condukt_microsandbox, nif: "2.16", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          # microsandbox's dependency tree fails under cross for Linux arm64
+          # with unresolved glibc weak symbols during build-script linking.
+          # Build it on GitHub's native arm64 Linux runner instead.
+          - { crate: condukt_microsandbox, nif: "2.16", target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           - { crate: condukt_microsandbox, nif: "2.17", target: aarch64-apple-darwin, os: macos-14 }
           - { crate: condukt_microsandbox, nif: "2.17", target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
-          - { crate: condukt_microsandbox, nif: "2.17", target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { crate: condukt_microsandbox, nif: "2.17", target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
           # musl targets are deferred: bashkit (or one of its transitive
           # deps) refuses to produce a `cdylib` under cross-built musl
           # ("does not support these crate types"). Re-add them once the
