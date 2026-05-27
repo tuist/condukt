@@ -23,9 +23,12 @@ defmodule Condukt.Session do
 
   use GenServer
 
+  alias Condukt.AgentRuntimes.Native
   alias Condukt.{Compactor, Context, Message, Redactor, Sandbox, Secrets, SessionID, SessionStore, Telemetry, Tool}
   alias Condukt.MCP
   alias Condukt.SessionStore.Snapshot
+  alias Condukt.Tool.Inline
+  alias Condukt.Tools.Subagent
   alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolCall
 
@@ -148,7 +151,7 @@ defmodule Condukt.Session do
     if function_exported?(agent_module, :runtime, 0) do
       agent_module.runtime()
     else
-      Condukt.AgentRuntimes.Native
+      Native
     end
   end
 
@@ -365,11 +368,11 @@ defmodule Condukt.Session do
 
   defp resolve_sandbox(spec, _cwd, _session_id), do: Sandbox.resolve(spec)
 
-  defp resolve_runtime(nil), do: {:ok, {Condukt.AgentRuntimes.Native, []}}
-  defp resolve_runtime(Condukt.AgentRuntimes.Native), do: {:ok, {Condukt.AgentRuntimes.Native, []}}
+  defp resolve_runtime(nil), do: {:ok, {Native, []}}
+  defp resolve_runtime(Native), do: {:ok, {Native, []}}
 
-  defp resolve_runtime({Condukt.AgentRuntimes.Native, opts}) when is_list(opts) do
-    {:ok, {Condukt.AgentRuntimes.Native, opts}}
+  defp resolve_runtime({Native, opts}) when is_list(opts) do
+    {:ok, {Native, opts}}
   end
 
   defp resolve_runtime(module) when is_atom(module) do
@@ -425,7 +428,7 @@ defmodule Condukt.Session do
   defp maybe_inject_subagent_tool(tools, []), do: tools
 
   defp maybe_inject_subagent_tool(tools, subagents) do
-    tools ++ [{Condukt.Tools.Subagent, subagents: subagents}]
+    tools ++ [{Subagent, subagents: subagents}]
   end
 
   @impl true
@@ -543,7 +546,7 @@ defmodule Condukt.Session do
   # Agent Loop Implementation
   # ============================================================================
 
-  defp do_run(%{runtime: Condukt.AgentRuntimes.Native} = state, prompt, opts) do
+  defp do_run(%{runtime: Native} = state, prompt, opts) do
     do_native_run(state, prompt, opts)
   end
 
@@ -614,7 +617,7 @@ defmodule Condukt.Session do
     {response, messages, next_assigns}
   end
 
-  defp do_stream(%{runtime: Condukt.AgentRuntimes.Native} = state, prompt, opts, emit, abort_ref) do
+  defp do_stream(%{runtime: Native} = state, prompt, opts, emit, abort_ref) do
     do_native_stream(state, prompt, opts, emit, abort_ref)
   end
 
@@ -837,9 +840,13 @@ defmodule Condukt.Session do
   end
 
   def message_to_req_llm(%Message{role: :tool_result, tool_call_id: id, content: content}) do
-    result = if is_binary(content), do: content, else: JSON.encode!(content)
+    result = encode_tool_result(content)
     ReqLLM.Context.tool_result(id, result)
   end
+
+  defp encode_tool_result(content) when is_binary(content), do: content
+  defp encode_tool_result({:error, reason}), do: "Error: #{inspect(reason)}"
+  defp encode_tool_result(content), do: JSON.encode!(content)
 
   defp build_req_llm_tools(tools, state) do
     Enum.map(tools, fn tool_spec ->
@@ -1095,6 +1102,8 @@ defmodule Condukt.Session do
       secrets: state.secrets,
       subagents: state.subagents,
       subagent_supervisor: state.subagent_supervisor,
+      model: state.model,
+      thinking_level: state.thinking_level,
       api_key: state.api_key,
       base_url: state.base_url,
       assigns: state.assigns
@@ -1117,7 +1126,7 @@ defmodule Condukt.Session do
   defp build_tool_map(tools) do
     tools
     |> Map.new(fn
-      %Condukt.Tool.Inline{} = inline -> {inline.name, inline}
+      %Inline{} = inline -> {inline.name, inline}
       {module, opts} = spec -> {Tool.name(spec), {module, opts}}
       module -> {Tool.name(module), module}
     end)

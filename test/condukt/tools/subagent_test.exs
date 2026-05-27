@@ -111,6 +111,43 @@ defmodule Condukt.Tools.SubagentTest do
     GenServer.stop(parent)
   end
 
+  test "inherits parent LLM configuration for child sessions" do
+    tool_call = ToolCall.new("call_1", "subagent", JSON.encode!(%{"role" => "researcher", "task" => "write notes"}))
+
+    {parent_model, parent_model_id} =
+      LLMProvider.model([
+        LLMProvider.response(%Message{role: :assistant, content: [], tool_calls: [tool_call]}, :tool_calls),
+        LLMProvider.text_response("field notes"),
+        LLMProvider.text_response("parent done")
+      ])
+
+    {:ok, parent} =
+      ParentAgent.start_link(
+        model: parent_model,
+        api_key: "test-key",
+        base_url: "https://llm.example.com/v1",
+        thinking_level: :low,
+        subagents: [
+          researcher: {ChildAgent, load_project_instructions: false}
+        ],
+        load_project_instructions: false
+      )
+
+    assert {:ok, "parent done"} = Condukt.run(parent, "delegate")
+
+    assert_receive {LLMProvider, :request, ^parent_model_id, _parent_context, _parent_opts}
+    assert_receive {LLMProvider, :request, ^parent_model_id, child_context, child_opts}
+
+    assert Enum.any?(child_context.messages, &message_text?(&1, "write notes"))
+    assert child_opts[:api_key] == "test-key"
+    assert child_opts[:base_url] == "https://llm.example.com/v1"
+    assert child_opts[:reasoning_effort] == :low
+
+    assert_receive {LLMProvider, :request, ^parent_model_id, _context, _parent_opts}
+
+    GenServer.stop(parent)
+  end
+
   test "validates structured input and passes optional fields as optional" do
     input_schema = %{
       type: "object",

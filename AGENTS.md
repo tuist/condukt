@@ -117,9 +117,9 @@
 - Role opts can declare optional `:input`/`:input_schema` and
   `:output`/`:output_schema` JSON Schemas. Only fields listed in `required`
   are required.
-- Child sessions inherit the parent `:sandbox`, `:cwd`, `:api_key`,
-  `:base_url`, and resolved `:secrets` unless those values are overridden in
-  the role registration opts.
+- Child sessions inherit the parent `:sandbox`, `:cwd`, `:model`,
+  `:thinking_level`, `:api_key`, `:base_url`, and resolved `:secrets` unless
+  those values are overridden in the role registration opts.
 - See `guides/subagents.md` for declaration, inheritance, and supervision
   details.
 
