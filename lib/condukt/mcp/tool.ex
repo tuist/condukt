@@ -31,7 +31,27 @@ defmodule Condukt.MCP.Tool do
     }
   end
 
-  defp full_name(nil, name), do: name
-  defp full_name("", name), do: name
-  defp full_name(prefix, name), do: prefix <> "." <> name
+  defp full_name(nil, name), do: safe_identifier(name)
+  defp full_name("", name), do: safe_identifier(name)
+  defp full_name(prefix, name), do: safe_identifier(prefix <> "_" <> name)
+
+  defp safe_identifier(name) do
+    name
+    |> String.replace(~r/[^A-Za-z0-9_-]/, "_")
+    |> then(fn
+      "" -> "tool"
+      safe -> truncate_identifier(safe)
+    end)
+  end
+
+  defp truncate_identifier(name) when byte_size(name) <= 64, do: name
+
+  defp truncate_identifier(name) do
+    hash =
+      :crypto.hash(:sha256, name)
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 8)
+
+    binary_part(name, 0, 55) <> "_" <> hash
+  end
 end

@@ -169,6 +169,8 @@ By default a child sub-agent inherits these parent session values:
 
 - `:sandbox`
 - `:cwd`
+- `:model`
+- `:thinking_level`
 - `:api_key`
 - `:base_url`
 - `:secrets`

@@ -34,6 +34,15 @@ defmodule Condukt.SessionMessageToReqLLMTest do
     end
   end
 
+  describe "message_to_req_llm/1 with tool results" do
+    test "encodes error tuples as text" do
+      msg = Message.tool_result("call_1", {:error, :boom})
+
+      assert %ReqLLM.Message{role: :tool} = req_msg = Session.message_to_req_llm(msg)
+      assert message_text(req_msg) == "Error: :boom"
+    end
+  end
+
   defp message_text(%ReqLLM.Message{content: content}) when is_binary(content), do: content
 
   defp message_text(%ReqLLM.Message{content: parts}) when is_list(parts) do
