@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.6.0] - 2026-05-27
+
+### Bug Fixes
+
+- make MCP subagents provider-safe
+
+
+
+### Features
+
+- add microsandbox sandbox backend
+
+
 ## [1.5.1] - 2026-05-19
 
 ### Changes
