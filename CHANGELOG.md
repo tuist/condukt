@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.6.2] - 2026-05-28
+
+### Bug Fixes
+
+- support agents without operations
+
+
 ## [1.6.1] - 2026-05-28
 
 ### Bug Fixes
