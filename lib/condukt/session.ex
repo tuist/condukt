@@ -179,10 +179,44 @@ defmodule Condukt.Session do
 
   @doc """
   Runs a prompt synchronously, returning the final response.
+
+  Returns `{:error, {:session_exit, reason}}` when the session process cannot
+  complete the call because it exits, is missing, or exceeds the call timeout.
   """
   def run(agent, prompt, opts \\ []) do
     timeout = opts[:timeout] || @default_timeout
-    GenServer.call(agent, {:run, prompt, opts}, timeout)
+    call_session(agent, {:run, prompt, opts}, timeout)
+  end
+
+  defp call_session(agent, request, timeout) do
+    parent = self()
+    ref = make_ref()
+
+    {pid, monitor_ref} =
+      spawn_monitor(fn ->
+        result = GenServer.call(agent, request, timeout)
+        send(parent, {ref, result})
+      end)
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(monitor_ref, [:flush])
+        result
+
+      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
+        {:error, {:session_exit, reason}}
+    after
+      timeout ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+        after
+          0 -> :ok
+        end
+
+        {:error, {:session_exit, :timeout}}
+    end
   end
 
   @doc """

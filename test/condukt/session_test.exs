@@ -42,6 +42,34 @@ defmodule Condukt.SessionTest do
     end
   end
 
+  defmodule HangingSession do
+    use GenServer
+
+    def start_link(opts) do
+      GenServer.start_link(__MODULE__, :ok, opts)
+    end
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call({:run, _prompt, _opts}, _from, state), do: {:noreply, state}
+  end
+
+  describe "run/3" do
+    test "returns an error when a named session is missing" do
+      assert {:error, {:session_exit, {:noproc, _call}}} =
+               Condukt.Session.run(:missing_session, "go", timeout: 1)
+    end
+
+    test "returns an error when the session call times out" do
+      pid = start_supervised!({HangingSession, []})
+
+      assert {:error, {:session_exit, :timeout}} =
+               Condukt.Session.run(pid, "go", timeout: 1)
+    end
+  end
+
   describe "session id" do
     test "generates a UUIDv7 by default" do
       {:ok, pid} = ConfigAgent.start_link(load_project_instructions: false)
