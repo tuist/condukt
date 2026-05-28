@@ -93,12 +93,13 @@ exists. `Condukt.SessionStore.Disk` decodes snapshots with
   `.condukt/session.store` under the configured cwd when no explicit
   `path:` was provided.** **Severity: medium.**
 
-## 5. Elixir production code should not add typespecs or custom types
+## 5. Elixir production code should not add typespecs (except @callback)
 
-This repo does not want `@spec`, `@type`, `@typep`, or `@opaque` in
-production Elixir code. Callback definitions are the exception when a
-behaviour contract needs to exist, but reviewers should not ask for or
-encourage additional typespec-style annotations beyond that.
+This repo forbids `@spec`, `@type`, `@typep`, and `@opaque` in production
+Elixir code via the Credo check `Condukt.Credo.Check.Readability.NoTypespecs`,
+whose `@forbidden_attributes` is exactly `[:spec, :type, :typep, :opaque]`.
+Notably, `:callback` is NOT included - typed `@callback` declarations are
+the idiomatic mechanism for behaviour contracts and are permitted.
 
 ### Flag
 
@@ -106,18 +107,16 @@ encourage additional typespec-style annotations beyond that.
   `lib/` for the first time.** Do not flag existing typespecs that appear
   in a diff due to code movement, refactoring, or line shifts. Only flag
   genuinely new type annotations. **Severity: medium.**
-- **Typed signatures in `@callback` declarations** (e.g.,
-  `@callback foo() :: return_type()`). Plain `@callback foo()` without
-  the type signature is preferred; document return shapes in `@doc` as
-  prose. **Severity: medium.**
 - **Review feedback that asks for missing typespecs, type aliases, or
-  stronger type annotations in Elixir production code.**
-  **Severity: medium.**
+  stronger type annotations (including @spec, @type, etc.) in Elixir
+  production code.** **Severity: medium.**
 
 ### Do not flag
 
-- Plain `@callback` / `@macrocallback` declarations without typed
-  signatures, when a behaviour contract is necessary.
+- `@callback` and `@macrocallback` declarations with typed signatures
+  (e.g., `@callback decide(context :: Context.t(), opts :: keyword()) ::
+  :allow | {:deny, term()}`). These are the documented contract for
+  behaviour implementations and are intentionally permitted.
 - `@callback` declarations that already exist and are only appearing in
   diffs due to code movement.
 - Plain runtime validation, guards, or pattern matching that make code
