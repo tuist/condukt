@@ -189,35 +189,47 @@ defmodule Condukt.Session do
   end
 
   defp call_session(agent, request, timeout) do
-    parent = self()
-    ref = make_ref()
+    case session_destination(agent) do
+      nil ->
+        {:error, {:session_exit, {:noproc, {GenServer, :call, [agent, request, timeout]}}}}
 
-    {pid, monitor_ref} =
-      spawn_monitor(fn ->
-        result = GenServer.call(agent, request, timeout)
-        send(parent, {ref, result})
-      end)
-
-    receive do
-      {^ref, result} ->
-        Process.demonitor(monitor_ref, [:flush])
-        result
-
-      {:DOWN, ^monitor_ref, :process, ^pid, reason} ->
-        {:error, {:session_exit, reason}}
-    after
-      timeout ->
-        Process.exit(pid, :kill)
+      destination ->
+        monitor_ref = Process.monitor(destination)
+        alias_ref = :erlang.alias([:reply])
+        send(destination, {:"$gen_call", {self(), alias_ref}, request})
 
         receive do
-          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
-        after
-          0 -> :ok
-        end
+          {^alias_ref, result} ->
+            :erlang.unalias(alias_ref)
+            Process.demonitor(monitor_ref, [:flush])
+            result
 
-        {:error, {:session_exit, :timeout}}
+          {:DOWN, ^monitor_ref, :process, ^destination, reason} ->
+            :erlang.unalias(alias_ref)
+            {:error, {:session_exit, reason}}
+        after
+          timeout ->
+            :erlang.unalias(alias_ref)
+            Process.demonitor(monitor_ref, [:flush])
+            {:error, {:session_exit, :timeout}}
+        end
     end
   end
+
+  defp session_destination(pid) when is_pid(pid), do: pid
+
+  defp session_destination(name) when is_atom(name), do: Process.whereis(name)
+
+  defp session_destination({:global, name}) do
+    case :global.whereis_name(name) do
+      :undefined -> nil
+      pid -> pid
+    end
+  end
+
+  defp session_destination({:via, module, name}), do: module.whereis_name(name)
+
+  defp session_destination({name, node}) when is_atom(name) and is_atom(node), do: {name, node}
 
   @doc """
   Streams a prompt, returning an enumerable of events.
