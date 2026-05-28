@@ -35,6 +35,42 @@ defmodule ConduktTest do
     def tools, do: [ModuleNameTool]
   end
 
+  defmodule PlainModuleAgent do
+    @behaviour Condukt
+
+    @impl true
+    def runtime, do: Condukt.AgentRuntimes.Native
+
+    @impl true
+    def system_prompt, do: "plain module one-shot prompt"
+
+    @impl true
+    def tools, do: []
+
+    @impl true
+    def subagents, do: []
+
+    @impl true
+    def model, do: "test:model"
+
+    @impl true
+    def thinking_level, do: :medium
+
+    @impl true
+    def sandbox, do: nil
+
+    @impl true
+    def secrets, do: nil
+
+    def mcp_servers, do: []
+
+    @impl true
+    def init(opts), do: {:ok, opts}
+
+    @impl true
+    def handle_event(_event, state), do: {:noreply, state}
+  end
+
   test "delegates prompt-first calls to anonymous runs" do
     {model, _model_id} = LLMProvider.model(LLMProvider.text_response("from anonymous"))
 
@@ -53,6 +89,19 @@ defmodule ConduktTest do
     assert_receive {LLMProvider, :request, ^model_id, context, opts}
     assert inspect(context) =~ "module one-shot prompt"
     assert Enum.any?(opts[:tools], &(&1.name == "module_name"))
+  end
+
+  test "runs plain Condukt behaviour modules without operation metadata as transient one-shot sessions" do
+    {model, model_id} = LLMProvider.model(LLMProvider.text_response("from plain module"))
+
+    assert {:ok, "from plain module"} =
+             Condukt.run(PlainModuleAgent, "hi",
+               model: model,
+               load_project_instructions: false
+             )
+
+    assert_receive {LLMProvider, :request, ^model_id, context, _opts}
+    assert inspect(context) =~ "plain module one-shot prompt"
   end
 
   test "module-defined one-shot runs support structured output with module tools" do
