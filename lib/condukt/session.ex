@@ -179,11 +179,57 @@ defmodule Condukt.Session do
 
   @doc """
   Runs a prompt synchronously, returning the final response.
+
+  Returns `{:error, {:session_exit, reason}}` when the session process cannot
+  complete the call because it exits, is missing, or exceeds the call timeout.
   """
   def run(agent, prompt, opts \\ []) do
     timeout = opts[:timeout] || @default_timeout
-    GenServer.call(agent, {:run, prompt, opts}, timeout)
+    call_session(agent, {:run, prompt, opts}, timeout)
   end
+
+  defp call_session(agent, request, timeout) do
+    case session_destination(agent) do
+      nil ->
+        {:error, {:session_exit, {:noproc, {GenServer, :call, [agent, request, timeout]}}}}
+
+      destination ->
+        monitor_ref = Process.monitor(destination)
+        alias_ref = :erlang.alias([:reply])
+        send(destination, {:"$gen_call", {self(), alias_ref}, request})
+
+        receive do
+          {^alias_ref, result} ->
+            :erlang.unalias(alias_ref)
+            Process.demonitor(monitor_ref, [:flush])
+            result
+
+          {:DOWN, ^monitor_ref, :process, ^destination, reason} ->
+            :erlang.unalias(alias_ref)
+            {:error, {:session_exit, reason}}
+        after
+          timeout ->
+            :erlang.unalias(alias_ref)
+            Process.demonitor(monitor_ref, [:flush])
+            {:error, {:session_exit, :timeout}}
+        end
+    end
+  end
+
+  defp session_destination(pid) when is_pid(pid), do: pid
+
+  defp session_destination(name) when is_atom(name), do: Process.whereis(name)
+
+  defp session_destination({:global, name}) do
+    case :global.whereis_name(name) do
+      :undefined -> nil
+      pid -> pid
+    end
+  end
+
+  defp session_destination({:via, module, name}), do: module.whereis_name(name)
+
+  defp session_destination({name, node}) when is_atom(name) and is_atom(node), do: {name, node}
 
   @doc """
   Streams a prompt, returning an enumerable of events.

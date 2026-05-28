@@ -368,6 +368,7 @@ defmodule Condukt do
   - `{:invalid_input, %JSV.ValidationError{}}` - args did not match `:input_schema`
   - `{:invalid_output, %JSV.ValidationError{}}` - submitted value failed validation
   - `:no_result_submitted` - structured mode finished without a `submit_result` call
+  - `{:session_exit, reason}` - the underlying session exited, was missing, or timed out
 
   Anonymous and module-defined one-shot runs accept all the per-run options above (`:timeout`,
   `:max_turns`, `:images`) plus the session options accepted by an agent's
