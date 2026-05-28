@@ -417,7 +417,8 @@ defmodule Condukt do
   defp agent_module?(module) when is_atom(module) do
     case Code.ensure_loaded(module) do
       {:module, ^module} ->
-        function_exported?(module, :__operations__, 0) and
+        function_exported?(module, :runtime, 0) and
+          function_exported?(module, :model, 0) and
           function_exported?(module, :tools, 0) and
           function_exported?(module, :init, 1)
 
