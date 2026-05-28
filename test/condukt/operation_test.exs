@@ -36,6 +36,10 @@ defmodule Condukt.OperationTest do
     )
   end
 
+  defmodule EmptyAgent do
+    use Condukt
+  end
+
   defmodule AgentModuleTool do
     use Condukt.Tool
 
@@ -92,6 +96,11 @@ defmodule Condukt.OperationTest do
     test "__operation__/1 returns :error for unknown names" do
       assert :error = ReviewAgent.__operation__(:does_not_exist)
     end
+
+    test "agents without operations expose an empty operation set" do
+      assert %{} = EmptyAgent.__operations__()
+      assert :error = EmptyAgent.__operation__(:does_not_exist)
+    end
   end
 
   describe "input validation" do
@@ -112,6 +121,11 @@ defmodule Condukt.OperationTest do
     test "unknown operation returns :unknown_operation error" do
       assert {:error, {:unknown_operation, :missing}} =
                Operation.run(ReviewAgent, :missing, %{})
+    end
+
+    test "operation-free agents return :unknown_operation errors" do
+      assert {:error, {:unknown_operation, :missing}} =
+               Operation.run(EmptyAgent, :missing, %{})
     end
   end
 

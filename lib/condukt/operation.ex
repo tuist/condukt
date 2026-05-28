@@ -82,12 +82,22 @@ defmodule Condukt.Operation do
          }}
       end)
 
-    quote do
-      @doc false
-      def __operations__, do: unquote(Macro.escape(ops_map))
+    if ops_map == %{} do
+      quote do
+        @doc false
+        def __operations__, do: %{}
 
-      @doc false
-      def __operation__(name), do: Map.fetch(__operations__(), name)
+        @doc false
+        def __operation__(_name), do: :error
+      end
+    else
+      quote do
+        @doc false
+        def __operations__, do: unquote(Macro.escape(ops_map))
+
+        @doc false
+        def __operation__(name), do: Map.fetch(__operations__(), name)
+      end
     end
   end
 
