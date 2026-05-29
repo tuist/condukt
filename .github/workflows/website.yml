@@ -57,7 +57,9 @@ jobs:
     name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Disabled while Cloudflare API limits are exhausted. Keep the build job
+    # active so website changes are still validated in CI.
+    if: ${{ false }}
     environment:
       name: production
       url: https://condukt.tuist.dev
