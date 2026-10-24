@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.1] - 2026-10-24
+
+### Bug Fixes
+
+- compact context before each native model turn
+
+
 ## [1.13.0] - 2026-08-28
 
 ### Features
