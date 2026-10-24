@@ -26,7 +26,6 @@ defmodule Condukt.Session do
   alias Condukt.AgentRuntimes.Native
 
   alias Condukt.{
-    Compactor,
     Context,
     Message,
     Retry,
@@ -41,6 +40,7 @@ defmodule Condukt.Session do
 
   alias Condukt.MCP
   alias Condukt.Notifier
+  alias Condukt.Session.Compaction
   alias Condukt.Session.Translate
   alias Condukt.Session.Turn
   alias Condukt.SessionStore.Snapshot
@@ -759,6 +759,7 @@ defmodule Condukt.Session do
   end
 
   defp agent_loop(state, messages, max_turns, turn) do
+    messages = compact_messages(state, messages)
     context = Translate.context(messages, outbound_redactor(state), state.system_prompt)
     tools = build_req_llm_tools(state.tools, state)
 
@@ -836,6 +837,7 @@ defmodule Condukt.Session do
   end
 
   defp stream_turn(state, messages, max_turns, turn, emit, abort_ref) do
+    messages = compact_messages(state, messages)
     context = Translate.context(messages, outbound_redactor(state), state.system_prompt)
     tools = build_req_llm_tools(state.tools, state)
 
@@ -1293,30 +1295,12 @@ defmodule Condukt.Session do
   defp maybe_put_store_key(opts, nil), do: opts
   defp maybe_put_store_key(opts, key), do: Keyword.put(opts, :key, key)
 
-  defp maybe_compact(%__MODULE__{compactor: nil} = state), do: state
-
   defp maybe_compact(%__MODULE__{} = state) do
-    before_count = length(state.messages)
-    start_time = System.monotonic_time()
+    %{state | messages: compact_messages(state, state.messages)}
+  end
 
-    case Compactor.compact(state.compactor, state.messages) do
-      {:ok, messages} ->
-        :telemetry.execute(
-          [:condukt, :compact, :stop],
-          %{
-            duration: System.monotonic_time() - start_time,
-            before: before_count,
-            after: length(messages)
-          },
-          %{agent: state.agent_module, session_id: state.id}
-        )
-
-        %{state | messages: messages}
-
-      {:error, reason} ->
-        Logger.warning("compaction failed: #{inspect(reason)}")
-        state
-    end
+  defp compact_messages(state, messages) do
+    Compaction.apply(state.compactor, messages, %{agent: state.agent_module, session_id: state.id})
   end
 
   defp load_project_context(opts, sandbox) do

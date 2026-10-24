@@ -8,7 +8,9 @@ defmodule Condukt.Compactor do
   prefix with a summary.
 
   Compactors are pluggable just like `Condukt.SessionStore`. Pass one to
-  `start_link/1` and Condukt will apply it after each completed turn.
+  `start_link/1` and Condukt will apply it before every native model request
+  (including tool iterations) and after run completion before persistence.
+  Compactors should be idempotent when no further pruning is needed.
 
       MyApp.Agent.start_link(
         compactor: Condukt.Compactor.Sliding
@@ -39,8 +41,11 @@ defmodule Condukt.Compactor do
 
   ## Telemetry
 
-  Each compaction emits a `[:condukt, :compact, :stop]` event with
-  measurements `%{duration, before, after}` and metadata `%{agent}`.
+  Each compaction emits `[:condukt, :compact, :start]` and
+  `[:condukt, :compact, :stop]`. Stop measurements include `:duration`,
+  `:before`/`:after` message counts and `:before_bytes`/`:after_bytes` external-term
+  sizes. Metadata identifies `:agent` and `:session_id`; stop also includes
+  `:status` and `:changed`. No message payload is included.
   """
 
   alias Condukt.Message
