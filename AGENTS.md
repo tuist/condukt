@@ -129,6 +129,7 @@
   seam for delivering them anywhere else, and `Condukt.Notifiers.PubSub` is the
   implementation for many viewers or more than one node. Subscribers are
   monitored, so a viewer that crashes is dropped rather than accumulating.
+- Native model requests compact history before translation on every buffered or streaming tool-loop iteration, not only after run completion. `Condukt.Session.Compaction` owns dispatch and payload-free start/stop telemetry, including byte sizes and whether pruning changed anything. Keep model context and per-turn checkpoint telemetry on the same compacted messages; custom compactors must tolerate repeated no-op application.
 - Native ReqLLM calls accept `:llm_request_options`; optional World Wide Web
   Consortium Trace Context is captured at each public run or stream boundary,
   then forwarded through tasks, tools, and sub-agents without requiring an

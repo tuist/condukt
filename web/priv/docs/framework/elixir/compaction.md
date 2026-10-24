@@ -2,8 +2,12 @@
 
 Long-running agents accumulate messages that grow past the model's context
 window. A compactor keeps the history bounded by dropping or summarising
-older messages. Condukt applies the configured compactor after every
-completed turn, and `Condukt.compact/1` triggers it manually.
+older messages. Condukt applies the configured compactor before every native model request,
+including tool-loop iterations and restored sessions, and after run completion
+before persisting history. Both buffered and streaming runs use the compacted
+messages for inference and per-turn telemetry. `Condukt.compact/1` triggers it
+manually. Custom compactors should be safe to apply repeatedly: not every
+invocation needs to change history.
 
 ## Configuring a compactor
 
@@ -64,11 +68,21 @@ abort compaction (the original history is kept).
 
 ## Telemetry
 
-Each compaction emits `[:condukt, :compact, :stop]` with measurements:
+Each configured compaction attempt emits `[:condukt, :compact, :start]` with
+`system_time` and `[:condukt, :compact, :stop]` with measurements:
 
 * `:duration` (native time)
 * `:before` (message count before)
 * `:after` (message count after)
 
-and metadata `%{agent: pid()}`. Wire this into your telemetry pipeline to
-see how often history is being trimmed.
+* `:before_bytes` and `:after_bytes` (Erlang external-term sizes, not token counts)
+
+Both events identify `:agent` (the agent module) and `:session_id`. Stop metadata
+also contains `:status` (`:ok` or `:error`) and `:changed` (whether the messages
+actually changed). Pruning payloads can reduce bytes without changing the message
+count. No message content is included. Failed compactors preserve the original
+history and emit `status: :error, changed: false`.
+
+Use start/stop to show activity, and only report successful pruning when
+`changed: true`. A no-op is not a context summary. Manual compaction and completion
+persistence use the same telemetry contract.
