@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.13.2] - 2026-10-28
+
+### Bug Fixes
+
+- preserve provider reasoning across tool turns
+
+
 ## [1.13.1] - 2026-10-24
 
 ### Bug Fixes
