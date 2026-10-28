@@ -165,6 +165,9 @@
   through `Snapshot.migrate/1`. When the shape changes, raise the version and
   add a clause; never change a field's meaning in place, because snapshots
   written by older builds exist on real disks.
+- Version 3 retains assistant `{:reasoning_details, list}` blocks losslessly through
+  ReqLLM translation and snapshots. These are provider replay state, not display
+  text or thinking summaries. Keep them intact across tool turns and compaction.
 
 ## Sub-agents
 

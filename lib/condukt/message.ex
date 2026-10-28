@@ -17,6 +17,8 @@ defmodule Condukt.Message do
 
   - `{:text, string}` - Plain text
   - `{:thinking, string}` - Model's reasoning (if thinking enabled)
+  - `{:reasoning_details, list}` - Opaque ReqLLM reasoning state for provider replay,
+    not display text. Session stores must protect this along with conversation content.
   - `{:tool_call, id, name, args}` - A tool invocation
   """
 

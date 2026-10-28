@@ -71,11 +71,9 @@ defmodule Condukt.Session.Translate do
         %{id: id, name: name, arguments: arguments}
       end)
 
-    if tool_calls == [] do
-      ReqLLM.Context.assistant(text)
-    else
-      ReqLLM.Context.assistant(text, tool_calls: tool_calls)
-    end
+    message = ReqLLM.Context.assistant(text, tool_calls: tool_calls)
+    details = for {:reasoning_details, details} <- blocks, detail <- details, do: detail
+    %{message | reasoning_details: if(details != [], do: details)}
   end
 
   def message_to_req_llm(%Message{role: :tool_result, tool_call_id: id, content: content}) do
@@ -96,7 +94,8 @@ defmodule Condukt.Session.Translate do
   """
   def response_to_message(response) do
     blocks =
-      block(:thinking, ReqLLM.Response.thinking(response)) ++
+      block(:reasoning_details, response.message.reasoning_details) ++
+        block(:thinking, ReqLLM.Response.thinking(response)) ++
         block(:text, ReqLLM.Response.text(response)) ++
         tool_call_blocks(response)
 
@@ -105,6 +104,7 @@ defmodule Condukt.Session.Translate do
 
   defp block(_kind, nil), do: []
   defp block(_kind, ""), do: []
+  defp block(_kind, []), do: []
   defp block(kind, content), do: [{kind, content}]
 
   defp tool_call_blocks(response) do

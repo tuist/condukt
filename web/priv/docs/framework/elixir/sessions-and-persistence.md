@@ -64,6 +64,12 @@ to survive a restart: the message history and the configurable options (such
 as model, system prompt, and `cwd`). It does not capture transient state
 like in flight tool calls.
 
+Assistant history retains opaque provider reasoning details separately from visible
+text and thinking summaries. They round-trip through ReqLLM and version-3 snapshots,
+including across tool calls. Protect stored snapshots as sensitive conversation data;
+provider encryption is not a replacement for the store's access controls. Version-1
+and version-2 snapshots still load without inventing missing reasoning state.
+
 ## Implementing a store
 
 Implement the `Condukt.SessionStore` behaviour:
