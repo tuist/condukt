@@ -16,7 +16,7 @@ defmodule Condukt.SessionStore.Snapshot do
   identifies the owner in it and gets it back untouched.
   """
 
-  @current_version 2
+  @current_version 3
 
   defstruct version: @current_version,
             id: nil,
@@ -65,6 +65,8 @@ defmodule Condukt.SessionStore.Snapshot do
   def migrate(_other), do: {:error, :invalid_snapshot}
 
   defp migrate_from(@current_version, snapshot), do: {:ok, snapshot}
+
+  defp migrate_from(2, snapshot), do: {:ok, %{snapshot | version: @current_version}}
 
   # Version 1 carried messages, model, thinking level and system prompt, and
   # nothing that identified the session. There is nothing to recover those from,

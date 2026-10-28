@@ -38,6 +38,16 @@ defmodule Condukt.SessionStore.SnapshotTest do
       assert {:ok, ^snapshot} = Snapshot.migrate(snapshot)
     end
 
+    test "a version 2 snapshot keeps its history and identity" do
+      snapshot = %{
+        Snapshot.new(%{id: "sess-2", actor: %{user: 8}, messages: [Message.assistant("before reasoning")]})
+        | version: 2
+      }
+
+      assert {:ok, migrated} = Snapshot.migrate(snapshot)
+      assert migrated == %{snapshot | version: Snapshot.current_version()}
+    end
+
     # Version 1 had no version field at all. Those snapshots are on real disks,
     # and refusing them would throw away conversations that are otherwise
     # intact, so the absence of the field is what identifies them.

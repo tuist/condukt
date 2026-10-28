@@ -2,6 +2,39 @@ defmodule Condukt.Session.TranslateTest do
   use ExUnit.Case, async: true
 
   alias Condukt.Session.Translate
+  alias Condukt.SessionStore.Snapshot
+  alias ReqLLM.Message.ReasoningDetails
+
+  test "opaque reasoning survives tool translation and snapshot restoration without becoming display text" do
+    details = [
+      %ReasoningDetails{
+        signature: "opaque-state",
+        encrypted?: true,
+        provider: :openai,
+        provider_data: %{"id" => "rs_1", "summary" => []}
+      }
+    ]
+
+    for calls <- [[], [%{id: "call_1", name: "lookup", arguments: %{"query" => "status"}}]] do
+      message = %{ReqLLM.Context.assistant("Looking it up", tool_calls: calls) | reasoning_details: details}
+
+      response = %ReqLLM.Response{
+        message: message,
+        model: "test-model",
+        context: ReqLLM.Context.new(),
+        id: "response_1"
+      }
+
+      translated = Translate.response_to_message(response)
+      snapshot = Snapshot.new(%{messages: [translated]})
+      assert {:ok, restored} = snapshot |> :erlang.term_to_binary() |> :erlang.binary_to_term() |> Snapshot.migrate()
+      [replayed] = Translate.context(restored.messages, nil, nil).messages
+      assert replayed.reasoning_details == details
+      assert replayed.tool_calls == message.tool_calls
+      assert Condukt.Message.text(translated) == "Looking it up"
+      assert Condukt.Message.thinking(translated) == nil
+    end
+  end
 
   describe "llm_opts/2" do
     test "omits every unset option so the provider's own defaults apply" do
