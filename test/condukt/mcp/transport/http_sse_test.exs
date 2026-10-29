@@ -1,67 +1,57 @@
 defmodule Condukt.MCP.Transport.HttpSSETest do
   use ExUnit.Case, async: true
 
-  alias Condukt.MCP.{Client, Server}
+  alias Condukt.MCP.{JSONRPC, Server}
+  alias Condukt.MCP.Transport.HttpSSE
 
   test "uses the injected POST request function for legacy HTTP+SSE messages" do
     test_pid = self()
-    {:ok, coordinator} = Agent.start_link(fn -> nil end)
 
     sse_request = fn transport, _url, _headers, _opts ->
-      Agent.update(coordinator, fn _ -> transport end)
-      send(transport, {:sse_chunk, "event: endpoint\ndata: http://127.0.0.1:9/messages\n\n"})
+      send(test_pid, {:sse_connected, self()})
+
+      receive do
+        :publish_endpoint ->
+          send(transport, {:sse_chunk, "event: endpoint\ndata: http://127.0.0.1:9/messages\n\n"})
+      end
+
       Process.sleep(:infinity)
     end
 
-    http_request = fn _url, envelope, _headers ->
-      send(test_pid, {:legacy_post, envelope})
-      transport = wait_for_transport(coordinator)
-
-      case envelope do
-        %{"id" => id, "method" => "initialize"} ->
-          send(transport, {:sse_chunk, sse_response(id, initialize_result())})
-          {:ok, 202}
-
-        %{"id" => id, "method" => "tools/list"} ->
-          send(transport, {:sse_chunk, sse_response(id, tools_result())})
-          {:ok, 202}
-
-        %{"method" => "notifications/initialized"} ->
-          {:ok, 202}
-      end
+    http_request = fn url, envelope, _headers ->
+      send(test_pid, {:legacy_post, url, envelope})
+      {:ok, 202}
     end
 
     server = %Server{
       name: "legacy",
-      transport: {:http_sse, url: "http://127.0.0.1:9/sse"},
-      init_timeout: 500
+      transport: {:http_sse, url: "http://127.0.0.1:9/sse"}
     }
 
-    assert {:ok, client} = Client.start_link(server, sse_request: sse_request, http_request: http_request)
-    assert [%{"name" => "echo"}] = Client.tools(client)
-    assert_received {:legacy_post, %{"method" => "initialize"}}
-    assert_received {:legacy_post, %{"method" => "tools/list"}}
+    transport =
+      start_supervised!({HttpSSE, server: server, owner: self(), sse_request: sse_request, http_request: http_request})
 
-    Client.stop(client)
-  end
+    assert_receive {:sse_connected, sse_task}, 1_000
 
-  defp wait_for_transport(coordinator) do
-    case Agent.get(coordinator, & &1) do
-      nil ->
-        Process.sleep(10)
-        wait_for_transport(coordinator)
+    # Exercise the queue before endpoint discovery without racing the SSE task.
+    queued_request = JSONRPC.request(1, "tools/list", %{})
+    assert :ok = HttpSSE.send_message(transport, queued_request)
+    refute_received {:legacy_post, _, _}
 
-      transport ->
-        transport
-    end
-  end
+    send(sse_task, :publish_endpoint)
+    assert_receive {:legacy_post, "http://127.0.0.1:9/messages", ^queued_request}, 1_000
 
-  defp initialize_result do
-    %{
-      "protocolVersion" => "2024-11-05",
-      "capabilities" => %{},
-      "serverInfo" => %{"name" => "legacy", "version" => "1.0"}
-    }
+    result = tools_result()
+    send(transport, {:sse_chunk, sse_response(1, result)})
+    assert_receive {:mcp_message, {:response, 1, {:ok, ^result}}}, 1_000
+
+    # Once the endpoint is known, requests must post without another endpoint event.
+    request = JSONRPC.request(2, "tools/list", %{})
+    assert :ok = HttpSSE.send_message(transport, request)
+    assert_received {:legacy_post, "http://127.0.0.1:9/messages", ^request}
+
+    send(transport, {:sse_chunk, sse_response(2, result)})
+    assert_receive {:mcp_message, {:response, 2, {:ok, ^result}}}, 1_000
   end
 
   defp tools_result do
