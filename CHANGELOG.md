@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.14.0] - 2026-10-29
+
+### Features
+
+- add safe-boundary background compaction
+
+
 ## [1.13.2] - 2026-10-28
 
 ### Bug Fixes
