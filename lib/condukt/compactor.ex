@@ -22,6 +22,20 @@ defmodule Condukt.Compactor do
 
   Compaction can also be triggered manually with `Condukt.compact/1`.
 
+  ## Background compaction
+
+  Native sessions can opt into `background_compaction: true` or a keyword
+  policy alongside `:compactor`. The callback runs in a supervised task on
+  an older prefix while recent messages and new activity remain unchanged.
+  Its replacement is adopted only between inference requests or when idle.
+  Unlike synchronous mode, the callback receives only the selected prefix.
+
+  Defaults start work at 65% of the model's context window and wait at 90%.
+  If the pending result fails or is insufficient, the loop tries one fresh
+  compaction before returning `{:error, {:compaction_failed, reason}}`.
+  See the [Compaction guide](compaction.md#background-compaction) for options,
+  token estimates, cancellation, and the manual compaction contract.
+
   ## Built-in compactors
 
   - `Condukt.Compactor.Sliding` — keeps the most recent N messages.

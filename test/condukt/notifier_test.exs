@@ -5,6 +5,7 @@ defmodule Condukt.NotifierTest do
   alias Condukt.Notifiers.PubSub
   alias Condukt.Session
   alias Condukt.Sessions
+  alias Condukt.Test.LLMProvider
 
   defmodule Recorder do
     @moduledoc false
@@ -45,30 +46,43 @@ defmodule Condukt.NotifierTest do
   end
 
   describe "inside a session" do
+    setup do
+      {model, _id} = LLMProvider.model([])
+      metadata = start_supervised!({ReqLLM.StreamResponse.MetadataHandle, fn -> %{finish_reason: :stop} end})
+
+      Mimic.stub(ReqLLM, :stream_text, fn model, context, _opts ->
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [ReqLLM.StreamChunk.text("hello")],
+           metadata_handle: metadata,
+           cancel: fn -> :ok end,
+           model: ReqLLM.model!(model),
+           context: context
+         }}
+      end)
+
+      {:ok, model: model}
+    end
+
     # Alongside the direct subscribers, not instead of them: adding a notifier
     # must not change what an existing caller receives.
-    test "an event reaches both the subscriber and the notifier" do
-      {:ok, session} = Sessions.start(Agent, api_key: "test", notifier: {Recorder, to: self()})
+    test "an event reaches both the subscriber and the notifier", %{model: model} do
+      {:ok, session} = Sessions.start(Agent, model: model, api_key: "test", notifier: {Recorder, to: self()})
       id = Session.id(session)
       on_exit(fn -> Sessions.stop(id) end)
+      Mimic.allow(ReqLLM, self(), session)
 
-      reference = make_ref()
-      :ok = GenServer.call(session, {:subscribe, self(), reference})
-      GenServer.cast(session, {:broadcast_event, {:text, "hello"}, reference})
-
-      assert_receive {^reference, {:text, "hello"}}
+      assert {:text, "hello"} in (Condukt.stream(session, "go") |> Enum.to_list())
       assert_receive {:published, ^id, {:text, "hello"}, _opts}
     end
 
-    test "a session without one publishes nothing" do
-      {:ok, session} = Sessions.start(Agent, api_key: "test")
-      on_exit(fn -> Sessions.stop(Session.id(session)) end)
+    test "a session without one publishes nothing", %{model: model} do
+      {:ok, session} = Sessions.start(Agent, model: model, api_key: "test")
+      id = Session.id(session)
+      on_exit(fn -> Sessions.stop(id) end)
+      Mimic.allow(ReqLLM, self(), session)
 
-      reference = make_ref()
-      :ok = GenServer.call(session, {:subscribe, self(), reference})
-      GenServer.cast(session, {:broadcast_event, {:text, "hello"}, reference})
-
-      assert_receive {^reference, {:text, "hello"}}
+      assert {:text, "hello"} in (Condukt.stream(session, "go") |> Enum.to_list())
       refute_receive {:published, _id, _event, _opts}
     end
   end

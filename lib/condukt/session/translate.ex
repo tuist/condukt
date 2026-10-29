@@ -80,9 +80,10 @@ defmodule Condukt.Session.Translate do
     ReqLLM.Context.tool_result(id, encode_tool_result(content))
   end
 
-  defp encode_tool_result(content) when is_binary(content), do: content
-  defp encode_tool_result({:error, reason}), do: "Error: #{inspect(reason)}"
-  defp encode_tool_result(content), do: JSON.encode!(content)
+  @doc "Renders a tool result as provider text, also used for context accounting."
+  def encode_tool_result(content) when is_binary(content), do: content
+  def encode_tool_result({:error, reason}), do: "Error: #{inspect(reason)}"
+  def encode_tool_result(content), do: JSON.encode!(content)
 
   @doc """
   Turns a provider response into an assistant message.

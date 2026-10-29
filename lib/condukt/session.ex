@@ -72,11 +72,11 @@ defmodule Condukt.Session do
     :notifier,
     :session_store,
     :session_store_opts,
-    :compactor,
     :redactor,
     :retry,
     :project_context,
     :user_state,
+    compaction: %Compaction{},
     messages: [],
     turn: %Condukt.Session.Turn{},
     assigns: %{}
@@ -140,10 +140,21 @@ defmodule Condukt.Session do
       |> put_configured_opt(config, :session_store_key)
       |> put_configured_opt(config, :session_store_opts, fn -> [] end)
       |> put_configured_opt(config, :compactor)
+      |> put_configured_opt(config, :background_compaction)
       |> put_configured_opt(config, :redactor)
       |> put_configured_opt(config, :retry)
 
-    with :ok <- validate_llm_request_options(agent_opts[:llm_request_options]) do
+    with :ok <- validate_llm_request_options(agent_opts[:llm_request_options]),
+         snapshot = load_snapshot(agent_opts[:session_store], agent_opts),
+         model = restore_value(agent_opts, :model, snapshot && snapshot.model),
+         {:ok, compaction} <- Compaction.new(agent_opts[:compactor], agent_opts[:background_compaction], model) do
+      agent_opts =
+        agent_opts
+        |> Keyword.put(:model, model)
+        |> Keyword.put(:max_tokens, agent_opts[:max_tokens] || (agent_opts[:llm_request_options] || [])[:max_tokens])
+        |> Keyword.put(:restored_snapshot, snapshot)
+        |> Keyword.put(:compaction, compaction)
+
       case link_mode do
         :link -> GenServer.start_link(__MODULE__, agent_opts, gen_opts)
         :nolink -> GenServer.start(__MODULE__, agent_opts, gen_opts)
@@ -322,6 +333,11 @@ defmodule Condukt.Session do
 
   @doc """
   Aborts the current operation.
+
+  Replies to a running caller with `{:error, :aborted}`, or closes its stream
+  after that error, without waiting for in-flight inference or admitted tools.
+  Native retry backoff wakes immediately. Already-admitted work may finish,
+  but its late events and results cannot affect the session or a replacement turn.
   """
   def abort(agent) do
     GenServer.call(agent, :abort)
@@ -331,10 +347,12 @@ defmodule Condukt.Session do
   Runs the configured compactor against the current message history.
 
   No-op when no compactor is configured. The compacted snapshot is
-  immediately persisted if a session store is configured.
+  immediately persisted if a session store is configured. With background
+  compaction enabled, waits without blocking the session process, and returns
+  `{:error, :already_streaming}` if a turn is active.
   """
   def compact(agent) do
-    GenServer.call(agent, :compact)
+    GenServer.call(agent, :compact, @default_timeout)
   end
 
   @doc """
@@ -359,7 +377,7 @@ defmodule Condukt.Session do
   def init(opts) do
     agent_module = Keyword.fetch!(opts, :agent_module)
     session_store = Keyword.get(opts, :session_store)
-    snapshot = load_snapshot(session_store, opts)
+    snapshot = Keyword.fetch!(opts, :restored_snapshot)
 
     case agent_module.init(opts) do
       {:ok, user_state} ->
@@ -392,9 +410,9 @@ defmodule Condukt.Session do
               agent_module: agent_module,
               runtime: runtime,
               llm: %{
-                model: restore_value(opts, :model, snapshot && snapshot.model),
+                model: opts[:model],
                 thinking_level: restore_value(opts, :thinking_level, snapshot && snapshot.thinking_level),
-                max_tokens: Keyword.get(opts, :max_tokens),
+                max_tokens: opts[:max_tokens],
                 api_key: opts[:api_key],
                 base_url: opts[:base_url],
                 request_options: opts[:llm_request_options]
@@ -410,7 +428,7 @@ defmodule Condukt.Session do
               mcp_registry: mcp_registry,
               session_store: session_store,
               session_store_opts: session_store_opts(opts),
-              compactor: opts[:compactor],
+              compaction: Keyword.fetch!(opts, :compaction),
               redactor: opts[:redactor],
               retry: Retry.normalize(opts[:retry]),
               project_context: project_context,
@@ -523,20 +541,21 @@ defmodule Condukt.Session do
 
   @impl true
   def handle_call({:run, prompt, opts}, from, state) do
-    if state.turn.streaming do
+    if state.turn.streaming or not is_nil(state.compaction.waiter) do
       {:reply, {:error, :already_streaming}, state}
     else
-      state = %{state | turn: Turn.start(state.turn)}
+      state = %{state | turn: Turn.start(state.turn, {:run, from}, length(state.messages))}
       parent = self()
       trace_context = TraceContext.capture(opts)
 
-      Task.start(fn ->
-        TraceContext.attach(trace_context)
-        result = do_run(state, prompt, opts)
-        GenServer.cast(parent, {:run_complete, from, result})
-      end)
+      {:ok, worker} =
+        Task.start(fn ->
+          TraceContext.attach(trace_context)
+          result = do_run(state, prompt, opts)
+          GenServer.cast(parent, {:run_complete, state.turn.abort_ref, from, result})
+        end)
 
-      {:noreply, state}
+      {:noreply, %{state | turn: %{state.turn | worker: worker}}}
     end
   end
 
@@ -558,19 +577,47 @@ defmodule Condukt.Session do
   end
 
   def handle_call(:clear, _from, state) do
-    state = %{state | messages: []}
+    state = abort_turn(state)
+    compaction = %{Compaction.cancel(state.compaction) | attempted: nil, usage: nil}
+    state = %{state | messages: [], compaction: compaction}
     persist_or_clear_snapshot(state, :clear)
     {:reply, :ok, state}
   end
 
   def handle_call(:abort, _from, state) do
-    {:reply, :ok, %{state | turn: Turn.abort(state.turn)}}
+    {:reply, :ok, abort_turn(state)}
   end
 
-  def handle_call(:compact, _from, state) do
-    state = maybe_compact(state)
-    persist_snapshot(state)
-    {:reply, :ok, state}
+  def handle_call({:check_turn, ref}, _from, state) do
+    result = if state.turn.streaming and ref == state.turn.abort_ref, do: :ok, else: {:error, :aborted}
+    {:reply, result, state}
+  end
+
+  def handle_call(:compact, from, state) do
+    cond do
+      not Compaction.enabled?(state.compaction) ->
+        state = maybe_compact(state)
+        persist_snapshot(state)
+        {:reply, :ok, state}
+
+      state.turn.streaming or not is_nil(state.compaction.waiter) ->
+        {:reply, {:error, :already_streaming}, state}
+
+      true ->
+        compaction = Compaction.start(state.compaction, state.messages, compaction_metadata(state))
+        waiter = {from, compaction_overhead(state), compaction_metadata(state), :manual}
+        {:noreply, %{state | compaction: %{compaction | waiter: waiter}}}
+    end
+  end
+
+  def handle_call({:compaction_checkpoint, ref, messages, trace_context}, from, state) do
+    if state.turn.streaming and ref == state.turn.abort_ref do
+      compaction = %{state.compaction | trace_context: trace_context}
+      state = %{state | messages: messages, compaction: compaction}
+      compaction_checkpoint_reply(state, from, compaction_overhead(state), compaction_metadata(state))
+    else
+      {:reply, {:error, :aborted}, state}
+    end
   end
 
   def handle_call({:steer, message}, _from, state) do
@@ -584,16 +631,17 @@ defmodule Condukt.Session do
   end
 
   @impl true
-  def handle_cast({:stream, _prompt, _opts, subscriber_ref}, %{turn: %{streaming: true}} = state) do
-    broadcast(state, subscriber_ref, {:error, :already_streaming})
-    broadcast(state, subscriber_ref, :done)
+  def handle_cast({:stream, _prompt, _opts, subscriber_ref}, state)
+      when state.turn.streaming or not is_nil(state.compaction.waiter) do
+    broadcast_subscribers(state, subscriber_ref, {:error, :already_streaming})
+    broadcast_subscribers(state, subscriber_ref, :done)
     {:noreply, state}
   end
 
   def handle_cast({:stream, prompt, opts, subscriber_ref}, state) do
-    state = %{state | turn: Turn.start(state.turn)}
-    start_stream_task(state, prompt, opts, subscriber_ref)
-    {:noreply, state}
+    state = %{state | turn: Turn.start(state.turn, {:stream, subscriber_ref}, length(state.messages))}
+    {:ok, worker} = start_stream_task(state, prompt, opts, subscriber_ref)
+    {:noreply, %{state | turn: %{state.turn | worker: worker}}}
   end
 
   def handle_cast({:unsubscribe, pid, ref}, state) do
@@ -602,16 +650,53 @@ defmodule Condukt.Session do
     {:noreply, %{state | turn: turn}}
   end
 
-  def handle_cast({:broadcast_event, event, ref}, state) do
-    broadcast(state, ref, event)
-    {:noreply, maybe_dispatch_event(state, event)}
+  def handle_cast({:broadcast_event, turn_ref, event, ref}, state) do
+    if turn_ref == state.turn.abort_ref do
+      broadcast(state, ref, event)
+      {:noreply, maybe_dispatch_event(state, event)}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:compaction_usage, ref, response, messages}, state) do
+    if ref == state.turn.abort_ref do
+      {:noreply, %{state | compaction: Compaction.usage(state.compaction, response, messages)}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:run_complete, turn_ref, from, result}, state) do
+    if turn_ref == state.turn.abort_ref do
+      handle_cast({:run_complete, from, result}, state)
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_cast({:run_complete, from, {result, messages, assigns}}, state) do
     GenServer.reply(from, result)
-    state = %{state | turn: Turn.finish(state.turn), messages: messages, assigns: assigns} |> maybe_compact()
+    # A failed native run may have already adopted a prefix at a checkpoint.
+    # Its original captured history must not restore that discarded prefix.
+    messages =
+      if match?({:error, _}, result) and Compaction.enabled?(state.compaction), do: state.messages, else: messages
+
+    state = %{state | turn: Turn.finish(state.turn), messages: messages, assigns: assigns}
+
+    state =
+      if match?({:ok, _}, result) or not Compaction.enabled?(state.compaction), do: maybe_compact(state), else: state
+
     persist_snapshot(state)
     {:noreply, state}
+  end
+
+  def handle_cast({:stream_complete, turn_ref, ref, result}, state) do
+    if turn_ref == state.turn.abort_ref do
+      handle_cast({:stream_complete, ref, result}, state)
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_cast({:stream_complete, ref, {:ok, messages, _response, assigns}}, state) do
@@ -627,6 +712,20 @@ defmodule Condukt.Session do
   end
 
   @impl true
+  def handle_info({ref, result}, %{compaction: %{task: %Task{ref: ref}}} = state) do
+    compaction_finished(%{state | compaction: Compaction.complete(state.compaction, ref, result)})
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{compaction: %{task: %Task{ref: ref}}} = state) do
+    Logger.warning("compaction worker exited: #{inspect(reason)}")
+    compaction_finished(%{state | compaction: Compaction.complete(state.compaction, ref, {:error, reason})})
+  end
+
+  def handle_info({:compaction_timeout, ref}, %{compaction: %{task: %Task{ref: ref}}} = state) do
+    compaction = %{Compaction.cancel(state.compaction) | result: {:error, :timeout}}
+    compaction_finished(%{state | compaction: compaction})
+  end
+
   def handle_info({:DOWN, monitor, :process, _pid, _reason}, state) do
     {:noreply, %{state | turn: Turn.drop_monitored(state.turn, monitor)}}
   end
@@ -637,6 +736,7 @@ defmodule Condukt.Session do
   def terminate(_reason, state) do
     if state.mcp_registry, do: MCP.stop_all(state.mcp_registry)
     stop_subagent_supervisor(state.subagent_supervisor)
+    Compaction.stop(state.compaction)
     :ok
   end
 
@@ -759,9 +859,20 @@ defmodule Condukt.Session do
   end
 
   defp agent_loop(state, messages, max_turns, turn) do
-    messages = compact_messages(state, messages)
+    with {:ok, messages} <- compaction_checkpoint(state, messages) do
+      agent_turn(state, messages, max_turns, turn)
+    end
+  end
+
+  defp agent_turn(state, messages, max_turns, turn) do
     context = Translate.context(messages, outbound_redactor(state), state.system_prompt)
     tools = build_req_llm_tools(state.tools, state)
+
+    attempt = fn ->
+      with :ok <- check_turn(state) do
+        ReqLLM.generate_text(state.llm.model, context, llm_opts(state, tools))
+      end
+    end
 
     result =
       Telemetry.span(
@@ -771,29 +882,28 @@ defmodule Condukt.Session do
           Retry.with_retry(
             state.retry,
             fn -> false end,
-            fn -> ReqLLM.generate_text(state.llm.model, context, llm_opts(state, tools)) end
+            attempt,
+            &wait_for_retry(state, &1)
           )
         end,
         &llm_turn_stop_metadata/1
       )
 
-    case result do
-      {:ok, response} ->
-        assistant_message = Translate.response_to_message(response)
-        messages = messages ++ [assistant_message]
+    with {:ok, response} <- result,
+         :ok <- check_turn(state) do
+      record_compaction_usage(state, response, messages)
+      assistant_message = Translate.response_to_message(response)
+      messages = messages ++ [assistant_message]
 
-        if Message.has_tool_calls?(assistant_message) do
-          {tool_results, messages, assigns_diff} = execute_tool_calls(state, assistant_message, messages)
-          messages = messages ++ tool_results
-          state = %{state | assigns: Map.merge(state.assigns, assigns_diff)}
-          agent_loop(state, messages, max_turns, turn + 1)
-        else
-          response_text = Message.text(assistant_message)
-          {:ok, messages, response_text, state.assigns}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+      if Message.has_tool_calls?(assistant_message) do
+        {tool_results, messages, assigns_diff} = execute_tool_calls(state, assistant_message, messages)
+        messages = messages ++ tool_results
+        state = %{state | assigns: Map.merge(state.assigns, assigns_diff)}
+        agent_loop(state, messages, max_turns, turn + 1)
+      else
+        response_text = Message.text(assistant_message)
+        {:ok, messages, response_text, state.assigns}
+      end
     end
   end
 
@@ -803,8 +913,14 @@ defmodule Condukt.Session do
   end
 
   defp streaming_loop(%{turn: %{abort_ref: abort_ref}} = state, messages, max_turns, turn, emit, abort_ref) do
-    emit.(:turn_start)
-    stream_turn(state, messages, max_turns, turn, emit, abort_ref)
+    case compaction_checkpoint(state, messages) do
+      {:ok, messages} ->
+        emit.(:turn_start)
+        stream_turn(state, messages, max_turns, turn, emit, abort_ref)
+
+      {:error, reason} ->
+        emit_stream_error(emit, reason)
+    end
   end
 
   defp streaming_loop(_state, _messages, _max_turns, _turn, _emit, _abort_ref) do
@@ -824,20 +940,19 @@ defmodule Condukt.Session do
           state,
           prompt,
           opts,
-          &broadcast_stream_event(parent, subscriber_ref, &1),
+          &broadcast_stream_event(parent, abort_ref, subscriber_ref, &1),
           abort_ref
         )
 
-      GenServer.cast(parent, {:stream_complete, subscriber_ref, result})
+      GenServer.cast(parent, {:stream_complete, abort_ref, subscriber_ref, result})
     end)
   end
 
-  defp broadcast_stream_event(parent, subscriber_ref, event) do
-    GenServer.cast(parent, {:broadcast_event, event, subscriber_ref})
+  defp broadcast_stream_event(parent, abort_ref, subscriber_ref, event) do
+    GenServer.cast(parent, {:broadcast_event, abort_ref, event, subscriber_ref})
   end
 
   defp stream_turn(state, messages, max_turns, turn, emit, abort_ref) do
-    messages = compact_messages(state, messages)
     context = Translate.context(messages, outbound_redactor(state), state.system_prompt)
     tools = build_req_llm_tools(state.tools, state)
 
@@ -849,26 +964,31 @@ defmodule Condukt.Session do
       emit.(event)
     end
 
-    attempt = fn -> run_stream_attempt(state.llm.model, context, llm_opts(state, tools), tracked_emit) end
+    attempt = fn ->
+      with :ok <- check_turn(state) do
+        run_stream_attempt(state.llm.model, context, llm_opts(state, tools), tracked_emit)
+      end
+    end
 
     result =
       Telemetry.span(
         :llm_turn,
         llm_turn_metadata(state, messages, turn, true),
-        fn -> Retry.with_retry(state.retry, emitted?, attempt) end,
+        fn -> Retry.with_retry(state.retry, emitted?, attempt, &wait_for_retry(state, &1)) end,
         &llm_turn_stop_metadata/1
       )
 
-    case result do
-      {:ok, response} ->
-        handle_stream_response(state, response, messages, max_turns, turn, emit, abort_ref)
-
+    with {:ok, response} <- result,
+         :ok <- check_turn(state) do
+      handle_stream_response(state, response, messages, max_turns, turn, emit, abort_ref)
+    else
       {:error, reason} ->
         emit_stream_error(emit, reason)
     end
   end
 
   defp handle_stream_response(state, response, messages, max_turns, turn, emit, abort_ref) do
+    record_compaction_usage(state, response, messages)
     assistant_message = Translate.response_to_message(response)
     text = ReqLLM.Response.text(response) || ""
     messages = messages ++ [assistant_message]
@@ -979,9 +1099,13 @@ defmodule Condukt.Session do
     {tool_results, assigns_diff} =
       tool_calls
       |> Task.async_stream(
-        fn tool_call ->
+        fn {id, _name, _args} = tool_call ->
           TraceContext.attach(trace_context)
-          execute_tool_call(tool_map, tool_call, state)
+
+          case check_turn(state) do
+            :ok -> execute_tool_call(tool_map, tool_call, state)
+            {:error, :aborted} -> {Message.tool_result(id, {:error, :aborted}), %{}}
+          end
         end,
         ordered: true,
         timeout: tool_timeout(state)
@@ -1168,11 +1292,14 @@ defmodule Condukt.Session do
   end
 
   defp broadcast(state, ref, event) do
+    broadcast_subscribers(state, ref, event)
+    Notifier.publish(state.notifier, state.id, event)
+  end
+
+  defp broadcast_subscribers(state, ref, event) do
     for pid <- Turn.listeners(state.turn, ref) do
       send(pid, {ref, event})
     end
-
-    Notifier.publish(state.notifier, state.id, event)
   end
 
   defp maybe_dispatch_event(state, event) do
@@ -1181,7 +1308,7 @@ defmodule Condukt.Session do
         %{state | user_state: user_state}
 
       {:stop, _reason, user_state} ->
-        %{state | user_state: user_state, turn: Turn.finish(state.turn)}
+        abort_turn(%{state | user_state: user_state})
     end
   end
 
@@ -1295,12 +1422,136 @@ defmodule Condukt.Session do
   defp maybe_put_store_key(opts, nil), do: opts
   defp maybe_put_store_key(opts, key), do: Keyword.put(opts, :key, key)
 
-  defp maybe_compact(%__MODULE__{} = state) do
-    %{state | messages: compact_messages(state, state.messages)}
+  defp maybe_compact(%{compaction: %{spec: nil}} = state), do: state
+
+  defp maybe_compact(%{compaction: %{policy: nil}} = state) do
+    %{state | messages: Compaction.apply(state.compaction.spec, state.messages, compaction_metadata(state))}
   end
 
-  defp compact_messages(state, messages) do
-    Compaction.apply(state.compactor, messages, %{agent: state.agent_module, session_id: state.id})
+  defp maybe_compact(state) do
+    {compaction, messages, _error} = Compaction.take_result(state.compaction, state.messages)
+    compaction = Compaction.background(compaction, messages, compaction_overhead(state), compaction_metadata(state))
+    %{state | messages: messages, compaction: compaction}
+  end
+
+  defp compaction_checkpoint(%{compaction: %{policy: nil}} = state, messages) do
+    with :ok <- check_turn(state) do
+      {:ok, Compaction.apply(state.compaction.spec, messages, compaction_metadata(state))}
+    end
+  end
+
+  defp compaction_checkpoint(state, messages) do
+    GenServer.call(
+      state.pid,
+      {:compaction_checkpoint, state.turn.abort_ref, messages, TraceContext.current()},
+      :infinity
+    )
+  end
+
+  defp record_compaction_usage(%{compaction: %{policy: nil}}, _response, _messages), do: :ok
+
+  defp record_compaction_usage(state, response, messages) do
+    # Send only the accounting, not the stream or other provider resources.
+    GenServer.cast(state.pid, {:compaction_usage, state.turn.abort_ref, %{usage: response.usage}, messages})
+  end
+
+  defp compaction_checkpoint_reply(state, from, overhead, metadata, phase \\ :background) do
+    protected_count = if state.turn.prompt_index, do: length(state.messages) - state.turn.prompt_index, else: 1
+
+    case Compaction.checkpoint(state.compaction, state.messages, overhead, from, metadata, phase, protected_count) do
+      {:continue, compaction, messages} ->
+        state = put_compacted_messages(state, compaction, messages)
+        {:reply, if(phase == :manual, do: :ok, else: {:ok, messages}), state}
+
+      {:wait, compaction, messages} ->
+        {:noreply, put_compacted_messages(state, compaction, messages)}
+
+      {:error, reason, compaction, messages} ->
+        {:reply, {:error, {:compaction_failed, reason}}, put_compacted_messages(state, compaction, messages)}
+    end
+  end
+
+  defp compaction_finished(%{compaction: %{waiter: {from, overhead, metadata, phase}}} = state) do
+    state = %{state | compaction: %{state.compaction | waiter: nil}}
+
+    case compaction_checkpoint_reply(state, from, overhead, metadata, phase) do
+      {:reply, result, state} ->
+        GenServer.reply(from, result)
+        {:noreply, state}
+
+      {:noreply, state} ->
+        {:noreply, state}
+    end
+  end
+
+  defp compaction_finished(%{turn: %{streaming: false}} = state) do
+    {compaction, messages, _error} = Compaction.take_result(state.compaction, state.messages)
+    {:noreply, put_compacted_messages(state, compaction, messages)}
+  end
+
+  defp compaction_finished(state), do: {:noreply, state}
+
+  defp put_compacted_messages(state, compaction, messages) do
+    turn =
+      if state.turn.prompt_index do
+        %{state.turn | prompt_index: state.turn.prompt_index + length(messages) - length(state.messages)}
+      else
+        state.turn
+      end
+
+    updated = %{state | compaction: compaction, messages: messages, turn: turn}
+    if messages != state.messages, do: persist_snapshot(updated)
+    updated
+  end
+
+  defp release_compaction_waiter(%{compaction: %{waiter: nil}} = state, _result), do: state
+
+  defp release_compaction_waiter(%{compaction: %{waiter: {from, _, _, _}}} = state, result) do
+    GenServer.reply(from, result)
+    %{state | compaction: %{state.compaction | waiter: nil}}
+  end
+
+  defp abort_turn(state) do
+    state = release_compaction_waiter(state, {:error, :aborted})
+    if state.turn.worker, do: send(state.turn.worker, {:abort, state.turn.abort_ref})
+
+    case state.turn.recipient do
+      {:run, from} ->
+        GenServer.reply(from, {:error, :aborted})
+
+      {:stream, ref} ->
+        broadcast(state, ref, {:error, :aborted})
+        broadcast(state, ref, :done)
+
+      nil ->
+        :ok
+    end
+
+    %{state | turn: Turn.abort(state.turn)}
+  end
+
+  defp wait_for_retry(state, delay) do
+    with :ok <- check_turn(state) do
+      abort_ref = state.turn.abort_ref
+
+      receive do
+        {:abort, ^abort_ref} -> {:error, :aborted}
+      after
+        delay -> :ok
+      end
+    end
+  end
+
+  defp check_turn(state), do: GenServer.call(state.pid, {:check_turn, state.turn.abort_ref}, :infinity)
+
+  defp compaction_metadata(state), do: %{agent: state.agent_module, session_id: state.id}
+
+  defp compaction_overhead(state) do
+    %{
+      input:
+        Compaction.data_tokens(state.system_prompt) + Compaction.data_tokens(Enum.map(state.tools, &Tool.to_spec/1)),
+      output: state.llm[:max_tokens] || 0
+    }
   end
 
   defp load_project_context(opts, sandbox) do

@@ -66,6 +66,26 @@ If you only need side effects (logging, telemetry, pubsub) you do not need
 to subscribe to the stream. Override `handle_event/2` in the agent module
 instead. See the [Agents](agents.md) guide.
 
+Returning `{:stop, reason, state}` from that callback cancels the current
+turn, like `Condukt.abort/1`. The session stays alive, releases any compaction
+wait, and ignores late events and results from that turn, including while a
+replacement turn runs. Clearing history also cancels the current turn.
+
+Once the session processes cancellation, the original `run` caller receives
+`{:error, :aborted}`. A stream receives that error and closes immediately,
+without waiting for inference or admitted tools to finish. For streaming turns,
+the notifier gets the cancellation error and `:done` before a replacement can start. Late
+worker completion cannot publish another `:done`. A concurrent stream rejected
+with `:already_streaming` closes only its own reader, without publishing an
+error or completion for the active conversation.
+
+Native loops check ownership before every provider attempt, after inference,
+and before admitting each tool. Cancellation also wakes native retry backoff.
+Provider requests already admitted may finish, and admitted tools can still
+produce side effects; cancellation does not roll those back or kill external
+runtime processes. Slow callbacks, notifiers, snapshot stores, and legacy
+synchronous compactors can delay the session's handling of cancellation.
+
 ## Steering and follow-ups
 
 While a stream is in flight you can:
