@@ -155,6 +155,32 @@ defmodule Condukt.RetryTest do
       assert :counters.get(attempts, 1) == 1
     end
 
+    test "an interrupted backoff returns its error without another attempt" do
+      attempts = :counters.new(1, [:atomics])
+      test_pid = self()
+
+      task =
+        Task.async(fn ->
+          Retry.with_retry(
+            Retry.default(),
+            fn -> false end,
+            fn ->
+              :counters.add(attempts, 1, 1)
+              {:error, %ReqLLM.Error.API.Request{status: 503, reason: "overloaded"}}
+            end,
+            fn _delay ->
+              send(test_pid, {:waiting, self()})
+              receive do: (:cancel -> {:error, :aborted})
+            end
+          )
+        end)
+
+      assert_receive {:waiting, worker}
+      send(worker, :cancel)
+      assert Task.await(task) == {:error, :aborted}
+      assert :counters.get(attempts, 1) == 1
+    end
+
     test "custom classify overrides default behavior" do
       attempts = :counters.new(1, [:atomics])
 

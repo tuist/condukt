@@ -129,7 +129,20 @@
   seam for delivering them anywhere else, and `Condukt.Notifiers.PubSub` is the
   implementation for many viewers or more than one node. Subscribers are
   monitored, so a viewer that crashes is dropped rather than accumulating.
-- Native model requests compact history before translation on every buffered or streaming tool-loop iteration, not only after run completion. `Condukt.Session.Compaction` owns dispatch and payload-free start/stop telemetry, including byte sizes and whether pruning changed anything. Keep model context and per-turn checkpoint telemetry on the same compacted messages; custom compactors must tolerate repeated no-op application.
+- Native model requests checkpoint compaction before translation on every
+  buffered or streaming tool-loop iteration, not only after run completion.
+  `Condukt.Session.Compaction` owns dispatch and payload-free start/stop telemetry,
+  including byte sizes and whether pruning changed anything. Keep model context
+  and per-turn checkpoint telemetry on the same compacted messages; synchronous
+  compactors must tolerate repeated no-op application.
+- Native loops verify turn ownership before each provider attempt, after
+  inference, and before admitting each tool. Abort, clear, and callback `:stop`
+  invalidate the turn, release its compaction wait, wake native retry backoff,
+  and complete its caller without waiting for admitted work. Stream events
+  carry that turn's reference: stale events must not reach callbacks or change
+  a replacement turn. Rejected concurrent streams must not notify completion
+  for the active turn. Already-admitted tools may finish; cancellation does not
+  roll back their side effects.
 - Native ReqLLM calls accept `:llm_request_options`; optional World Wide Web
   Consortium Trace Context is captured at each public run or stream boundary,
   then forwarded through tasks, tools, and sub-agents without requiring an
@@ -168,6 +181,28 @@
 - Version 3 retains assistant `{:reasoning_details, list}` blocks losslessly through
   ReqLLM translation and snapshots. These are provider replay state, not display
   text or thinking summaries. Keep them intact across tool turns and compaction.
+
+## Compaction
+
+- `:compactor` keeps its synchronous behavior before each native request and
+  after turn completion by default. Native sessions opt into background work
+  with `:background_compaction` (`true` or
+  keyword options). `Condukt.Session.Compaction` owns policy, token accounting,
+  the supervised worker, captured prefix, candidate, and blocking waiter.
+- Both native loops checkpoint before inference, after any tool batch. Adopt
+  only at those boundaries or while idle, replacing the captured prefix and
+  preserving the exact live suffix. Never install a summary during inference
+  or split tool calls from their results. Clear invalidates pending work;
+  completion from an old turn must not restore cleared or compacted history.
+  `Turn.prompt_index` protects the active prompt and everything after it;
+  adopting a prefix shifts this boundary by the prefix's size change.
+- Background work starts at 65% context usage by default. At 90%, the loop
+  waits without blocking the session GenServer, then tries at most one fresh
+  fallback if needed. Failure or an oversized retained tail is an explicit
+  error, not permission to truncate the latest prompt. Pending work is not
+  persisted; adopted history uses the existing snapshot format.
+- See `web/priv/docs/framework/elixir/compaction.md` for callback inputs,
+  options, manual compaction, estimates, and telemetry.
 
 ## Sub-agents
 

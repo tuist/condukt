@@ -133,6 +133,10 @@ defmodule Condukt do
 
   @doc """
   Handles events during execution.
+
+  Returning `{:stop, reason, state}` cancels the current turn, not the session.
+  Late events and results from that turn are ignored. Already-admitted tools
+  may still finish; cancellation does not roll back their side effects.
   """
   @callback handle_event(term(), term()) :: {:noreply, term()} | {:stop, term(), term()}
 
@@ -259,6 +263,11 @@ defmodule Condukt do
       - `:session_store_opts` - Extra keyword options passed to session stores
       - `:compactor` - Compactor module or `{module, opts}` tuple
         (see `Condukt.Compactor`)
+      - `:background_compaction` - Opt-in native background compaction: `true`
+        or a keyword list with `:context_window`, `:background_threshold`
+        (default `0.65`), `:blocking_threshold` (`0.9`), `:keep_recent_tokens`
+        (`20_000`), and `:timeout` (`60_000` ms). Requires `:compactor`.
+        Uses model metadata for the context window unless overridden.
       - `:retry` - Retry policy for provider calls. Defaults to
         `Condukt.Retry.default/0` (3 attempts, exponential backoff on
         transient HTTP errors). Pass `false` to disable, a keyword list
@@ -408,7 +417,7 @@ defmodule Condukt do
   `:max_turns`, `:images`) plus the session options accepted by an agent's
   `start_link/1` (`:model`, `:system_prompt`, `:api_key`, `:base_url`,
   `:llm_request_options`, `:thinking_level`, `:max_tokens`, `:tools`, `:sandbox`, `:cwd`, `:session_store`,
-  `:session_store_key`, `:session_store_opts`, `:subagents`, `:compactor`,
+  `:session_store_key`, `:session_store_opts`, `:subagents`, `:compactor`, `:background_compaction`,
   `:redactor`, `:load_project_instructions`).
   `:load_project_instructions` defaults to `false` for anonymous runs and to
   `true` for module-defined one-shot runs.

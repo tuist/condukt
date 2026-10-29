@@ -2,21 +2,25 @@ defmodule Condukt.Session.Turn do
   @moduledoc """
   State belonging to the turn a session is currently running.
 
-  These five fields move together and mean nothing apart: whether a turn is in
-  flight, the reference that identifies it for aborting, the messages queued to
-  join or follow it, and who is watching it. Grouping them keeps the session's
+  These fields move together: whether a turn is in flight, its cancellation
+  reference, worker and reply destination, the messages queued to join or
+  follow it, and who is watching it. Grouping them keeps the session's
   own struct inside the 32-key limit that decides whether the virtual machine
   stores it as a flat map or a hash map, and, more usefully, makes it obvious
   which parts of a session are per-turn and which outlive one.
 
-  `abort_ref` is the mechanism worth knowing about: the streaming loop carries
-  the reference it started with and stops as soon as the session's own no longer
-  matches, so aborting is a matter of replacing it rather than reaching into a
-  running task.
+  `abort_ref` identifies the running turn. Native loops verify it against the
+  session before each provider attempt, after inference, and before admitting
+  each tool; stream events and results carry it too. Aborting replaces it and
+  wakes retry backoff without killing the worker, so tools already admitted
+  may still finish.
   """
 
   defstruct streaming: false,
             abort_ref: nil,
+            recipient: nil,
+            worker: nil,
+            prompt_index: nil,
             steering_messages: [],
             follow_up_messages: [],
             subscribers: []
@@ -25,9 +29,11 @@ defmodule Condukt.Session.Turn do
   def new, do: %__MODULE__{}
 
   @doc """
-  Marks a turn as started under a fresh abort reference.
+  Marks a turn as started with its reply destination and protected prompt boundary.
   """
-  def start(%__MODULE__{} = turn), do: %{turn | streaming: true, abort_ref: make_ref()}
+  def start(%__MODULE__{} = turn, recipient, prompt_index) do
+    %{turn | streaming: true, abort_ref: make_ref(), recipient: recipient, worker: nil, prompt_index: prompt_index}
+  end
 
   @doc """
   Marks the turn finished, leaving the queues and subscribers alone.
@@ -35,15 +41,17 @@ defmodule Condukt.Session.Turn do
   Those outlive a single turn: a subscriber stays attached for the next one, and
   a message queued while this turn ran is meant for the one after it.
   """
-  def finish(%__MODULE__{} = turn), do: %{turn | streaming: false}
+  def finish(%__MODULE__{} = turn), do: %{turn | streaming: false, recipient: nil, worker: nil, prompt_index: nil}
 
   @doc """
   Abandons the running turn.
 
-  Replacing the reference is what stops the loop: it compares against the
-  session's on every iteration and gives up when they differ.
+  Replacing the reference makes the session reject late results, stream events,
+  and further tool admissions from that turn.
   """
-  def abort(%__MODULE__{} = turn), do: %{turn | abort_ref: make_ref(), streaming: false}
+  def abort(%__MODULE__{} = turn) do
+    %{turn | abort_ref: make_ref(), streaming: false, recipient: nil, worker: nil, prompt_index: nil}
+  end
 
   @doc "Adds a subscriber and the monitor watching it."
   def subscribe(%__MODULE__{} = turn, pid, ref, monitor) do

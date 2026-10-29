@@ -87,19 +87,25 @@ defmodule Condukt.Retry do
 
   `fun` returns `{:ok, value}` / `{:error, reason}` (or any non-tuple
   value). Non-error results are returned verbatim.
+
+  The optional `wait` callback receives the backoff in milliseconds. It
+  returns `:ok` to retry or `{:error, reason}` to stop. By default it sleeps;
+  native sessions use an interruptible receive so cancellation wakes it.
   """
-  def with_retry(%__MODULE__{} = policy, emitted?, fun) when is_function(emitted?, 0) and is_function(fun, 0) do
-    do_with_retry(policy, emitted?, fun, 1)
+  def with_retry(%__MODULE__{} = policy, emitted?, fun, wait \\ &Process.sleep/1)
+      when is_function(emitted?, 0) and is_function(fun, 0) and is_function(wait, 1) do
+    do_with_retry(policy, emitted?, fun, wait, 1)
   end
 
-  defp do_with_retry(%__MODULE__{max_attempts: max} = policy, emitted?, fun, attempt) do
+  defp do_with_retry(%__MODULE__{max_attempts: max} = policy, emitted?, fun, wait, attempt) do
     case fun.() do
       {:error, reason} = error when attempt < max ->
-        if not emitted?.() and retryable?(policy, reason) do
-          sleep_with_backoff(policy, attempt)
-          do_with_retry(policy, emitted?, fun, attempt + 1)
+        with true <- not emitted?.() and retryable?(policy, reason),
+             :ok <- wait.(backoff(policy, attempt)) do
+          do_with_retry(policy, emitted?, fun, wait, attempt + 1)
         else
-          error
+          false -> error
+          {:error, _} = interrupted -> interrupted
         end
 
       result ->
@@ -132,9 +138,9 @@ defmodule Condukt.Retry do
     Enum.any?(needles, &String.contains?(downcased, &1))
   end
 
-  defp sleep_with_backoff(%__MODULE__{base_delay_ms: base, max_delay_ms: maxd}, attempt) do
+  defp backoff(%__MODULE__{base_delay_ms: base, max_delay_ms: maxd}, attempt) do
     delay = min(base * Integer.pow(2, attempt - 1), maxd)
     jitter = :rand.uniform(div(delay, 2) + 1) - 1
-    Process.sleep(delay + jitter)
+    delay + jitter
   end
 end

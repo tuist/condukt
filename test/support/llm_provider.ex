@@ -20,6 +20,7 @@ defmodule Condukt.Test.LLMProvider do
 
       {:ok, owner, response} ->
         send(owner, {__MODULE__, :request, model.id, context, opts})
+        response = if is_function(response, 0), do: response.(), else: response
 
         {:ok,
          Req.new(
